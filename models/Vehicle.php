@@ -16,7 +16,6 @@ class Vehicle {
         $this->conn = $db;
     }
 
-    // Read all vehicles and join with the customer table to get the owner's name
     public function readAllWithCustomer() {
         $query = "SELECT v.*, c.first_name, c.last_name 
                   FROM " . $this->table_name . " v
@@ -27,7 +26,6 @@ class Vehicle {
         return $stmt;
     }
 
-    // Register a new vehicle
     public function create() {
         $query = "INSERT INTO " . $this->table_name . " 
                   (customer_id, plate_number, make, model, year, color, notes) 
@@ -36,7 +34,6 @@ class Vehicle {
 
         $stmt = $this->conn->prepare($query);
 
-        // Sanitize inputs
         $this->customer_id = htmlspecialchars(strip_tags($this->customer_id));
         $this->plate_number = htmlspecialchars(strip_tags(strtoupper($this->plate_number))); // Ensure uppercase plates
         $this->make = htmlspecialchars(strip_tags($this->make));
@@ -45,7 +42,6 @@ class Vehicle {
         $this->color = htmlspecialchars(strip_tags($this->color));
         $this->notes = htmlspecialchars(strip_tags($this->notes));
 
-        // Bind parameters
         $stmt->bindParam(":customer_id", $this->customer_id);
         $stmt->bindParam(":plate_number", $this->plate_number);
         $stmt->bindParam(":make", $this->make);

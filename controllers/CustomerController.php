@@ -3,7 +3,6 @@ session_start();
 require_once '../config/Database.php';
 require_once '../models/Customer.php';
 
-// Security check
 if (!isset($_SESSION['logged_in'])) {
     header("Location: ../views/login.php");
     exit;
@@ -13,7 +12,6 @@ $database = new Database();
 $db = $database->getConnection();
 $customer = new Customer($db);
 
-// Handle the "Add Customer" form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['action'] == 'add') {
     
     $customer->first_name = $_POST['first_name'];
@@ -28,7 +26,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
         $_SESSION['error_message'] = "Failed to add customer. Please try again.";
     }
     
-    // Send the user back to the customer page
     header("Location: ../views/customers.php");
     exit;
 }

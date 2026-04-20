@@ -14,16 +14,13 @@ $jobOrder = new JobOrder($db);
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['action'] == 'create') {
     
-    // Generate a unique Job Order Number
     $joNumber = 'JO-' . date('Ymd') . '-' . rand(1000, 9999);
     
-    // Prepare arrays for services and parts
     $services = [];
     $parts = [];
     $estimated_cost = 0;
     $requires_down_payment = isset($_POST['requires_down_payment']) ? 1 : 0;
 
-    // Process Services
     if (isset($_POST['service_ids'])) {
         for ($i = 0; $i < count($_POST['service_ids']); $i++) {
             if (!empty($_POST['service_ids'][$i])) {
@@ -37,7 +34,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
         }
     }
 
-    // Process Parts
     if (isset($_POST['part_ids'])) {
         for ($i = 0; $i < count($_POST['part_ids']); $i++) {
             if (!empty($_POST['part_ids'][$i])) {
@@ -64,9 +60,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
     ];
 
     if ($jobOrder->createWithDetails($data, $services, $parts)) {
-        $_SESSION['success_message'] = "Job Order {$joNumber} created successfully.";
+        $_SESSION['success_message'] = "Job Order <strong>{$joNumber}</strong> created successfully. Parts deducted from inventory.";
     } else {
-        $_SESSION['error_message'] = "Failed to create Job Order. Please try again.";
+        $_SESSION['error_message'] = "Transaction failed. No inventory was deducted. Please try again.";
     }
     
     header("Location: ../views/job_orders.php");

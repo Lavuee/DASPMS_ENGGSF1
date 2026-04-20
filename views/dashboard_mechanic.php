@@ -1,6 +1,5 @@
 <?php
 session_start();
-// Strict access check: Must be logged in AND have the 'Head Mechanic' role
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Head Mechanic') {
     header("Location: login.php");
     exit;

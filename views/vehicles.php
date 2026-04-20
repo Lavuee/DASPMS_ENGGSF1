@@ -7,16 +7,14 @@ if (!isset($_SESSION['logged_in'])) {
 
 require_once '../config/Database.php';
 require_once '../models/Vehicle.php';
-require_once '../models/Customer.php'; // Required to populate the owner dropdown
+require_once '../models/Customer.php'; 
 
 $database = new Database();
 $db = $database->getConnection();
 
-// Fetch Vehicles
 $vehicle = new Vehicle($db);
 $stmtVehicles = $vehicle->readAllWithCustomer();
 
-// Fetch Customers for the dropdown
 $customer = new Customer($db);
 $stmtCustomers = $customer->readAll();
 ?>

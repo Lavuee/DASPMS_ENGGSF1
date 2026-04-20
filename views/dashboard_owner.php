@@ -1,6 +1,5 @@
 <?php
 session_start();
-// Strict access check: Must be logged in AND have the 'Owner' role
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') {
     header("Location: login.php");
     exit;
@@ -30,6 +29,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') {
                 <li class="nav-item"><a class="nav-link" href="services.php">Services</a></li>
                 <li class="nav-item"><a class="nav-link" href="pos.php">POS</a></li>
                 <li class="nav-item"><a class="nav-link text-warning" href="reports.php">Financial Reports</a></li>
+                <li class="nav-item"><a class="nav-link" href="users.php">Staff Accounts</a></li>
             </ul>
             <div class="d-flex">
                 <span class="navbar-text me-3 text-white">Welcome, <?php echo htmlspecialchars($_SESSION['first_name']); ?></span>

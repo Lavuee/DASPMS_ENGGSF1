@@ -1,6 +1,5 @@
 <?php
 session_start();
-// Strict access check: Must be logged in AND have the 'Cashier' role
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Cashier') {
     header("Location: login.php");
     exit;

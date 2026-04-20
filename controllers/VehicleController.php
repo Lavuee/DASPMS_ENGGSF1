@@ -3,7 +3,6 @@ session_start();
 require_once '../config/Database.php';
 require_once '../models/Vehicle.php';
 
-// Security check
 if (!isset($_SESSION['logged_in'])) {
     header("Location: ../views/login.php");
     exit;
@@ -13,7 +12,6 @@ $database = new Database();
 $db = $database->getConnection();
 $vehicle = new Vehicle($db);
 
-// Handle the "Register Vehicle" form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['action'] == 'add') {
     
     $vehicle->customer_id = $_POST['customer_id'];
@@ -30,7 +28,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
         $_SESSION['error_message'] = "Failed to register vehicle. Please ensure the plate number is unique.";
     }
     
-    // Redirect back to the vehicles page
     header("Location: ../views/vehicles.php");
     exit;
 }
