@@ -1,71 +1,63 @@
 <?php
 session_start();
 require_once '../config/Database.php';
-require_once '../models/JobOrder.php';
 
 if (!isset($_SESSION['logged_in'])) {
     header("Location: ../views/login.php");
     exit;
 }
 
-$database = new Database();
-$db = $database->getConnection();
-$jobOrder = new JobOrder($db);
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
+    $db = (new Database())->getConnection();
 
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['action'] == 'create') {
-    
-    $joNumber = 'JO-' . date('Ymd') . '-' . rand(1000, 9999);
-    
-    $services = [];
-    $parts = [];
-    $estimated_cost = 0;
-    $requires_down_payment = isset($_POST['requires_down_payment']) ? 1 : 0;
+    try {
+        if ($_POST['action'] == 'create') {
+            $vehicle_id = $_POST['vehicle_id'];
+            $description = $_POST['description'];
+            $estimated_cost = $_POST['estimated_cost'];
+            $created_by = $_SESSION['user_id']; 
 
-    if (isset($_POST['service_ids'])) {
-        for ($i = 0; $i < count($_POST['service_ids']); $i++) {
-            if (!empty($_POST['service_ids'][$i])) {
-                $price = floatval($_POST['service_prices'][$i]);
-                $services[] = [
-                    'id' => $_POST['service_ids'][$i],
-                    'price' => $price
-                ];
-                $estimated_cost += $price;
-            }
+            $stmtC = $db->prepare("SELECT customer_id FROM vehicle WHERE vehicle_id = ?");
+            $stmtC->execute([$vehicle_id]);
+            $customer_id = $stmtC->fetchColumn();
+
+            $jo_number = 'JO-' . strtoupper(substr(uniqid(), -5));
+
+            $query = "INSERT INTO job_order (job_order_number, customer_id, vehicle_id, description, estimated_cost, status, created_by, date_created) 
+                      VALUES (:jo_num, :cid, :vid, :desc, :cost, 'Pending', :uid, NOW())";
+            
+            $stmt = $db->prepare($query);
+            $stmt->execute([
+                ':jo_num' => $jo_number,
+                ':cid' => $customer_id,
+                ':vid' => $vehicle_id,
+                ':desc' => $description,
+                ':cost' => $estimated_cost,
+                ':uid' => $created_by
+            ]);
+
+            $_SESSION['success_message'] = "Job Order $jo_number created successfully!";
+            header("Location: ../views/job_orders.php");
+            exit;
         }
-    }
 
-    if (isset($_POST['part_ids'])) {
-        for ($i = 0; $i < count($_POST['part_ids']); $i++) {
-            if (!empty($_POST['part_ids'][$i])) {
-                $qty = intval($_POST['part_qtys'][$i]);
-                $price = floatval($_POST['part_prices'][$i]);
-                $parts[] = [
-                    'id' => $_POST['part_ids'][$i],
-                    'qty' => $qty,
-                    'price' => $price
-                ];
-                $estimated_cost += ($qty * $price);
-            }
+
+        elseif ($_POST['action'] == 'update_status') {
+            $job_order_id = $_POST['job_order_id'];
+            $status = $_POST['status'];
+
+            $stmt = $db->prepare("UPDATE job_order SET status = ? WHERE job_order_id = ?");
+            $stmt->execute([$status, $job_order_id]);
+
+            $_SESSION['success_message'] = "Job Order status successfully updated to '$status'.";
+            header("Location: ../views/job_orders.php");
+            exit;
         }
-    }
 
-    $data = [
-        'vehicle_id' => $_POST['vehicle_id'],
-        'customer_id' => $_POST['customer_id'],
-        'created_by' => $_SESSION['user_id'],
-        'job_order_number' => $joNumber,
-        'description' => $_POST['description'],
-        'estimated_cost' => $estimated_cost,
-        'requires_down_payment' => $requires_down_payment
-    ];
-
-    if ($jobOrder->createWithDetails($data, $services, $parts)) {
-        $_SESSION['success_message'] = "Job Order <strong>{$joNumber}</strong> created successfully. Parts deducted from inventory.";
-    } else {
-        $_SESSION['error_message'] = "Transaction failed. No inventory was deducted. Please try again.";
+    } catch (Exception $e) {
+        $_SESSION['error_message'] = "System Error: " . $e->getMessage();
+        header("Location: ../views/job_orders.php");
+        exit;
     }
-    
-    header("Location: ../views/job_orders.php");
-    exit;
 }
 ?>

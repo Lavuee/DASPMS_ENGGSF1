@@ -1,0 +1,229 @@
+/* Must be at the very top to work */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+    /* --- CUSTOM BRANDED THEME --- */
+    --sidebar-bg: #000F08;       /* Onyx */
+    --sidebar-hover: #2F2F2F;    /* Graphite Black */
+    
+    --primary-blue: #00203F;     /* Core Navy */
+    --primary-hover: #00152b;    /* Darker Navy for hover states */
+    
+    --success: #003E1F;          /* Deep Forest Green */
+    --danger: #D72E2E;           /* Tomato Jam Red */
+    --warning: #d97706;          /* Standard amber for contrast */
+    
+    --bg-light: #E6E9EC;         /* Soft Gray for main background */
+    --white: #FFF9F2;            /* Floral White for cards */
+    
+    /* Text Colors */
+    --text-main: #000F08;        /* Onyx for high contrast readability */
+    --text-muted: #2F2F2F;       /* Graphite Black for secondary text */
+}
+
+/* Force the font on EVERYTHING */
+* {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+}
+
+body {
+    background-color: var(--bg-light);
+    color: var(--text-main);
+    font-size: 16px;
+    overflow-x: hidden;
+}
+
+.text-muted {
+    color: var(--text-muted) !important;
+}
+
+/* Layout Skeleton */
+.app-wrapper {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar Styles */
+.sidebar {
+    width: 260px;
+    background-color: var(--sidebar-bg);
+    color: var(--white);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    height: 100vh;
+    z-index: 1000;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+}
+
+.sidebar-header {
+    padding: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.sidebar-logo-img {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+    border-radius: 8px;
+    background-color: var(--white);
+    padding: 2px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.sidebar-nav {
+    flex-grow: 1;
+    padding: 1rem 0.75rem;
+}
+
+.nav-link {
+    color: var(--cloud); /* Using Cloud for inactive links */
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 500;
+    font-size: 1rem;
+    transition: all 0.2s;
+}
+
+.nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--white);
+}
+
+.nav-link.active {
+    background-color: var(--primary-blue);
+    color: var(--white);
+    box-shadow: 0 2px 5px rgba(14, 91, 116, 0.4);
+}
+
+.sidebar-footer {
+    padding: 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-avatar {
+    width: 38px;
+    height: 38px;
+    background-color: var(--white);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.2rem; /* Made the letter slightly bigger */
+    color: var(--primary-blue); /* CRITICAL FIX: Uses Core Navy so it's visible */
+    text-transform: uppercase; /* Ensures it's always a capital letter */
+}
+
+/* Main Content Area */
+.main-content {
+    flex-grow: 1;
+    margin-left: 260px;
+    padding: 2rem 2.5rem;
+}
+
+/* Cards & UI Elements */
+.custom-card {
+    background: var(--white);
+    border-radius: 12px;
+    border: 1px solid #e2e4e8;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03);
+    padding: 1.5rem;
+    height: 100%;
+}
+
+.stat-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.stat-icon {
+    width: 45px;
+    height: 45px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
+
+/* Standardized Icon Colors based on theme */
+.icon-blue { background: #e6f0f4; color: var(--ocean); }
+.icon-green { background: #e5f2ef; color: var(--success); }
+.icon-red { background: #fae8eb; color: var(--danger); }
+.icon-yellow { background: #fff8e6; color: var(--warning); }
+.icon-purple { background: #f3e8f5; color: #8e44ad; }
+
+/* Badges */
+.badge-soft-primary { background: #e6f0f4; color: var(--ocean); padding: 5px 12px; border-radius: 20px; font-weight: 600;}
+.badge-soft-success { background: #e5f2ef; color: var(--success); padding: 5px 12px; border-radius: 20px; font-weight: 600;}
+.badge-soft-danger { background: #fae8eb; color: var(--danger); padding: 5px 12px; border-radius: 20px; font-weight: 600;}
+.badge-soft-warning { background: #fff8e6; color: var(--warning); padding: 5px 12px; border-radius: 20px; font-weight: 600;}
+
+/* Search Bar */
+.custom-search {
+    background: var(--white);
+    border: 1px solid #e2e4e8;
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--cloud);
+}
+.custom-search input {
+    border: none;
+    outline: none;
+    width: 100%;
+    color: var(--text-main);
+    font-size: 1rem;
+    background: transparent;
+}
+
+/* Tables */
+.table-custom th { 
+    background-color: var(--white); 
+    color: var(--text-muted); 
+    font-weight: 600; 
+    font-size: 0.85rem; 
+    border-bottom: 2px solid #e2e4e8; 
+    padding: 1rem; 
+}
+.table-custom td { 
+    padding: 1rem; 
+    vertical-align: middle; 
+    border-bottom: 1px solid #f8f9fa; 
+    color: var(--text-main); 
+    font-size: 1rem !important; 
+}
+
+/* Buttons overriding Bootstrap defaults */
+.btn-primary { background-color: var(--primary-blue); border-color: var(--primary-blue); color: var(--white); }
+.btn-primary:hover { background-color: var(--primary-hover); border-color: var(--primary-hover); }
+.btn-success { background-color: var(--success); border-color: var(--success); color: var(--white); }
+.btn-danger { background-color: var(--danger); border-color: var(--danger); color: var(--white); }
+
+/* Avatar Boxes */
+.avatar-box {
+    width: 48px;
+    height: 48px;
+    background-color: #e6f0f4;
+    color: var(--ocean);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+}

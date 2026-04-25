@@ -1,51 +1,39 @@
 <?php
 session_start();
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Head Mechanic') {
-    header("Location: login.php");
-    exit;
-}
+if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Head Mechanic') { header("Location: login.php"); exit; }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Mechanic Dashboard - DASPMS</title>
+    <title>Workshop - Norily's Repair Shop</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../assets/css/style.css">
 </head>
-<body class="bg-light">
-
-<nav class="navbar navbar-expand-lg navbar-dark bg-secondary mb-4 shadow">
-    <div class="container-fluid">
-        <span class="navbar-brand mb-0 h1">DASPMS - Workshop</span>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav me-auto">
-                <li class="nav-item"><a class="nav-link active" href="dashboard_mechanic.php">My Workspace</a></li>
-                <li class="nav-item"><a class="nav-link" href="inventory_view.php">Check Parts Availability</a></li>
-            </ul>
-            <div class="d-flex">
-                <span class="navbar-text me-3 text-white">Mechanic: <?php echo htmlspecialchars($_SESSION['first_name']); ?></span>
-                <a href="../controllers/AuthController.php?action=logout" class="btn btn-outline-light btn-sm">Logout</a>
+<body>
+<div class="app-wrapper">
+    <?php include '../includes/sidebar.php'; ?>
+    <main class="main-content">
+        <div class="mb-4">
+            <h2 class="fw-bold mb-1">Good <?php echo (date('H') < 12) ? 'Morning' : 'Afternoon'; ?>, <?php echo htmlspecialchars($_SESSION['first_name']); ?>!</h2>
+            <p class="text-muted">Welcome to the Workshop Terminal.</p>
+        </div>
+        <div class="row g-4 mb-4">
+            <div class="col-md-6">
+                <div class="custom-card stat-card" style="cursor:pointer;" onclick="window.location='job_orders.php'">
+                    <div><h4 class="fw-bold mb-1">Active Repairs</h4><p class="text-muted mb-0">Update Job Order statuses</p></div>
+                    <div class="stat-icon icon-blue" style="width: 50px; height: 50px;"><i class="bi bi-tools fs-4"></i></div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="custom-card stat-card" style="cursor:pointer;" onclick="window.location='inventory_view.php'">
+                    <div><h4 class="fw-bold mb-1">Parts Check</h4><p class="text-muted mb-0">Verify physical inventory</p></div>
+                    <div class="stat-icon icon-yellow" style="width: 50px; height: 50px;"><i class="bi bi-box-seam fs-4"></i></div>
+                </div>
             </div>
         </div>
-    </div>
-</nav>
-
-<div class="container">
-    <div class="alert alert-info">
-        <strong>Workshop Status:</strong> Please update your Job Orders to "Completed" as soon as repairs are finished so the Cashier can begin billing.
-    </div>
-    
-    <h2 class="mb-4">Active Repair Jobs</h2>
-    <div class="card shadow-sm">
-        <div class="card-body text-center p-5 text-muted">
-            <em>Your active repair queue will appear here.</em>
-        </div>
-    </div>
+    </main>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
