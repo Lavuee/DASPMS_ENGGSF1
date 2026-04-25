@@ -4,7 +4,6 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') { header("L
 require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
-// Only fetch actual staff members (ignore Customers)
 $stmt = $db->prepare("SELECT * FROM user WHERE role IN ('Owner', 'Cashier', 'Head Mechanic') ORDER BY role ASC, last_name ASC");
 $stmt->execute();
 $users = $stmt->fetchAll(PDO::FETCH_ASSOC);

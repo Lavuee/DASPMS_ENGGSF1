@@ -12,7 +12,6 @@ $totalParts = count($parts);
 $lowStockCount = 0;
 
 foreach ($parts as $p) { 
-    // Strict Integer Math
     $qty = (int)$p['quantity_on_hand'];
     $threshold = (isset($p['low_stock_threshold']) && (int)$p['low_stock_threshold'] > 0) ? (int)$p['low_stock_threshold'] : 5;
     

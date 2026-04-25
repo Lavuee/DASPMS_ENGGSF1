@@ -3,7 +3,6 @@ session_start();
 require_once '../config/Database.php';
 require_once '../models/User.php';
 
-// STRICT SECURITY: Only the 'Owner' can register accounts
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') {
     header("Location: ../views/login.php");
     exit;

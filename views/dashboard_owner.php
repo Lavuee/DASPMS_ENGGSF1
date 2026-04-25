@@ -5,28 +5,21 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// --- 1. DYNAMIC DASHBOARD METRICS ---
-// Active Jobs (Pending, In Progress, Ready)
 $activeJobs = $db->query("SELECT COUNT(*) FROM job_order WHERE status != 'Completed'")->fetchColumn() ?: 0;
 
-// Completed Today
 $completedToday = $db->query("SELECT COUNT(*) FROM job_order WHERE status = 'Completed' AND DATE(date_created) = CURDATE()")->fetchColumn() ?: 0;
 
-// Total Revenue (Payments + POS + Web Orders)
 $revPay = $db->query("SELECT SUM(amount) FROM payment")->fetchColumn() ?: 0;
 $revPOS = $db->query("SELECT SUM(total_amount) FROM pos_transaction WHERE status = 'Completed'")->fetchColumn() ?: 0;
 $revWeb = $db->query("SELECT SUM(total_amount) FROM part_order WHERE status = 'Completed'")->fetchColumn() ?: 0;
 $totalRevenue = $revPay + $revPOS + $revWeb;
 
-// Pending Payments (Unpaid balances from Completed/Ready Jobs)
 $pendingQuery = "SELECT SUM(jo.estimated_cost - COALESCE(i.amount_paid, 0)) 
                  FROM job_order jo 
                  LEFT JOIN invoice i ON jo.job_order_id = i.job_order_id 
                  WHERE jo.status IN ('Completed', 'Ready for Pickup') AND (i.payment_status IS NULL OR i.payment_status != 'Paid')";
 $pendingPayments = $db->query($pendingQuery)->fetchColumn() ?: 0;
 
-// --- 2. DYNAMIC LISTS ---
-// Fetch 3 most recent Active Job Orders
 $stmtJobs = $db->query("SELECT jo.*, c.first_name, c.last_name, v.plate_number 
                         FROM job_order jo 
                         JOIN customer c ON jo.customer_id = c.customer_id 
@@ -34,7 +27,6 @@ $stmtJobs = $db->query("SELECT jo.*, c.first_name, c.last_name, v.plate_number
                         WHERE jo.status != 'Completed' 
                         ORDER BY jo.date_created DESC LIMIT 3");
 
-// Fetch Low Stock Alerts
 $stmtStock = $db->query("SELECT * FROM part WHERE quantity_on_hand <= low_stock_threshold ORDER BY quantity_on_hand ASC LIMIT 3");
 ?>
 <!DOCTYPE html>

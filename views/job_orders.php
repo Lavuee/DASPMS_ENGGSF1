@@ -5,7 +5,6 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// Fetch Job Orders with details
 $query = "SELECT jo.*, c.first_name, c.last_name, v.plate_number 
           FROM job_order jo 
           JOIN customer c ON jo.customer_id = c.customer_id 
@@ -21,7 +20,6 @@ $stmt = $db->prepare($query);
 $stmt->execute();
 $jobOrders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Count statuses for tabs
 $counts = ['All' => count($jobOrders), 'Pending' => 0, 'In Progress' => 0, 'Completed' => 0];
 foreach ($jobOrders as $jo) {
     if ($jo['status'] == 'Pending') $counts['Pending']++;
@@ -135,17 +133,14 @@ foreach ($jobOrders as $jo) {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // Tab Filtering Logic
     const tabs = document.querySelectorAll('.tab-item');
     const cards = document.querySelectorAll('.jo-card');
 
     tabs.forEach(tab => {
         tab.addEventListener('click', () => {
-            // Update active tab styling
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
 
-            // Filter cards
             const filter = tab.getAttribute('data-filter');
             cards.forEach(card => {
                 if (filter === 'All' || card.getAttribute('data-status') === filter) {
@@ -157,7 +152,6 @@ foreach ($jobOrders as $jo) {
         });
     });
 
-    // Search Bar Logic
     document.getElementById('searchInput').addEventListener('input', function(e) {
         const term = e.target.value.toLowerCase();
         cards.forEach(card => {

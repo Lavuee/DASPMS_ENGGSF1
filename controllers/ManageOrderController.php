@@ -3,7 +3,6 @@ session_start();
 require_once '../config/Database.php';
 require_once '../models/PartOrder.php';
 
-// Only Cashier and Owner can manage these orders
 if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] !== 'Cashier' && $_SESSION['role'] !== 'Owner')) {
     header("Location: ../views/login.php");
     exit;

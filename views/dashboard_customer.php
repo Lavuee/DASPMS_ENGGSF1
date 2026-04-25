@@ -5,12 +5,10 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// Get the Customer ID linked to this User ID
 $stmtC = $db->prepare("SELECT customer_id FROM customer WHERE user_id = ?");
 $stmtC->execute([$_SESSION['user_id']]);
 $customer_id = $stmtC->fetchColumn();
 
-// Fetch their Job Orders (Repairs)
 $stmtJO = $db->prepare("SELECT jo.job_order_number, v.plate_number, v.make, v.model, jo.status, i.payment_status, i.balance_due, jo.date_created 
                         FROM job_order jo 
                         JOIN vehicle v ON jo.vehicle_id = v.vehicle_id
@@ -19,11 +17,9 @@ $stmtJO = $db->prepare("SELECT jo.job_order_number, v.plate_number, v.make, v.mo
 $stmtJO->execute([$customer_id]);
 $jobOrders = $stmtJO->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch Available Parts for Ordering
 $stmtParts = $db->prepare("SELECT * FROM part WHERE quantity_on_hand > 0 AND is_active = 1");
 $stmtParts->execute();
 
-// Fetch their Part Orders (Tracking)
 $stmtOrders = $db->prepare("SELECT po.order_id, po.order_date, po.status, po.total_amount, p.part_name, poi.quantity 
                             FROM part_order po 
                             JOIN part_order_item poi ON po.order_id = poi.order_id 

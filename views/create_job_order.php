@@ -5,7 +5,6 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// Fetch all vehicles to link to the Job Order
 $stmtV = $db->prepare("SELECT v.*, c.first_name, c.last_name FROM vehicle v JOIN customer c ON v.customer_id = c.customer_id ORDER BY v.plate_number ASC");
 $stmtV->execute();
 $vehicles = $stmtV->fetchAll(PDO::FETCH_ASSOC);

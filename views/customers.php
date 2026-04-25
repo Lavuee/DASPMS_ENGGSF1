@@ -5,7 +5,6 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// Fetch all customers
 $stmt = $db->prepare("SELECT * FROM customer ORDER BY first_name ASC");
 $stmt->execute();
 $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);

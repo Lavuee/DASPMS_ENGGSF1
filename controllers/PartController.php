@@ -2,7 +2,6 @@
 session_start();
 require_once '../config/Database.php';
 
-// Security check: Only Owner and Cashier can manage inventory
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer' || $_SESSION['role'] === 'Head Mechanic') {
     header("Location: ../views/login.php");
     exit;
@@ -12,17 +11,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
     $db = (new Database())->getConnection();
 
     try {
-        // --- ADD NEW PART ---
         if ($_POST['action'] == 'add') {
             $part_name = $_POST['part_name'];
             $category = $_POST['category'];
             $quantity = $_POST['quantity_on_hand'];
             $price = $_POST['unit_price'];
             
-            // Set some default values for missing form fields to prevent database errors
             $description = $_POST['description'] ?? "$category part";
             $low_stock = $_POST['low_stock_threshold'] ?? 5;
-            $cost_price = $price * 0.7; // Automatically estimate cost price if not provided
+            $cost_price = $price * 0.7; 
 
             $query = "INSERT INTO part (part_name, category, description, quantity_on_hand, unit_price, cost_price, low_stock_threshold, is_active) 
                       VALUES (:name, :cat, :desc, :qty, :price, :cost, :low, 1)";
@@ -40,7 +37,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
             $_SESSION['success_message'] = "Part added to inventory successfully!";
         }
 
-        // --- EDIT EXISTING PART ---
         elseif ($_POST['action'] == 'edit') {
             $part_id = $_POST['part_id'];
             $part_name = $_POST['part_name'];
@@ -59,7 +55,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
             $_SESSION['success_message'] = "Part updated successfully!";
         }
 
-        // --- DELETE PART ---
         elseif ($_POST['action'] == 'delete') {
             $part_id = $_POST['part_id'];
 
@@ -71,8 +66,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
         }
 
     } catch (PDOException $e) {
-        // Error 23000 is a Foreign Key Constraint violation.
-        // It happens if you try to delete a part that is already tied to an invoice or past order.
         if ($e->getCode() == 23000) {
             $_SESSION['error_message'] = "Action Denied: You cannot delete this part because it is linked to past sales or job orders.";
         } else {
@@ -80,7 +73,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
         }
     }
 
-    // Redirect back to the inventory page
     header("Location: ../views/inventory.php");
     exit;
 }

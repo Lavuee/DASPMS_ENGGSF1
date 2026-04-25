@@ -5,7 +5,6 @@ require_once '../config/Database.php';
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
     $db = (new Database())->getConnection();
 
-    // --- LOGIN LOGIC ---
     if ($_POST['action'] == 'login') {
         $login_id = trim($_POST['login_id']); 
         $password = $_POST['password'];
@@ -14,7 +13,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
         $stmt->execute([':id' => $login_id]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        // Verification: Checks hashed passwords AND plain text for the manual reset accounts
         if ($user && (password_verify($password, $user['password_hash']) || $password === $user['password_hash'])) {
             $_SESSION['logged_in'] = true;
             $_SESSION['user_id'] = $user['user_id'];

@@ -5,13 +5,11 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// Fetch vehicles with their owners
 $stmt = $db->prepare("SELECT v.*, c.first_name, c.last_name FROM vehicle v JOIN customer c ON v.customer_id = c.customer_id ORDER BY v.plate_number ASC");
 $stmt->execute();
 $vehicles = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $vehicleCount = count($vehicles);
 
-// Fetch all customers for the Add Vehicle Dropdown
 $stmtCustomers = $db->prepare("SELECT customer_id, first_name, last_name FROM customer ORDER BY first_name ASC");
 $stmtCustomers->execute();
 $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);

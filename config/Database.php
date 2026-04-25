@@ -2,8 +2,8 @@
 class Database {
     private $host = "localhost";
     private $db_name = "daspms";
-    private $username = "root"; // Default XAMPP username
-    private $password = "";     // Default XAMPP password
+    private $username = "root"; 
+    private $password = "";   
     public $conn;
 
     public function getConnection() {

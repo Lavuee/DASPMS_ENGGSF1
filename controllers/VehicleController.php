@@ -15,7 +15,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
         $vehicle->year = $_POST['year'];
         $vehicle->color = $_POST['color'];
         
-        // Safely fallback if notes aren't provided to stop the undefined key warning
         $vehicle->notes = $_POST['notes'] ?? ''; 
 
         try {
@@ -25,7 +24,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 $_SESSION['error_message'] = "Failed to register vehicle.";
             }
         } catch (PDOException $e) {
-            // Gracefully catch the foreign key violation instead of fatal crashing
             if ($e->getCode() == 23000) {
                 $_SESSION['error_message'] = "Database Error: Please ensure you selected a valid customer from the dropdown.";
             } else {

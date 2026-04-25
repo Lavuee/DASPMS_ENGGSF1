@@ -6,7 +6,6 @@ class PartOrder {
         $this->conn = $db;
     }
 
-    // Fetch all online orders for the Cashier/Owner
     public function getAllOrders() {
         $query = "SELECT po.order_id, po.order_date, po.status, po.total_amount, 
                          c.first_name, c.last_name, 
@@ -27,21 +26,17 @@ class PartOrder {
         return $stmt;
     }
 
-    // Update order status (and deduct inventory if completed)
     public function updateStatus($order_id, $new_status, $part_id = null, $quantity = null) {
         try {
             $this->conn->beginTransaction();
 
-            // Prevent double-deduction by checking current status first
             $checkStmt = $this->conn->prepare("SELECT status FROM part_order WHERE order_id = ?");
             $checkStmt->execute([$order_id]);
             $current_status = $checkStmt->fetchColumn();
 
-            // Update the status
             $stmt = $this->conn->prepare("UPDATE part_order SET status = ? WHERE order_id = ?");
             $stmt->execute([$new_status, $order_id]);
 
-            // If changing to Completed for the first time, deduct the physical stock
             if ($new_status == 'Completed' && $current_status != 'Completed' && $part_id && $quantity) {
                 $deductStmt = $this->conn->prepare("UPDATE part SET quantity_on_hand = quantity_on_hand - ? WHERE part_id = ?");
                 $deductStmt->execute([$quantity, $part_id]);

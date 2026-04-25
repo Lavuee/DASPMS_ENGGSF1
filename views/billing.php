@@ -8,7 +8,6 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// CRITICAL FIX: Changed i.invoice_date to jo.date_created
 $query = "SELECT jo.job_order_id, jo.job_order_number, i.total_amount, 
                  c.customer_id, c.first_name, c.last_name, 
                  i.amount_paid, 
@@ -203,7 +202,6 @@ foreach($bills as $b) {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // Tab Filtering Logic
     const tabs = document.querySelectorAll('.tab-item');
     const cards = document.querySelectorAll('.invoice-card');
 
@@ -223,7 +221,6 @@ foreach($bills as $b) {
         });
     });
 
-    // Search Bar Logic
     document.getElementById('searchInput').addEventListener('input', function(e) {
         const term = e.target.value.toLowerCase();
         cards.forEach(card => {

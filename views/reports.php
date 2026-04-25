@@ -5,7 +5,6 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// 1. Determine which filter is active (Default: This Week)
 $filter = $_GET['filter'] ?? 'week';
 
 $datePay = ""; $datePOS = ""; $dateOrd = "";
@@ -17,13 +16,12 @@ if ($filter === 'today') {
     $datePay = "WHERE YEAR(payment_date) = YEAR(CURDATE()) AND MONTH(payment_date) = MONTH(CURDATE())";
     $datePOS = "WHERE status = 'Completed' AND YEAR(transaction_date) = YEAR(CURDATE()) AND MONTH(transaction_date) = MONTH(CURDATE())";
     $dateOrd = "WHERE status = 'Completed' AND YEAR(order_date) = YEAR(CURDATE()) AND MONTH(order_date) = MONTH(CURDATE())";
-} else { // 'week' (Default)
+} else { 
     $datePay = "WHERE YEARWEEK(payment_date, 1) = YEARWEEK(CURDATE(), 1)";
     $datePOS = "WHERE status = 'Completed' AND YEARWEEK(transaction_date, 1) = YEARWEEK(CURDATE(), 1)";
     $dateOrd = "WHERE status = 'Completed' AND YEARWEEK(order_date, 1) = YEARWEEK(CURDATE(), 1)";
 }
 
-// 2. Fetch the filtered data
 $repairsTotal = $db->query("SELECT SUM(amount) FROM payment $datePay")->fetchColumn() ?: 0;
 $posTotal = $db->query("SELECT SUM(total_amount) FROM pos_transaction $datePOS")->fetchColumn() ?: 0;
 $onlineTotal = $db->query("SELECT SUM(total_amount) FROM part_order $dateOrd")->fetchColumn() ?: 0;
@@ -152,7 +150,6 @@ new Chart(ctxRevenue, {
     }
 });
 
-// Doughnut Chart (Dynamic Breakdown)
 const svcRev = <?php echo $repairsTotal; ?>;
 const prtsRev = <?php echo ($posTotal + $onlineTotal); ?>;
 const ctxPayment = document.getElementById('paymentChart').getContext('2d');
@@ -161,7 +158,7 @@ new Chart(ctxPayment, {
     data: {
         labels: ['Services', 'Parts'],
         datasets: [{
-            data: [svcRev > 0 ? svcRev : 1, prtsRev > 0 ? prtsRev : 1], // Avoids empty grey circle if 0
+            data: [svcRev > 0 ? svcRev : 1, prtsRev > 0 ? prtsRev : 1],
             backgroundColor: ['#1e40af', '#10b981'],
             borderWidth: 4,
             borderColor: '#ffffff',
