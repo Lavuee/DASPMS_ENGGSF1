@@ -555,12 +555,19 @@ body {
 @media print {
     @page {
         size: A4 portrait;
-        margin: 12mm;
+        margin: 8mm;
     }
 
+    html,
     body {
+        width: 210mm;
+        min-height: 297mm;
         background: #ffffff !important;
         color: #111827 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
     }
 
     .no-print {
@@ -568,41 +575,98 @@ body {
     }
 
     .invoice-page {
-        max-width: 100%;
-        margin: 0;
-        padding: 0;
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
     }
 
     .invoice-wrapper {
-        box-shadow: none;
-        margin: 0;
-        max-width: 100%;
-        border-radius: 0;
-        padding: 28px 30px;
-        overflow: visible;
+        width: 174mm !important;
+        max-width: 174mm !important;
+        margin: 0 auto !important;
+        background: #ffffff !important;
+        padding: 14mm 12mm !important;
+        border-radius: 14px !important;
+        box-shadow: none !important;
+        position: relative !important;
+        overflow: hidden !important;
+        page-break-inside: avoid;
+        break-inside: avoid;
     }
 
     .invoice-top-accent {
-        top: 0;
-        left: 30px;
+        top: 0 !important;
+        left: 12mm !important;
+        width: 58px !important;
+        height: 92px !important;
+        background: #111827 !important;
+        display: flex !important;
+    }
+
+    .invoice-header {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        gap: 2rem !important;
+        align-items: start !important;
+        margin-bottom: 2.3rem !important;
+        padding-left: 82px !important;
+    }
+
+    .invoice-title {
+        font-size: 2.25rem !important;
+        letter-spacing: 0.25rem !important;
+        text-align: right !important;
+    }
+
+    .invoice-meta-value,
+    .transaction-info {
+        text-align: right !important;
+    }
+
+    .invoice-info-grid {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 2.5rem !important;
+        margin-bottom: 2.2rem !important;
+    }
+
+    .invoice-bottom-grid {
+        display: grid !important;
+        grid-template-columns: 0.9fr 1.1fr !important;
+        gap: 2.2rem !important;
+        align-items: start !important;
+        margin-top: 1.4rem !important;
+    }
+
+    .invoice-footer-grid {
+        display: grid !important;
+        grid-template-columns: 1.2fr 0.8fr !important;
+        gap: 2rem !important;
+        margin-top: 2.4rem !important;
+        align-items: end !important;
     }
 
     .invoice-contact-strip {
-        margin-left: -30px;
-        margin-right: -30px;
-        margin-bottom: -28px;
-        padding-left: 30px;
-        padding-right: 30px;
+        margin: 2.2rem -12mm -14mm !important;
+        padding: 1rem 12mm !important;
+        border-top: 1px solid #e5e7eb !important;
+        background: #fafafa !important;
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 1rem !important;
     }
 
     .invoice-items-table thead th,
     .invoice-total-table .grand-total-row td,
     .contact-icon,
     .invoice-top-accent {
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
     }
 }
+
 </style>
 </head>
 
@@ -694,10 +758,6 @@ body {
 
                 <div class="info-line">
                     <strong>Reference:</strong> <?php echo htmlspecialchars($referenceNo); ?>
-                </div>
-
-                <div class="info-line">
-                    <strong>Payment Status:</strong> <?php echo htmlspecialchars($invoice['payment_status']); ?>
                 </div>
             </div>
         </div>

@@ -28,6 +28,22 @@ $stmt = $db->prepare($query);
 $stmt->execute();
 $jobOrders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$vehicles = [];
+
+if ($_SESSION['role'] !== 'Head Mechanic') {
+    $stmtV = $db->prepare("
+        SELECT 
+            v.*, 
+            c.first_name, 
+            c.last_name 
+        FROM vehicle v 
+        JOIN customer c ON v.customer_id = c.customer_id 
+        ORDER BY v.plate_number ASC
+    ");
+    $stmtV->execute();
+    $vehicles = $stmtV->fetchAll(PDO::FETCH_ASSOC);
+}
+
 $counts = [
     'All' => count($jobOrders),
     'Pending' => 0,
@@ -260,22 +276,22 @@ function getDisplayCost($jo) {
         white-space: nowrap;
     }
 
+    .jo-date,
+    .jo-customer,
+    .jo-vehicle,
+    .jo-total {
+        font-size: 0.95rem;
+        white-space: nowrap;
+    }
+
+    .jo-customer,
+    .jo-vehicle,
+    .jo-total {
+        font-weight: 900;
+    }
+
     .jo-date {
-        font-size: 0.95rem;
         font-weight: 500;
-        white-space: nowrap;
-    }
-
-    .jo-customer {
-        font-size: 0.95rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .jo-vehicle {
-        font-size: 0.95rem;
-        font-weight: 900;
-        white-space: nowrap;
     }
 
     .jo-vehicle-sub {
@@ -293,13 +309,6 @@ function getDisplayCost($jo) {
         font-size: 0.95rem;
         font-weight: 800;
         text-align: center;
-    }
-
-    .jo-total {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        white-space: nowrap;
     }
 
     .jo-status {
@@ -544,10 +553,10 @@ function getDisplayCost($jo) {
         padding-top: 0.6rem;
     }
 
-    .job-detail-close-btn {
-        border: 1px solid #e5e7eb;
-        background: transparent;
-        color: var(--dashboard-text-main);
+    .job-detail-close-btn,
+    .job-detail-edit-btn,
+    .minimal-cancel-btn,
+    .minimal-save-btn {
         border-radius: 999px;
         padding: 0.55rem 1rem;
         font-size: 0.9rem;
@@ -555,23 +564,29 @@ function getDisplayCost($jo) {
         transition: 0.2s ease;
     }
 
-    .job-detail-close-btn:hover {
+    .job-detail-close-btn,
+    .minimal-cancel-btn {
+        border: 1px solid #e5e7eb;
+        background: transparent;
+        color: var(--dashboard-text-main);
+    }
+
+    .job-detail-close-btn:hover,
+    .minimal-cancel-btn:hover {
         background: #f8fafc;
         color: var(--black);
     }
 
-    .job-detail-edit-btn {
+    .job-detail-edit-btn,
+    .minimal-save-btn {
         border: 1px solid var(--dashboard-primary);
         background: var(--dashboard-primary);
         color: var(--black);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
         font-weight: 900;
-        transition: 0.2s ease;
     }
 
-    .job-detail-edit-btn:hover {
+    .job-detail-edit-btn:hover,
+    .minimal-save-btn:hover {
         background: var(--black);
         border-color: var(--black);
         color: var(--white);
@@ -633,6 +648,21 @@ function getDisplayCost($jo) {
         background: transparent;
     }
 
+    select.minimal-control {
+        cursor: pointer;
+    }
+
+    .empty-vehicle-note {
+        grid-column: 1 / -1;
+        border: 1px solid #fde68a;
+        background: #fffbeb;
+        color: #92400e;
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        font-size: 0.88rem;
+        font-weight: 700;
+    }
+
     textarea.minimal-control {
         min-height: 105px;
         resize: vertical;
@@ -679,45 +709,6 @@ function getDisplayCost($jo) {
         padding-top: 0.75rem;
     }
 
-    .minimal-cancel-btn {
-        border: 1px solid #e5e7eb;
-        background: transparent;
-        color: var(--dashboard-text-main);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        transition: 0.2s ease;
-    }
-
-    .minimal-cancel-btn:hover {
-        background: #f8fafc;
-        color: var(--black);
-    }
-
-    .minimal-save-btn {
-        border: 1px solid var(--dashboard-primary);
-        background: var(--dashboard-primary);
-        color: var(--black);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 900;
-        transition: 0.2s ease;
-    }
-
-    .minimal-save-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
-    }
-
-    @media (max-width: 991.98px) {
-        .jo-header h2 {
-            font-size: 2rem;
-        }
-    }
-
     @media (max-width: 767.98px) {
         .jo-header {
             flex-direction: column;
@@ -737,17 +728,8 @@ function getDisplayCost($jo) {
             font-size: 1.75rem;
         }
 
-        .jo-search-bar {
-            min-height: 42px;
-            padding: 0.65rem 0.9rem;
-        }
-
         .job-detail-grid {
             grid-template-columns: 1fr;
-        }
-
-        .job-detail-profile {
-            align-items: flex-start;
         }
 
         .job-detail-footer,
@@ -773,7 +755,7 @@ function getDisplayCost($jo) {
             grid-column: 1 / -1;
         }
     }
-</style>
+    </style>
 </head>
 <body>
 
@@ -790,10 +772,10 @@ function getDisplayCost($jo) {
                 </div>
 
                 <?php if ($_SESSION['role'] !== 'Head Mechanic'): ?>
-                    <a href="create_job_order.php" class="jo-create-btn">
+                    <button type="button" class="jo-create-btn" data-bs-toggle="modal" data-bs-target="#createJobOrderModal">
                         <i class="bi bi-plus-lg"></i>
                         New Job Order
-                    </a>
+                    </button>
                 <?php endif; ?>
             </div>
 
@@ -840,8 +822,7 @@ function getDisplayCost($jo) {
                     Cancelled (<?php echo $counts['Cancelled']; ?>)
                 </button>
             </div>
-
-            <div class="jo-search-wrap">
+                        <div class="jo-search-wrap">
                 <div class="jo-search-bar">
                     <i class="bi bi-search"></i>
                     <input
@@ -1319,6 +1300,103 @@ function getDisplayCost($jo) {
                     </tbody>
                 </table>
             </div>
+
+            <?php if ($_SESSION['role'] !== 'Head Mechanic'): ?>
+                <div class="modal fade" id="createJobOrderModal" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered modal-lg">
+                        <div class="modal-content">
+                            <form action="../controllers/JobOrderController.php" method="POST" class="minimal-job-form">
+                                <input type="hidden" name="action" value="create">
+
+                                <div class="modal-header">
+                                    <div>
+                                        <h5 class="modal-title">Create New Job Order</h5>
+                                        <small class="text-muted">
+                                            Register a new vehicle repair task while keeping customer and vehicle records connected.
+                                        </small>
+                                    </div>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+
+                                <div class="modal-body">
+                                    <div class="minimal-section-title">Basic Job Details</div>
+
+                                    <div class="minimal-form-grid">
+                                        <?php if (count($vehicles) === 0): ?>
+                                            <div class="empty-vehicle-note">
+                                                <i class="bi bi-exclamation-triangle me-2"></i>
+                                                No registered vehicles found. Please add a customer vehicle first before creating a job order.
+                                            </div>
+                                        <?php endif; ?>
+
+                                        <div class="minimal-form-field full">
+                                            <label class="minimal-label">Vehicle & Customer</label>
+                                            <select name="vehicle_id" class="minimal-control" required <?php echo count($vehicles) === 0 ? 'disabled' : ''; ?>>
+                                                <option value="" disabled selected>Select vehicle by plate number</option>
+                                                <?php foreach ($vehicles as $v): ?>
+                                                    <option value="<?php echo intval($v['vehicle_id']); ?>">
+                                                        <?php
+                                                            echo htmlspecialchars(
+                                                                $v['plate_number'] . ' - ' .
+                                                                $v['make'] . ' ' .
+                                                                $v['model'] . ' (' .
+                                                                $v['first_name'] . ' ' .
+                                                                $v['last_name'] . ')'
+                                                            );
+                                                        ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <div class="minimal-helper">
+                                                Choose the vehicle that will be assigned to this job order.
+                                            </div>
+                                        </div>
+
+                                        <div class="minimal-form-field full">
+                                            <label class="minimal-label">Repair Description</label>
+                                            <textarea
+                                                name="description"
+                                                class="minimal-control"
+                                                placeholder="Describe the issue, symptoms, diagnosis, or requested repair..."
+                                                required
+                                            ></textarea>
+                                            <div class="minimal-helper">
+                                                This will help mechanics and billing staff understand the repair scope.
+                                            </div>
+                                        </div>
+
+                                        <div class="minimal-form-field">
+                                            <label class="minimal-label">Estimated Cost (₱)</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                name="estimated_cost"
+                                                class="minimal-control"
+                                                placeholder="0.00"
+                                                required
+                                            >
+                                            <div class="minimal-helper">
+                                                Initial amount for the repair job.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="modal-footer minimal-modal-footer">
+                                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
+                                        Cancel
+                                    </button>
+                                    <button type="submit" class="minimal-save-btn" <?php echo count($vehicles) === 0 ? 'disabled' : ''; ?>>
+                                        Save Job Order
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
 
         </div>
     </main>
