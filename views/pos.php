@@ -205,6 +205,31 @@ $stmtHistory = (new POS($db))->readRecent();
         background-color: rgba(255, 255, 255, 0.92);
     }
 
+    .customer-type-box {
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 14px;
+        padding: 0.85rem;
+        background: rgba(255, 255, 255, 0.42);
+    }
+
+    .customer-type-help {
+        color: var(--dashboard-text-muted);
+        font-size: 0.78rem;
+        line-height: 1.45;
+        margin-top: 0.35rem;
+    }
+
+    .walkin-fields {
+        display: none;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(15, 23, 42, 0.08);
+    }
+
+    .registered-customer-box {
+        display: none;
+    }
+
     .cart-header-row {
         display: grid;
         grid-template-columns: minmax(0, 2fr) 90px 115px 44px;
@@ -482,7 +507,7 @@ $stmtHistory = (new POS($db))->readRecent();
                     <div class="pos-panel-header">
                         <div>
                             <h5>New Transaction</h5>
-                            <p>Select customer, add parts, and confirm payment.</p>
+                            <p>Select customer type, add parts, and confirm payment.</p>
                         </div>
 
                         <span class="checkout-pill">
@@ -504,20 +529,76 @@ $stmtHistory = (new POS($db))->readRecent();
 
                                 <div class="row g-3">
                                     <div class="col-md-7">
-                                        <label class="form-label">Customer</label>
-                                        <select name="customer_id" class="form-select">
-                                            <option value="">Walk-in Customer</option>
-                                            <?php while ($cRow = $stmtCustomers->fetch(PDO::FETCH_ASSOC)): ?>
-                                                <option value="<?php echo intval($cRow['customer_id']); ?>">
-                                                    <?php echo htmlspecialchars($cRow['last_name'] . ', ' . $cRow['first_name']); ?>
-                                                </option>
-                                            <?php endwhile; ?>
+                                        <label class="form-label">Customer Type</label>
+                                        <select name="customer_type" class="form-select" id="customerType" required>
+                                            <option value="Walk-in">Walk-in Guest / One-time Buyer</option>
+                                            <option value="Registered">Existing Registered Customer</option>
                                         </select>
+
+                                        <div class="customer-type-help">
+                                            Walk-in guest details are saved only in this POS sale and will not be added to the Customers list.
+                                        </div>
                                     </div>
 
                                     <div class="col-md-5">
                                         <label class="form-label">Transaction Type</label>
                                         <input type="text" class="form-control" value="Parts Sale" readonly>
+                                    </div>
+                                </div>
+
+                                <div class="registered-customer-box" id="registeredCustomerBox">
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-12">
+                                            <label class="form-label">Registered Customer</label>
+                                            <select name="customer_id" class="form-select" id="customerId">
+                                                <option value="">Select registered customer</option>
+                                                <?php while ($cRow = $stmtCustomers->fetch(PDO::FETCH_ASSOC)): ?>
+                                                    <option value="<?php echo intval($cRow['customer_id']); ?>">
+                                                        <?php echo htmlspecialchars($cRow['last_name'] . ', ' . $cRow['first_name']); ?>
+                                                    </option>
+                                                <?php endwhile; ?>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="walkin-fields" id="walkinFields">
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">Walk-in Name</label>
+                                            <input
+                                                type="text"
+                                                name="walkin_customer_name"
+                                                id="walkinCustomerName"
+                                                class="form-control"
+                                                placeholder="Optional e.g. Juan Dela Cruz"
+                                                maxlength="150"
+                                            >
+                                        </div>
+
+                                        <div class="col-md-6">
+                                            <label class="form-label">Contact Number</label>
+                                            <input
+                                                type="text"
+                                                name="walkin_contact_number"
+                                                id="walkinContactNumber"
+                                                class="form-control"
+                                                placeholder="Optional"
+                                                maxlength="30"
+                                            >
+                                        </div>
+
+                                        <div class="col-12">
+                                            <label class="form-label">Address / Note</label>
+                                            <input
+                                                type="text"
+                                                name="walkin_address"
+                                                id="walkinAddress"
+                                                class="form-control"
+                                                placeholder="Optional address or short note"
+                                                maxlength="255"
+                                            >
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -610,6 +691,17 @@ $stmtHistory = (new POS($db))->readRecent();
                                 $hasHistory = false;
                                 while ($row = $stmtHistory->fetch(PDO::FETCH_ASSOC)):
                                     $hasHistory = true;
+
+                                    $customerDisplay = 'Walk-in Customer';
+
+                                    if (!empty($row['customer_id'])) {
+                                        $customerDisplay = trim(($row['customer_first_name'] ?? '') . ' ' . ($row['customer_last_name'] ?? ''));
+                                        $customerDisplay = $customerDisplay !== '' ? $customerDisplay : 'Registered Customer';
+                                    } elseif (!empty($row['walkin_customer_name'])) {
+                                        $customerDisplay = $row['walkin_customer_name'];
+                                    }
+
+                                    $customerTypeDisplay = !empty($row['customer_type']) ? $row['customer_type'] : 'Walk-in';
                             ?>
                                 <div class="recent-sale-card">
                                     <div class="d-flex justify-content-between align-items-start gap-3">
@@ -626,7 +718,13 @@ $stmtHistory = (new POS($db))->readRecent();
                                                 <div class="sale-meta">
                                                     <?php echo date('M d, h:i A', strtotime($row['transaction_date'])); ?>
                                                     <br>
+                                                    <?php echo htmlspecialchars($customerTypeDisplay); ?>:
+                                                    <?php echo htmlspecialchars($customerDisplay); ?>
+                                                    <br>
                                                     <?php echo htmlspecialchars($row['payment_method']); ?>
+                                                    <?php if (!empty($row['reference_number'])): ?>
+                                                        · Ref: <?php echo htmlspecialchars($row['reference_number']); ?>
+                                                    <?php endif; ?>
                                                 </div>
                                             </div>
                                         </div>
@@ -636,8 +734,8 @@ $stmtHistory = (new POS($db))->readRecent();
                                                 ₱<?php echo number_format(floatval($row['total_amount']), 2); ?>
                                             </div>
 
-                                            <a 
-                                                href="print_pos_receipt.php?pos_id=<?php echo intval($row['pos_id']); ?>" 
+                                            <a
+                                                href="print_pos_receipt.php?pos_id=<?php echo intval($row['pos_id']); ?>"
                                                 class="btn btn-outline-primary btn-sm receipt-btn"
                                                 target="_blank"
                                             >
@@ -664,8 +762,8 @@ $stmtHistory = (new POS($db))->readRecent();
                             POS Reminder
                         </h6>
                         <p>
-                            Add at least one item before processing payment. Reference number is required for
-                            GCash, Bank Transfer, and Cheque transactions.
+                            For one-time buyers, use Walk-in Guest so the sale is recorded without adding them to the Customers list.
+                            Reference number is required for GCash, Bank Transfer, and Cheque transactions.
                         </p>
                     </div>
                 </div>
@@ -689,8 +787,8 @@ function addCartRow() {
             const stockLabel = stock <= lowStock ? `Low Stock: ${stock}` : `Stock: ${stock}`;
 
             options += `
-                <option 
-                    value="${p.part_id}" 
+                <option
+                    value="${p.part_id}"
                     data-price="${p.unit_price}"
                     data-stock="${stock}"
                 >
@@ -709,26 +807,26 @@ function addCartRow() {
             </div>
 
             <div>
-                <input 
-                    type="number" 
-                    name="part_qtys[]" 
-                    class="form-control qty-input" 
-                    min="1" 
-                    value="1" 
-                    onchange="calculateTotal()" 
+                <input
+                    type="number"
+                    name="part_qtys[]"
+                    class="form-control qty-input"
+                    min="1"
+                    value="1"
+                    onchange="calculateTotal()"
                     oninput="calculateTotal()"
-                    required 
+                    required
                     placeholder="Qty"
                 >
             </div>
 
             <div>
-                <input 
-                    type="number" 
-                    step="0.01" 
-                    name="part_prices[]" 
-                    class="form-control price-input" 
-                    readonly 
+                <input
+                    type="number"
+                    step="0.01"
+                    name="part_prices[]"
+                    class="form-control price-input"
+                    readonly
                     placeholder="0.00"
                 >
             </div>
@@ -792,14 +890,54 @@ function calculateTotal() {
         '₱' + grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 });
 }
 
+function toggleCustomerFields() {
+    const customerType = document.getElementById('customerType').value;
+    const registeredBox = document.getElementById('registeredCustomerBox');
+    const walkinFields = document.getElementById('walkinFields');
+    const customerId = document.getElementById('customerId');
+
+    if (customerType === 'Registered') {
+        registeredBox.style.display = 'block';
+        walkinFields.style.display = 'none';
+        customerId.required = true;
+    } else {
+        registeredBox.style.display = 'none';
+        walkinFields.style.display = 'block';
+        customerId.required = false;
+        customerId.value = '';
+    }
+}
+
+function toggleReferenceField() {
+    const method = document.getElementById('paymentMethod').value;
+    const reference = document.getElementById('referenceNumber');
+
+    if (method === 'Cash') {
+        reference.placeholder = 'Optional for Cash';
+        reference.required = false;
+    } else {
+        reference.placeholder = 'Required';
+        reference.required = true;
+    }
+}
+
 document.getElementById('posForm').addEventListener('submit', function(e) {
     const cartRows = document.querySelectorAll('.cart-row');
     const method = document.getElementById('paymentMethod').value;
     const reference = document.getElementById('referenceNumber').value.trim();
+    const customerType = document.getElementById('customerType').value;
+    const customerId = document.getElementById('customerId').value;
 
     if (cartRows.length === 0) {
         e.preventDefault();
         alert('Please add at least one item.');
+        return;
+    }
+
+    if (customerType === 'Registered' && customerId === '') {
+        e.preventDefault();
+        alert('Please select a registered customer.');
+        document.getElementById('customerId').focus();
         return;
     }
 
@@ -811,15 +949,11 @@ document.getElementById('posForm').addEventListener('submit', function(e) {
     }
 });
 
-document.getElementById('paymentMethod').addEventListener('change', function() {
-    const reference = document.getElementById('referenceNumber');
+document.getElementById('customerType').addEventListener('change', toggleCustomerFields);
+document.getElementById('paymentMethod').addEventListener('change', toggleReferenceField);
 
-    if (this.value === 'Cash') {
-        reference.placeholder = 'Optional for Cash';
-    } else {
-        reference.placeholder = 'Required';
-    }
-});
+toggleCustomerFields();
+toggleReferenceField();
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

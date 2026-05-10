@@ -263,6 +263,48 @@ function serviceImagePath($image) {
         font-weight: 900 !important;
     }
 
+    .services-pagination-wrap {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .service-page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        color: var(--dashboard-text-muted);
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.45rem 0.75rem;
+        transition: 0.2s ease;
+    }
+
+    .service-page-btn:hover:not(:disabled) {
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
+    }
+
+    .service-page-btn.active {
+        background: var(--dashboard-primary);
+        border-color: var(--dashboard-primary);
+        color: var(--black);
+    }
+
+    .service-page-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
     .modal-content {
         border-radius: 20px;
         border: 1px solid var(--border-light);
@@ -442,6 +484,10 @@ function serviceImagePath($image) {
             font-size: 1.75rem;
         }
 
+        .services-pagination-wrap {
+            justify-content: center;
+        }
+
         .minimal-form-grid {
             grid-template-columns: 1fr;
         }
@@ -511,7 +557,7 @@ function serviceImagePath($image) {
             <?php endif; ?>
 
             <div class="services-table-wrap">
-                <table class="services-table">
+                <table class="services-table" id="servicesTable">
                     <thead>
                         <tr>
                             <th>Image</th>
@@ -537,7 +583,7 @@ function serviceImagePath($image) {
                         <?php endif; ?>
 
                         <?php foreach ($services as $s): ?>
-                            <tr>
+                            <tr class="service-row">
                                 <td>
                                     <img
                                         src="<?= serviceImagePath($s['image'] ?? '') ?>"
@@ -750,6 +796,8 @@ function serviceImagePath($image) {
                 </table>
             </div>
 
+            <div class="services-pagination-wrap" id="servicesPagination"></div>
+
         </div>
     </main>
 </div>
@@ -888,6 +936,93 @@ function serviceImagePath($image) {
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const ITEMS_PER_PAGE = 5;
+
+    const serviceRows = Array.from(document.querySelectorAll('.service-row'));
+    const servicesPagination = document.getElementById('servicesPagination');
+
+    let currentPage = 1;
+
+    function renderPagination(totalPages) {
+        if (!servicesPagination) {
+            return;
+        }
+
+        servicesPagination.innerHTML = '';
+
+        if (totalPages <= 1) {
+            servicesPagination.style.display = 'none';
+            return;
+        }
+
+        servicesPagination.style.display = 'flex';
+
+        const prevButton = document.createElement('button');
+        prevButton.type = 'button';
+        prevButton.className = 'service-page-btn';
+        prevButton.innerHTML = '&laquo;';
+        prevButton.disabled = currentPage === 1;
+        prevButton.addEventListener('click', function () {
+            if (currentPage > 1) {
+                currentPage--;
+                applyServicePagination();
+            }
+        });
+        servicesPagination.appendChild(prevButton);
+
+        for (let page = 1; page <= totalPages; page++) {
+            const pageButton = document.createElement('button');
+            pageButton.type = 'button';
+            pageButton.className = 'service-page-btn' + (page === currentPage ? ' active' : '');
+            pageButton.textContent = page;
+            pageButton.addEventListener('click', function () {
+                currentPage = page;
+                applyServicePagination();
+            });
+            servicesPagination.appendChild(pageButton);
+        }
+
+        const nextButton = document.createElement('button');
+        nextButton.type = 'button';
+        nextButton.className = 'service-page-btn';
+        nextButton.innerHTML = '&raquo;';
+        nextButton.disabled = currentPage === totalPages;
+        nextButton.addEventListener('click', function () {
+            if (currentPage < totalPages) {
+                currentPage++;
+                applyServicePagination();
+            }
+        });
+        servicesPagination.appendChild(nextButton);
+    }
+
+    function applyServicePagination() {
+        const totalPages = Math.ceil(serviceRows.length / ITEMS_PER_PAGE) || 1;
+
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
+        }
+
+        const start = (currentPage - 1) * ITEMS_PER_PAGE;
+        const end = start + ITEMS_PER_PAGE;
+
+        serviceRows.forEach(function (row) {
+            row.style.display = 'none';
+        });
+
+        serviceRows.slice(start, end).forEach(function (row) {
+            row.style.display = '';
+        });
+
+        renderPagination(totalPages);
+    }
+
+    applyServicePagination();
+});
+</script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 

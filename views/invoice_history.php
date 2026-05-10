@@ -1,7 +1,9 @@
-<?php
+<?php 
 session_start();
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer') {
+$allowedRoles = ['Owner', 'Cashier'];
+
+if (!isset($_SESSION['logged_in']) || !in_array($_SESSION['role'], $allowedRoles)) {
     header("Location: login.php");
     exit;
 }
@@ -197,7 +199,7 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     .history-table {
         width: 100%;
-        min-width: 1080px;
+        min-width: 980px;
         border-collapse: collapse;
         background: transparent;
         margin-bottom: 0;
@@ -209,14 +211,14 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
         font-weight: 900;
         text-transform: uppercase;
         letter-spacing: 0.35px;
-        padding: 1rem 0.9rem;
+        padding: 1rem 0.85rem;
         border-bottom: 1px solid rgba(15, 23, 42, 0.12);
         background: transparent;
         white-space: nowrap;
     }
 
     .history-table td {
-        padding: 1.05rem 0.9rem;
+        padding: 1.05rem 0.85rem;
         color: var(--dashboard-text-main);
         vertical-align: middle;
         border-bottom: 1px solid rgba(15, 23, 42, 0.065);
@@ -233,6 +235,10 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
         font-size: 0.94rem;
         font-weight: 900;
         margin-bottom: 0.35rem;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .type-pill {
@@ -262,22 +268,55 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
         white-space: nowrap;
     }
 
-    .money-total {
-        color: #047857;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .money-paid {
+    .reference-text {
         color: var(--dashboard-text-main);
-        font-weight: 700;
+        font-size: 0.9rem;
+        font-weight: 800;
         white-space: nowrap;
     }
 
-    .money-balance {
-        color: var(--black);
+    .amount-summary {
+        min-width: 230px;
+    }
+
+    .amount-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.45rem;
+    }
+
+    .amount-box {
+        border: 1px solid #edf0f4;
+        border-radius: 12px;
+        padding: 0.45rem 0.55rem;
+        background: rgba(248, 250, 252, 0.65);
+    }
+
+    .amount-label {
+        display: block;
+        color: var(--dashboard-text-muted);
+        font-size: 0.66rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.25px;
+        line-height: 1.15;
+    }
+
+    .amount-value {
+        display: block;
+        color: var(--dashboard-text-main);
+        font-size: 0.78rem;
         font-weight: 900;
         white-space: nowrap;
+        margin-top: 0.15rem;
+    }
+
+    .amount-value.total {
+        color: #047857;
+    }
+
+    .amount-value.balance {
+        color: var(--black);
     }
 
     .invoice-status {
@@ -343,9 +382,55 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
         margin-bottom: 0.65rem;
     }
 
+    .history-pagination-wrap {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .history-page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        color: var(--dashboard-text-muted);
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.45rem 0.75rem;
+        transition: 0.2s ease;
+    }
+
+    .history-page-btn:hover:not(:disabled) {
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
+    }
+
+    .history-page-btn.active {
+        background: var(--dashboard-primary);
+        border-color: var(--dashboard-primary);
+        color: var(--black);
+    }
+
+    .history-page-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
     @media (max-width: 1199.98px) {
         .history-filters {
             grid-template-columns: 1fr 1fr;
+        }
+
+        .amount-summary-grid {
+            grid-template-columns: 1fr;
         }
     }
 
@@ -366,6 +451,10 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         .history-filters {
             grid-template-columns: 1fr;
+        }
+
+        .history-pagination-wrap {
+            justify-content: center;
         }
     }
 </style>
@@ -432,16 +521,14 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <div class="history-table-wrap">
-            <table class="history-table">
+            <table class="history-table" id="invoiceHistoryTable">
                 <thead>
                     <tr>
                         <th>Invoice No.</th>
                         <th>Customer</th>
                         <th>Type</th>
                         <th>Reference</th>
-                        <th>Total</th>
-                        <th>Paid</th>
-                        <th>Balance</th>
+                        <th>Amount Summary</th>
                         <th>Status</th>
                         <th>Action</th>
                     </tr>
@@ -488,13 +575,9 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 data-status="<?php echo htmlspecialchars($status); ?>"
                             >
                                 <td>
-                                    <div class="invoice-main">
+                                    <div class="invoice-main" title="<?php echo htmlspecialchars($invoice['invoice_number']); ?>">
                                         <?php echo htmlspecialchars($invoice['invoice_number']); ?>
                                     </div>
-
-                                    <span class="type-pill <?php echo $typeClass; ?>">
-                                        <?php echo htmlspecialchars($typeLabel); ?>
-                                    </span>
                                 </td>
 
                                 <td>
@@ -504,29 +587,40 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 </td>
 
                                 <td>
-                                    <?php echo htmlspecialchars($invoice['invoice_type']); ?>
-                                </td>
-
-                                <td>
-                                    <?php echo htmlspecialchars($reference); ?>
-                                </td>
-
-                                <td>
-                                    <span class="money-total">
-                                        ₱<?php echo number_format($invoice['total_amount'], 2); ?>
+                                    <span class="type-pill <?php echo $typeClass; ?>">
+                                        <?php echo htmlspecialchars($typeLabel); ?>
                                     </span>
                                 </td>
 
                                 <td>
-                                    <span class="money-paid">
-                                        ₱<?php echo number_format($invoice['amount_paid'], 2); ?>
+                                    <span class="reference-text">
+                                        <?php echo htmlspecialchars($reference); ?>
                                     </span>
                                 </td>
 
-                                <td>
-                                    <span class="money-balance">
-                                        ₱<?php echo number_format($invoice['balance_due'], 2); ?>
-                                    </span>
+                                <td class="amount-summary">
+                                    <div class="amount-summary-grid">
+                                        <div class="amount-box">
+                                            <span class="amount-label">Total</span>
+                                            <span class="amount-value total">
+                                                ₱<?php echo number_format($invoice['total_amount'], 2); ?>
+                                            </span>
+                                        </div>
+
+                                        <div class="amount-box">
+                                            <span class="amount-label">Paid</span>
+                                            <span class="amount-value">
+                                                ₱<?php echo number_format($invoice['amount_paid'], 2); ?>
+                                            </span>
+                                        </div>
+
+                                        <div class="amount-box">
+                                            <span class="amount-label">Balance</span>
+                                            <span class="amount-value balance">
+                                                ₱<?php echo number_format($invoice['balance_due'], 2); ?>
+                                            </span>
+                                        </div>
+                                    </div>
                                 </td>
 
                                 <td>
@@ -550,7 +644,7 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <?php endforeach; ?>
 
                         <tr id="noResults" style="display:none;">
-                            <td colspan="9">
+                            <td colspan="7">
                                 <div class="empty-state">
                                     <i class="bi bi-search"></i>
                                     <div class="fw-bold mb-1">No results found</div>
@@ -562,7 +656,7 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <?php else: ?>
 
                         <tr>
-                            <td colspan="9">
+                            <td colspan="7">
                                 <div class="empty-state">
                                     <i class="bi bi-receipt"></i>
                                     <div class="fw-bold mb-1">No invoice records found</div>
@@ -576,6 +670,8 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </table>
         </div>
 
+        <div class="history-pagination-wrap" id="invoicePagination"></div>
+
     </div>
 </main>
 </div>
@@ -583,46 +679,152 @@ $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-const search = document.getElementById('invoiceSearch');
-const type = document.getElementById('typeFilter');
-const status = document.getElementById('statusFilter');
-const clearFilters = document.getElementById('clearFilters');
-const rows = document.querySelectorAll('.invoice-row');
-const noResults = document.getElementById('noResults');
+const ITEMS_PER_PAGE = 5;
 
-function filterInvoices() {
-    let visible = 0;
+const search = document.getElementById('invoiceSearch');
+const typeFilter = document.getElementById('typeFilter');
+const statusFilter = document.getElementById('statusFilter');
+const clearFilters = document.getElementById('clearFilters');
+const rows = Array.from(document.querySelectorAll('.invoice-row'));
+const noResults = document.getElementById('noResults');
+const pagination = document.getElementById('invoicePagination');
+
+let currentPage = 1;
+
+function getFilteredRows() {
+    const searchValue = search ? search.value.toLowerCase().trim() : '';
+    const typeValue = typeFilter ? typeFilter.value : 'all';
+    const statusValue = statusFilter ? statusFilter.value : 'all';
+
+    return rows.filter(row => {
+        const matchSearch = (row.dataset.search || '').includes(searchValue);
+        const matchType = typeValue === 'all' || row.dataset.type === typeValue;
+        const matchStatus = statusValue === 'all' || row.dataset.status === statusValue;
+
+        return matchSearch && matchType && matchStatus;
+    });
+}
+
+function renderPagination(totalPages) {
+    if (!pagination) {
+        return;
+    }
+
+    pagination.innerHTML = '';
+
+    if (totalPages <= 1) {
+        pagination.style.display = 'none';
+        return;
+    }
+
+    pagination.style.display = 'flex';
+
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = 'history-page-btn';
+    prevButton.innerHTML = '&laquo;';
+    prevButton.disabled = currentPage === 1;
+    prevButton.addEventListener('click', function () {
+        if (currentPage > 1) {
+            currentPage--;
+            applyInvoiceFilters();
+        }
+    });
+    pagination.appendChild(prevButton);
+
+    for (let page = 1; page <= totalPages; page++) {
+        const pageButton = document.createElement('button');
+        pageButton.type = 'button';
+        pageButton.className = 'history-page-btn' + (page === currentPage ? ' active' : '');
+        pageButton.textContent = page;
+        pageButton.addEventListener('click', function () {
+            currentPage = page;
+            applyInvoiceFilters();
+        });
+        pagination.appendChild(pageButton);
+    }
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'history-page-btn';
+    nextButton.innerHTML = '&raquo;';
+    nextButton.disabled = currentPage === totalPages;
+    nextButton.addEventListener('click', function () {
+        if (currentPage < totalPages) {
+            currentPage++;
+            applyInvoiceFilters();
+        }
+    });
+    pagination.appendChild(nextButton);
+}
+
+function applyInvoiceFilters() {
+    const filteredRows = getFilteredRows();
+    const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE) || 1;
+
+    if (currentPage > totalPages) {
+        currentPage = totalPages;
+    }
+
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
 
     rows.forEach(row => {
-        const matchSearch = row.dataset.search.includes(search.value.toLowerCase());
-        const matchType = type.value === 'all' || row.dataset.type === type.value;
-        const matchStatus = status.value === 'all' || row.dataset.status === status.value;
+        row.style.display = 'none';
+    });
 
-        if (matchSearch && matchType && matchStatus) {
-            row.style.display = '';
-            visible++;
-        } else {
-            row.style.display = 'none';
-        }
+    filteredRows.slice(start, end).forEach(row => {
+        row.style.display = '';
     });
 
     if (noResults) {
-        noResults.style.display = (visible === 0 && rows.length > 0) ? '' : 'none';
+        noResults.style.display = filteredRows.length === 0 && rows.length > 0 ? '' : 'none';
     }
+
+    renderPagination(totalPages);
 }
 
-search.addEventListener('input', filterInvoices);
-type.addEventListener('change', filterInvoices);
-status.addEventListener('change', filterInvoices);
+if (search) {
+    search.addEventListener('input', function () {
+        currentPage = 1;
+        applyInvoiceFilters();
+    });
+}
+
+if (typeFilter) {
+    typeFilter.addEventListener('change', function () {
+        currentPage = 1;
+        applyInvoiceFilters();
+    });
+}
+
+if (statusFilter) {
+    statusFilter.addEventListener('change', function () {
+        currentPage = 1;
+        applyInvoiceFilters();
+    });
+}
 
 if (clearFilters) {
     clearFilters.addEventListener('click', function () {
-        search.value = '';
-        type.value = 'all';
-        status.value = 'all';
-        filterInvoices();
+        if (search) {
+            search.value = '';
+        }
+
+        if (typeFilter) {
+            typeFilter.value = 'all';
+        }
+
+        if (statusFilter) {
+            statusFilter.value = 'all';
+        }
+
+        currentPage = 1;
+        applyInvoiceFilters();
     });
 }
+
+applyInvoiceFilters();
 </script>
 
 </body>

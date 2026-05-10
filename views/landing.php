@@ -46,27 +46,28 @@ try {
     $featuredServices = [];
 }
 
-function partImagePath($image) {
-    if (!$image) {
-        return 'assets/images/parts/default.png';
-    }
+function plainText($value, $fallback = '')
+{
+    $value = trim(html_entity_decode((string)($value ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
 
-    return 'assets/images/parts/' . htmlspecialchars($image);
+    return $value !== '' ? $value : $fallback;
 }
 
-function serviceImagePath($image) {
-    if (!$image) {
-        return 'assets/images/services/default.png';
-    }
-
-    return 'assets/images/services/' . htmlspecialchars($image);
+function displayText($value, $fallback = 'N/A')
+{
+    return htmlspecialchars(plainText($value, $fallback), ENT_QUOTES, 'UTF-8');
 }
 
-function limitText($text, $limit = 95) {
-    $text = trim((string) $text);
+function limitText($text, $limit = 95)
+{
+    $text = plainText($text, 'No description available.');
 
-    if ($text === '') {
-        return 'No description available.';
+    if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+        if (mb_strlen($text) <= $limit) {
+            return $text;
+        }
+
+        return mb_substr($text, 0, $limit) . '...';
     }
 
     if (strlen($text) <= $limit) {
@@ -74,6 +75,29 @@ function limitText($text, $limit = 95) {
     }
 
     return substr($text, 0, $limit) . '...';
+}
+
+function displayLimitText($text, $limit = 95)
+{
+    return htmlspecialchars(limitText($text, $limit), ENT_QUOTES, 'UTF-8');
+}
+
+function partImagePath($image)
+{
+    if (!$image) {
+        return 'assets/images/parts/default.png';
+    }
+
+    return 'assets/images/parts/' . htmlspecialchars($image, ENT_QUOTES, 'UTF-8');
+}
+
+function serviceImagePath($image)
+{
+    if (!$image) {
+        return 'assets/images/services/default.png';
+    }
+
+    return 'assets/images/services/' . htmlspecialchars($image, ENT_QUOTES, 'UTF-8');
 }
 ?>
 
@@ -93,30 +117,51 @@ function limitText($text, $limit = 95) {
 
 <main>
     <section class="landing-hero">
-        <div class="container-fluid px-0">
-            <div class="hero-full-card">
-                <div class="hero-overlay-content">
+        <div class="hero-editorial">
+            <div class="hero-bg-word">AUTO</div>
+            <div class="hero-yellow-block"></div>
+
+            <div class="container hero-editorial-container">
+                <div class="hero-copy">
+                    <p class="hero-year">DASPMS</p>
+
                     <p class="hero-label">
                         Digital Auto Service and Parts Management System
                     </p>
 
                     <h1 class="hero-main-title">
-                        Reliable Auto Repair and Parts Services
+                        Repair Smarter.<br>
+                        Drive Safer.
                     </h1>
 
                     <p class="hero-main-text">
-                        Norily’s Vehicle Repair Shop provides trusted automotive repair,
-                        rewinding services, and auto parts support for regular and walk-in customers.
+                        Book service requests, browse available parts, and track repair updates
+                        through Norily’s Vehicle Repair Shop customer portal.
                     </p>
 
-                    <div class="d-flex flex-column flex-sm-row gap-3">
-                        <a href="#offerings" class="btn btn-dark-custom" data-nav-offering="parts">
-                            Browse Parts / Services
+                    <div class="hero-actions">
+                        <a href="public_pages/services.php" class="btn hero-primary-btn">
+                            Explore Services
                         </a>
 
-                        <a href="views/login.php" class="btn btn-outline-dark-custom">
-                            Login to Account
+                        <a href="public_pages/parts.php" class="btn hero-secondary-btn">
+                            Browse Parts
                         </a>
+                    </div>
+                </div>
+
+                <div class="hero-car-area">
+                    <div class="hero-car-wrap">
+                        <img
+                            src="assets/images/landing/yellow-car-hero.png"
+                            alt="Yellow car hero image"
+                            class="hero-car-img"
+                            onerror="this.style.display='none'; this.closest('.hero-car-wrap').classList.add('no-car-image');"
+                        >
+
+                        <div class="hero-car-placeholder">
+                            Add yellow car image here
+                        </div>
                     </div>
                 </div>
             </div>
@@ -148,23 +193,27 @@ function limitText($text, $limit = 95) {
                             <div class="col-sm-6 col-lg-3">
                                 <a
                                     href="public_pages/part-details.php?id=<?= urlencode($part['part_id']) ?>"
-                                    class="text-decoration-none text-reset"
+                                    class="text-decoration-none text-reset offering-item-link"
                                 >
                                     <div class="offering-card">
                                         <div class="offering-visual">
                                             <img
                                                 src="<?= partImagePath($part['image'] ?? '') ?>"
-                                                alt="<?= htmlspecialchars($part['part_name']) ?>"
+                                                alt="<?= displayText($part['part_name'] ?? 'Part image') ?>"
                                             >
                                         </div>
 
-                                        <h5><?= htmlspecialchars($part['part_name']) ?></h5>
+                                        <h5>
+                                            <?= displayText($part['part_name'] ?? '') ?>
+                                        </h5>
 
                                         <p>
-                                            <?= htmlspecialchars(limitText($part['description'] ?? '')) ?>
+                                            <?= displayLimitText($part['description'] ?? '', 95) ?>
                                         </p>
 
-                                        <strong><?= htmlspecialchars($part['category']) ?></strong>
+                                        <strong>
+                                            <?= displayText($part['category'] ?? '') ?>
+                                        </strong>
                                     </div>
                                 </a>
                             </div>
@@ -186,23 +235,27 @@ function limitText($text, $limit = 95) {
                             <div class="col-sm-6 col-lg-3">
                                 <a
                                     href="public_pages/service-details.php?id=<?= urlencode($service['service_id']) ?>"
-                                    class="text-decoration-none text-reset"
+                                    class="text-decoration-none text-reset offering-item-link"
                                 >
                                     <div class="offering-card">
                                         <div class="offering-visual">
                                             <img
                                                 src="<?= serviceImagePath($service['image'] ?? '') ?>"
-                                                alt="<?= htmlspecialchars($service['service_name']) ?>"
+                                                alt="<?= displayText($service['service_name'] ?? 'Service image') ?>"
                                             >
                                         </div>
 
-                                        <h5><?= htmlspecialchars($service['service_name']) ?></h5>
+                                        <h5>
+                                            <?= displayText($service['service_name'] ?? '') ?>
+                                        </h5>
 
                                         <p>
-                                            <?= htmlspecialchars(limitText($service['description'] ?? '')) ?>
+                                            <?= displayLimitText($service['description'] ?? '', 95) ?>
                                         </p>
 
-                                        <strong><?= htmlspecialchars($service['category']) ?></strong>
+                                        <strong>
+                                            <?= displayText($service['category'] ?? '') ?>
+                                        </strong>
                                     </div>
                                 </a>
                             </div>
@@ -271,7 +324,7 @@ function limitText($text, $limit = 95) {
                             Already have a request or repair record?
                         </h2>
 
-                        <p class="section-text mx-auto mb-4" style="max-width: 620px;">
+                        <p class="section-text customer-access-text">
                             Log in to check your pickup request or repair status.
                         </p>
 

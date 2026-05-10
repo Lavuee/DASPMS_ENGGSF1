@@ -15,6 +15,56 @@ class POS {
                 throw new Exception("Cannot process an empty transaction.");
             }
 
+            $customerType = trim($data['customer_type'] ?? 'Walk-in');
+            $customerId = !empty($data['customer_id']) ? intval($data['customer_id']) : null;
+
+            $walkinCustomerName = trim($data['walkin_customer_name'] ?? '');
+            $walkinContactNumber = trim($data['walkin_contact_number'] ?? '');
+            $walkinAddress = trim($data['walkin_address'] ?? '');
+
+            if (!in_array($customerType, ['Walk-in', 'Registered'])) {
+                throw new Exception("Invalid customer type.");
+            }
+
+            if ($customerType === 'Registered') {
+                if (!$customerId || $customerId <= 0) {
+                    throw new Exception("Please select a registered customer.");
+                }
+
+                $stmtCustomer = $this->conn->prepare("
+                    SELECT customer_id
+                    FROM customer
+                    WHERE customer_id = ?
+                      AND status = 'Active'
+                    LIMIT 1
+                ");
+                $stmtCustomer->execute([$customerId]);
+
+                if (!$stmtCustomer->fetchColumn()) {
+                    throw new Exception("Selected customer does not exist or is inactive.");
+                }
+
+                $walkinCustomerName = null;
+                $walkinContactNumber = null;
+                $walkinAddress = null;
+            }
+
+            if ($customerType === 'Walk-in') {
+                $customerId = null;
+
+                $walkinCustomerName = $walkinCustomerName !== ''
+                    ? htmlspecialchars(strip_tags($walkinCustomerName))
+                    : null;
+
+                $walkinContactNumber = $walkinContactNumber !== ''
+                    ? htmlspecialchars(strip_tags($walkinContactNumber))
+                    : null;
+
+                $walkinAddress = $walkinAddress !== ''
+                    ? htmlspecialchars(strip_tags($walkinAddress))
+                    : null;
+            }
+
             $validatedItems = [];
             $totalAmount = 0;
 
@@ -50,8 +100,8 @@ class POS {
                     );
                 }
 
-                $unitPrice = floatval($part['unit_price']);
-                $subtotal = $unitPrice * $qty;
+                $unitPrice = round(floatval($part['unit_price']), 2);
+                $subtotal = round($unitPrice * $qty, 2);
 
                 $validatedItems[] = [
                     'part_id' => $partId,
@@ -61,7 +111,7 @@ class POS {
                     'subtotal' => $subtotal
                 ];
 
-                $totalAmount += $subtotal;
+                $totalAmount = round($totalAmount + $subtotal, 2);
             }
 
             if ($totalAmount <= 0) {
@@ -71,6 +121,10 @@ class POS {
             $queryTx = "
                 INSERT INTO pos_transaction (
                     customer_id,
+                    customer_type,
+                    walkin_customer_name,
+                    walkin_contact_number,
+                    walkin_address,
                     processed_by,
                     total_amount,
                     status,
@@ -79,6 +133,10 @@ class POS {
                     transaction_date
                 ) VALUES (
                     :customer_id,
+                    :customer_type,
+                    :walkin_customer_name,
+                    :walkin_contact_number,
+                    :walkin_address,
                     :processed_by,
                     :total_amount,
                     'Completed',
@@ -90,11 +148,15 @@ class POS {
 
             $stmtTx = $this->conn->prepare($queryTx);
             $stmtTx->execute([
-                ':customer_id' => !empty($data['customer_id']) ? $data['customer_id'] : null,
-                ':processed_by' => $data['processed_by'],
-                ':total_amount' => $totalAmount,
+                ':customer_id' => $customerId,
+                ':customer_type' => $customerType,
+                ':walkin_customer_name' => $walkinCustomerName,
+                ':walkin_contact_number' => $walkinContactNumber,
+                ':walkin_address' => $walkinAddress,
+                ':processed_by' => intval($data['processed_by']),
+                ':total_amount' => number_format($totalAmount, 2, '.', ''),
                 ':payment_method' => $data['payment_method'],
-                ':reference_number' => htmlspecialchars(strip_tags($data['reference_number']))
+                ':reference_number' => htmlspecialchars(strip_tags($data['reference_number'] ?? ''))
             ]);
 
             $posId = $this->conn->lastInsertId();
@@ -129,8 +191,8 @@ class POS {
                     ':pos_id' => $posId,
                     ':part_id' => $item['part_id'],
                     ':quantity_sold' => $item['qty'],
-                    ':unit_price_at_sale' => $item['unit_price'],
-                    ':subtotal' => $item['subtotal']
+                    ':unit_price_at_sale' => number_format($item['unit_price'], 2, '.', ''),
+                    ':subtotal' => number_format($item['subtotal'], 2, '.', '')
                 ]);
 
                 $stmtDeduct->execute([

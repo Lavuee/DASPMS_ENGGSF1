@@ -10,6 +10,15 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
+$userRole = $_SESSION['role'] ?? '';
+
+$canCreateJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
+$canEditJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
+$canUpdateRepairProgress = in_array($userRole, ['Owner', 'Cashier', 'Head Mechanic'], true);
+$canCompleteJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
+$canCancelJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
+$canAccessBilling = in_array($userRole, ['Owner', 'Cashier'], true);
+
 $query = "
     SELECT 
         jo.*, 
@@ -17,10 +26,14 @@ $query = "
         c.last_name, 
         v.plate_number,
         v.make,
-        v.model
+        v.model,
+        CONCAT(am.first_name, ' ', am.last_name) AS assigned_mechanic_name,
+        CONCAT(cb.first_name, ' ', cb.last_name) AS completed_by_name
     FROM job_order jo
     JOIN customer c ON jo.customer_id = c.customer_id
     JOIN vehicle v ON jo.vehicle_id = v.vehicle_id
+    LEFT JOIN user am ON jo.assigned_mechanic_id = am.user_id
+    LEFT JOIN user cb ON jo.completed_by = cb.user_id
     ORDER BY jo.date_created DESC
 ";
 
@@ -28,9 +41,59 @@ $stmt = $db->prepare($query);
 $stmt->execute();
 $jobOrders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$vehicles = [];
+$availablePartsStmt = $db->prepare("
+    SELECT 
+        part_id,
+        part_name,
+        brand,
+        specification,
+        unit,
+        unit_price,
+        quantity_on_hand,
+        low_stock_threshold
+    FROM part
+    WHERE is_active = 1
+    ORDER BY part_name ASC
+");
+$availablePartsStmt->execute();
+$availableParts = $availablePartsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-if ($_SESSION['role'] !== 'Head Mechanic') {
+$jobPartsStmt = $db->prepare("
+    SELECT
+        jop.*,
+        p.part_name,
+        p.unit,
+        CONCAT(u.first_name, ' ', u.last_name) AS used_by_name
+    FROM job_order_part jop
+    JOIN part p ON jop.part_id = p.part_id
+    LEFT JOIN user u ON jop.used_by = u.user_id
+    ORDER BY jop.used_at DESC
+");
+$jobPartsStmt->execute();
+$allJobParts = $jobPartsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$jobPartsByOrder = [];
+$jobPartsTotals = [];
+
+foreach ($allJobParts as $partUsed) {
+    $joId = intval($partUsed['job_order_id']);
+
+    if (!isset($jobPartsByOrder[$joId])) {
+        $jobPartsByOrder[$joId] = [];
+    }
+
+    if (!isset($jobPartsTotals[$joId])) {
+        $jobPartsTotals[$joId] = 0;
+    }
+
+    $jobPartsByOrder[$joId][] = $partUsed;
+    $jobPartsTotals[$joId] += floatval($partUsed['subtotal']);
+}
+
+$vehicles = [];
+$mechanics = [];
+
+if ($canCreateJobOrders) {
     $stmtV = $db->prepare("
         SELECT 
             v.*, 
@@ -38,16 +101,28 @@ if ($_SESSION['role'] !== 'Head Mechanic') {
             c.last_name 
         FROM vehicle v 
         JOIN customer c ON v.customer_id = c.customer_id 
+        WHERE v.status = 'Active'
         ORDER BY v.plate_number ASC
     ");
     $stmtV->execute();
     $vehicles = $stmtV->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtM = $db->prepare("
+        SELECT user_id, first_name, last_name
+        FROM user
+        WHERE role = 'Head Mechanic'
+          AND is_active = 1
+        ORDER BY first_name ASC, last_name ASC
+    ");
+    $stmtM->execute();
+    $mechanics = $stmtM->fetchAll(PDO::FETCH_ASSOC);
 }
 
 $counts = [
     'All' => count($jobOrders),
     'Pending' => 0,
     'In Progress' => 0,
+    'Ready for Pickup' => 0,
     'Completed' => 0,
     'Cancelled' => 0
 ];
@@ -66,23 +141,49 @@ function getJobStatusBadgeClass($status) {
             return 'jo-status jo-status-pending';
         case 'In Progress':
             return 'jo-status jo-status-progress';
+        case 'Ready for Pickup':
+            return 'jo-status jo-status-ready';
         case 'Completed':
             return 'jo-status jo-status-completed';
         case 'Cancelled':
             return 'jo-status jo-status-cancelled';
-        case 'Ready for Pickup':
-            return 'jo-status jo-status-ready';
         default:
             return 'jo-status jo-status-pending';
     }
 }
 
-function getDisplayCost($jo) {
+function getRequestSourceBadgeClass($source) {
+    return $source === 'Online' ? 'jo-source jo-source-online' : 'jo-source jo-source-walkin';
+}
+
+function getDisplayCost($jo, $partsUsedTotal = 0) {
     $finalCost = isset($jo['final_cost']) ? floatval($jo['final_cost']) : 0;
     $estimatedCost = isset($jo['estimated_cost']) ? floatval($jo['estimated_cost']) : 0;
 
-    return $finalCost > 0 ? $finalCost : $estimatedCost;
+    if ($finalCost > 0) {
+        return $finalCost;
+    }
+
+    return $estimatedCost + floatval($partsUsedTotal);
 }
+
+function formatDateValue($value) {
+    if (empty($value)) {
+        return 'N/A';
+    }
+
+    return date('M d, Y', strtotime($value));
+}
+
+function formatDateTimeValue($value) {
+    if (empty($value)) {
+        return 'N/A';
+    }
+
+    return date('M d, Y h:i A', strtotime($value));
+}
+
+$jobOrderModals = '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -96,30 +197,30 @@ function getDisplayCost($jo) {
     <link rel="stylesheet" href="../assets/css/style.css">
 
     <style>
-    .main-content {
-        overflow-x: hidden;
+    .main-content { 
+        overflow-x: hidden; 
     }
 
-    .job-orders-page {
-        width: 100%;
-        max-width: 100%;
+    .job-orders-page { 
+        width: 100%; 
+        max-width: 100%; 
     }
 
-    .jo-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-bottom: 1.5rem;
+    .jo-header { 
+        display: flex; 
+        justify-content: space-between; 
+        align-items: flex-start; 
+        gap: 1rem; 
+        flex-wrap: wrap; 
+        margin-bottom: 1.5rem; 
     }
 
-    .jo-header h2 {
-        font-size: 2rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
+    .jo-header h2 { 
+        font-size: 2rem; 
+        font-weight: 900; 
+        color: var(--dashboard-text-main); 
+        margin-bottom: 0.25rem; 
+        line-height: 1.1; 
     }
 
     .jo-count-text {
@@ -145,10 +246,6 @@ function getDisplayCost($jo) {
         gap: 0.45rem;
         transition: 0.2s ease;
         white-space: nowrap;
-    }
-
-    .jo-create-btn i {
-        font-size: 0.95rem;
     }
 
     .jo-create-btn:hover {
@@ -233,6 +330,7 @@ function getDisplayCost($jo) {
         min-width: 1180px;
         border-collapse: collapse;
         background: transparent;
+        margin-bottom: 0;
     }
 
     .jo-table thead th {
@@ -241,14 +339,14 @@ function getDisplayCost($jo) {
         font-weight: 900;
         text-transform: uppercase;
         letter-spacing: 0.35px;
-        padding: 0.9rem 0.85rem;
+        padding: 0.9rem 0.75rem;
         border-bottom: 1px solid #dcdfe4;
         background: transparent;
         white-space: nowrap;
     }
 
     .jo-table tbody td {
-        padding: 1rem 0.85rem;
+        padding: 1rem 0.75rem;
         border-bottom: 1px solid #e8ebef;
         vertical-align: middle;
         color: var(--dashboard-text-main);
@@ -262,15 +360,15 @@ function getDisplayCost($jo) {
 
     .jo-table th:last-child,
     .jo-table td:last-child {
-        min-width: 200px;
+        min-width: 210px;
     }
 
     .jo-id {
         font-family: monospace;
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         font-weight: 800;
         color: var(--dashboard-text-main);
-        max-width: 210px;
+        max-width: 115px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -279,14 +377,16 @@ function getDisplayCost($jo) {
     .jo-date,
     .jo-customer,
     .jo-vehicle,
-    .jo-total {
-        font-size: 0.95rem;
+    .jo-total,
+    .jo-mechanic {
+        font-size: 0.92rem;
         white-space: nowrap;
     }
 
     .jo-customer,
     .jo-vehicle,
-    .jo-total {
+    .jo-total,
+    .jo-mechanic {
         font-weight: 900;
     }
 
@@ -294,7 +394,8 @@ function getDisplayCost($jo) {
         font-weight: 500;
     }
 
-    .jo-vehicle-sub {
+    .jo-vehicle-sub,
+    .jo-mechanic-sub {
         font-size: 0.78rem;
         color: var(--dashboard-text-muted);
         margin-top: 0.2rem;
@@ -305,12 +406,14 @@ function getDisplayCost($jo) {
         font-weight: 500;
     }
 
-    .jo-items {
-        font-size: 0.95rem;
-        font-weight: 800;
-        text-align: center;
+    .jo-parts-sub {
+        color: var(--dashboard-text-muted);
+        font-size: 0.78rem;
+        margin-top: 0.2rem;
+        font-weight: 700;
     }
 
+    .jo-source,
     .jo-status {
         display: inline-flex;
         align-items: center;
@@ -320,6 +423,16 @@ function getDisplayCost($jo) {
         font-size: 0.78rem;
         font-weight: 900;
         white-space: nowrap;
+    }
+
+    .jo-source-online {
+        background: #e7f0ff;
+        color: #1d4ed8;
+    }
+
+    .jo-source-walkin {
+        background: #fff5db;
+        color: #b77900;
     }
 
     .jo-status-pending {
@@ -350,24 +463,27 @@ function getDisplayCost($jo) {
     .jo-actions {
         display: flex;
         align-items: center;
+        justify-content: flex-end;
         gap: 0.45rem;
         flex-wrap: nowrap;
     }
 
     .jo-action-btn {
-        width: 38px;
-        height: 38px;
-        border-radius: 10px;
-        padding: 0;
+        min-height: 38px;
+        border-radius: 999px;
+        padding: 0.45rem 0.65rem;
         border: 1px solid #e5e7eb;
         background: #fff;
         color: var(--dashboard-text-muted);
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        gap: 0.35rem;
         text-decoration: none;
-        font-size: 0.95rem;
+        font-size: 0.78rem;
+        font-weight: 900;
         transition: all 0.2s ease;
+        white-space: nowrap;
     }
 
     .jo-action-btn:hover {
@@ -382,19 +498,25 @@ function getDisplayCost($jo) {
         color: var(--black);
     }
 
-    .jo-start-btn:hover {
-        border-color: var(--dashboard-primary);
-        background: var(--dashboard-primary);
-        color: var(--black);
+    .jo-start-btn {
+        border-color: #dbeafe;
+        background: #eff6ff;
+        color: #1d4ed8;
     }
 
-    .jo-complete-btn:hover {
+    .jo-ready-btn {
+        border-color: #ddd6fe;
+        background: #f5f3ff;
+        color: #7c3aed;
+    }
+
+    .jo-complete-btn {
         border-color: #bbf7d0;
         background: #ecfdf5;
         color: #15803d;
     }
 
-    .jo-cancel-btn:hover {
+    .jo-cancel-btn {
         border-color: #fecdd3;
         background: #fff1f2;
         color: #be123c;
@@ -403,6 +525,13 @@ function getDisplayCost($jo) {
     .jo-action-form {
         margin: 0;
         display: inline-flex;
+    }
+
+    .jo-no-action {
+        color: var(--dashboard-text-muted);
+        font-size: 0.8rem;
+        font-weight: 800;
+        white-space: nowrap;
     }
 
     .jo-empty-state {
@@ -423,6 +552,48 @@ function getDisplayCost($jo) {
         color: var(--dashboard-text-main);
         font-size: 0.95rem;
         font-weight: 900 !important;
+    }
+
+    .jo-pagination-wrap {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .jo-page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        color: var(--dashboard-text-muted);
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.45rem 0.75rem;
+        transition: 0.2s ease;
+    }
+
+    .jo-page-btn:hover:not(:disabled) {
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
+    }
+
+    .jo-page-btn.active {
+        background: var(--dashboard-primary);
+        border-color: var(--dashboard-primary);
+        color: var(--black);
+    }
+
+    .jo-page-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
     }
 
     .modal-content {
@@ -536,6 +707,7 @@ function getDisplayCost($jo) {
     .job-detail-value.long-text {
         min-height: 74px;
         line-height: 1.5;
+        white-space: pre-line;
     }
 
     .linked-note {
@@ -546,6 +718,171 @@ function getDisplayCost($jo) {
         font-size: 0.72rem;
         font-weight: 800;
         white-space: nowrap;
+    }
+
+    .parts-used-section {
+        margin-top: 1.6rem;
+        padding-top: 1.4rem;
+        border-top: 1px solid #eef2f6;
+    }
+
+    .parts-used-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+    }
+
+    .parts-used-title {
+        font-size: 0.95rem;
+        font-weight: 900;
+        color: var(--dashboard-text-main);
+        margin-bottom: 0.2rem;
+    }
+
+    .parts-used-subtitle {
+        color: var(--dashboard-text-muted);
+        font-size: 0.8rem;
+        margin-bottom: 0;
+    }
+
+    .parts-used-total {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #fff7d6;
+        color: #9a5b00;
+        border-radius: 999px;
+        padding: 0.45rem 0.8rem;
+        font-size: 0.8rem;
+        font-weight: 900;
+        white-space: nowrap;
+    }
+
+    .parts-used-empty {
+        border: 1px dashed #d1d5db;
+        border-radius: 14px;
+        padding: 1rem;
+        color: var(--dashboard-text-muted);
+        font-size: 0.88rem;
+        text-align: center;
+        margin-bottom: 1rem;
+        background: #fafafa;
+    }
+
+    .parts-used-table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        margin-bottom: 1rem;
+    }
+
+    .parts-used-table {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+    }
+
+    .parts-used-table th {
+        color: var(--dashboard-text-muted);
+        font-size: 0.72rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.35px;
+        padding: 0.7rem 0.65rem;
+        border-bottom: 1px solid #dfe3e8;
+        background: #f8fafc;
+        white-space: nowrap;
+    }
+
+    .parts-used-table td {
+        padding: 0.75rem 0.65rem;
+        border-bottom: 1px solid #edf0f4;
+        color: var(--dashboard-text-main);
+        font-size: 0.86rem;
+        vertical-align: top;
+    }
+
+    .parts-used-table .money-cell {
+        text-align: right;
+        white-space: nowrap;
+        font-weight: 900;
+    }
+
+    .parts-note {
+        color: var(--dashboard-text-muted);
+        font-size: 0.76rem;
+        margin-top: 0.2rem;
+        max-width: 260px;
+        white-space: normal;
+    }
+
+    .add-part-used-box {
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        background: rgba(255, 253, 246, 0.72);
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+
+    .add-part-title {
+        color: var(--dashboard-text-main);
+        font-size: 0.9rem;
+        font-weight: 900;
+        margin-bottom: 0.85rem;
+    }
+
+    .add-part-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) 120px minmax(0, 1fr) auto;
+        gap: 0.8rem;
+        align-items: end;
+    }
+
+    .add-part-field label {
+        display: block;
+        color: var(--dashboard-text-muted);
+        font-size: 0.72rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.35px;
+        margin-bottom: 0.35rem;
+    }
+
+    .add-part-control {
+        width: 100%;
+        min-height: 44px;
+        border: 1px solid #dfe3e8;
+        border-radius: 14px;
+        padding: 0.65rem 0.8rem;
+        color: var(--dashboard-text-main);
+        font-size: 0.88rem;
+        background: #fff;
+    }
+
+    .add-part-control:focus {
+        border-color: var(--dashboard-primary);
+        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.12);
+        outline: none;
+    }
+
+    .add-part-btn {
+        min-height: 44px;
+        border-radius: 999px;
+        background: var(--dashboard-primary);
+        border: 1px solid var(--dashboard-primary);
+        color: var(--black);
+        font-size: 0.82rem;
+        font-weight: 900;
+        padding: 0.55rem 1rem;
+        white-space: nowrap;
+    }
+
+    .add-part-btn:hover {
+        background: var(--black);
+        border-color: var(--black);
+        color: var(--white);
     }
 
     .job-detail-footer {
@@ -571,25 +908,12 @@ function getDisplayCost($jo) {
         color: var(--dashboard-text-main);
     }
 
-    .job-detail-close-btn:hover,
-    .minimal-cancel-btn:hover {
-        background: #f8fafc;
-        color: var(--black);
-    }
-
     .job-detail-edit-btn,
     .minimal-save-btn {
         border: 1px solid var(--dashboard-primary);
         background: var(--dashboard-primary);
         color: var(--black);
         font-weight: 900;
-    }
-
-    .job-detail-edit-btn:hover,
-    .minimal-save-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
     }
 
     .minimal-job-form {
@@ -641,17 +965,6 @@ function getDisplayCost($jo) {
         box-shadow: none;
     }
 
-    .minimal-control:focus {
-        border-color: var(--dashboard-primary);
-        outline: none;
-        box-shadow: none;
-        background: transparent;
-    }
-
-    select.minimal-control {
-        cursor: pointer;
-    }
-
     .empty-vehicle-note {
         grid-column: 1 / -1;
         border: 1px solid #fde68a;
@@ -683,30 +996,19 @@ function getDisplayCost($jo) {
         padding-top: 0.1rem;
     }
 
-    .minimal-check-field .form-check-input {
-        width: 18px;
-        height: 18px;
-        margin: 0;
-        border: 1px solid #d1d5db;
-        cursor: pointer;
-    }
-
-    .minimal-check-field .form-check-input:checked {
-        background-color: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-    }
-
-    .minimal-check-field label {
-        margin: 0;
-        color: var(--dashboard-text-main);
-        font-size: 0.92rem;
-        font-weight: 800;
-        cursor: pointer;
-    }
-
     .minimal-modal-footer {
         border-top: none;
         padding-top: 0.75rem;
+    }
+
+    @media (max-width: 991.98px) {
+        .add-part-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .add-part-btn {
+            width: 100%;
+        }
     }
 
     @media (max-width: 767.98px) {
@@ -726,6 +1028,10 @@ function getDisplayCost($jo) {
 
         .jo-header h2 {
             font-size: 1.75rem;
+        }
+
+        .jo-pagination-wrap {
+            justify-content: center;
         }
 
         .job-detail-grid {
@@ -771,7 +1077,7 @@ function getDisplayCost($jo) {
                     <p class="jo-count-text"><?php echo $counts['All']; ?> total orders</p>
                 </div>
 
-                <?php if ($_SESSION['role'] !== 'Head Mechanic'): ?>
+                <?php if ($canCreateJobOrders): ?>
                     <button type="button" class="jo-create-btn" data-bs-toggle="modal" data-bs-target="#createJobOrderModal">
                         <i class="bi bi-plus-lg"></i>
                         New Job Order
@@ -802,33 +1108,21 @@ function getDisplayCost($jo) {
             <?php endif; ?>
 
             <div class="jo-tabs" id="joTabs">
-                <button type="button" class="jo-tab active" data-filter="All">
-                    All (<?php echo $counts['All']; ?>)
-                </button>
-
-                <button type="button" class="jo-tab" data-filter="Pending">
-                    Pending (<?php echo $counts['Pending']; ?>)
-                </button>
-
-                <button type="button" class="jo-tab" data-filter="In Progress">
-                    In Progress (<?php echo $counts['In Progress']; ?>)
-                </button>
-
-                <button type="button" class="jo-tab" data-filter="Completed">
-                    Completed (<?php echo $counts['Completed']; ?>)
-                </button>
-
-                <button type="button" class="jo-tab" data-filter="Cancelled">
-                    Cancelled (<?php echo $counts['Cancelled']; ?>)
-                </button>
+                <button type="button" class="jo-tab active" data-filter="All">All (<?php echo $counts['All']; ?>)</button>
+                <button type="button" class="jo-tab" data-filter="Pending">Pending (<?php echo $counts['Pending']; ?>)</button>
+                <button type="button" class="jo-tab" data-filter="In Progress">In Progress (<?php echo $counts['In Progress']; ?>)</button>
+                <button type="button" class="jo-tab" data-filter="Ready for Pickup">Ready for Pickup (<?php echo $counts['Ready for Pickup']; ?>)</button>
+                <button type="button" class="jo-tab" data-filter="Completed">Completed (<?php echo $counts['Completed']; ?>)</button>
+                <button type="button" class="jo-tab" data-filter="Cancelled">Cancelled (<?php echo $counts['Cancelled']; ?>)</button>
             </div>
-                        <div class="jo-search-wrap">
+
+            <div class="jo-search-wrap">
                 <div class="jo-search-bar">
                     <i class="bi bi-search"></i>
                     <input
                         type="text"
                         id="searchInput"
-                        placeholder="Search by job number, customer, plate number, or description..."
+                        placeholder="Search by job number, customer, plate number, source, mechanic, or description..."
                     >
                 </div>
             </div>
@@ -841,13 +1135,13 @@ function getDisplayCost($jo) {
                             <th>Date</th>
                             <th>Customer</th>
                             <th>Vehicle</th>
-                            <th>Items</th>
+                            <th>Source</th>
+                            <th>Mechanic</th>
                             <th>Total</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
-
                     <tbody>
                         <?php if (count($jobOrders) > 0): ?>
                             <?php foreach ($jobOrders as $jo): ?>
@@ -860,11 +1154,18 @@ function getDisplayCost($jo) {
                                     $plateNumber = $jo['plate_number'] ?? 'No plate';
                                     $vehicleLabel = trim(($jo['make'] ?? '') . ' ' . ($jo['model'] ?? ''));
                                     $description = $jo['description'] ?? 'No description provided';
-                                    $dateCreated = !empty($jo['date_created']) ? date('M d, Y', strtotime($jo['date_created'])) : 'N/A';
-                                    $dateCompleted = !empty($jo['date_completed']) ? date('M d, Y', strtotime($jo['date_completed'])) : 'N/A';
-                                    $displayCost = getDisplayCost($jo);
+                                    $dateCreated = formatDateValue($jo['date_created'] ?? null);
+                                    $dateCompleted = formatDateValue($jo['date_completed'] ?? null);
+                                    $expectedCompletionDate = formatDateValue($jo['expected_completion_date'] ?? null);
+                                    $requestSource = !empty($jo['request_source']) ? $jo['request_source'] : 'Walk-in';
+                                    $sourceBadgeClass = getRequestSourceBadgeClass($requestSource);
+                                    $assignedMechanicName = trim($jo['assigned_mechanic_name'] ?? '');
+                                    $completedByName = trim($jo['completed_by_name'] ?? '');
+                                    $displayMechanic = $assignedMechanicName !== '' ? $assignedMechanicName : 'Unassigned';
 
-                                    $itemsCount = !empty($description) ? 1 : 0;
+                                    $partsUsedForJob = $jobPartsByOrder[$jobOrderId] ?? [];
+                                    $partsUsedTotal = $jobPartsTotals[$jobOrderId] ?? 0;
+                                    $displayCost = getDisplayCost($jo, $partsUsedTotal);
 
                                     $searchText = strtolower(
                                         $jobNumber . ' ' .
@@ -872,15 +1173,15 @@ function getDisplayCost($jo) {
                                         $plateNumber . ' ' .
                                         $vehicleLabel . ' ' .
                                         $description . ' ' .
+                                        $requestSource . ' ' .
+                                        $displayMechanic . ' ' .
                                         $status
                                     );
                                 ?>
 
-                                <tr
-                                    class="job-row"
+                                <tr class="job-row"
                                     data-status="<?php echo htmlspecialchars($status); ?>"
-                                    data-search="<?php echo htmlspecialchars($searchText); ?>"
-                                >
+                                    data-search="<?php echo htmlspecialchars($searchText); ?>">
                                     <td>
                                         <div class="jo-id" title="<?php echo htmlspecialchars($jobNumber); ?>">
                                             <?php echo htmlspecialchars($jobNumber); ?>
@@ -897,20 +1198,29 @@ function getDisplayCost($jo) {
 
                                     <td class="jo-vehicle">
                                         <?php echo htmlspecialchars($plateNumber); ?>
-
                                         <?php if ($vehicleLabel !== ''): ?>
-                                            <div class="jo-vehicle-sub">
-                                                <?php echo htmlspecialchars($vehicleLabel); ?>
-                                            </div>
+                                            <div class="jo-vehicle-sub"><?php echo htmlspecialchars($vehicleLabel); ?></div>
                                         <?php endif; ?>
                                     </td>
 
-                                    <td class="jo-items">
-                                        <?php echo $itemsCount; ?>
+                                    <td>
+                                        <span class="<?php echo $sourceBadgeClass; ?>">
+                                            <?php echo htmlspecialchars($requestSource); ?>
+                                        </span>
+                                    </td>
+
+                                    <td class="jo-mechanic">
+                                        <?php echo htmlspecialchars($displayMechanic); ?>
+                                        <?php if ($status === 'Completed' && $completedByName !== ''): ?>
+                                            <div class="jo-mechanic-sub">Completed by <?php echo htmlspecialchars($completedByName); ?></div>
+                                        <?php endif; ?>
                                     </td>
 
                                     <td class="jo-total">
                                         ₱<?php echo number_format($displayCost, 2); ?>
+                                        <?php if ($partsUsedTotal > 0): ?>
+                                            <div class="jo-parts-sub">Includes parts: ₱<?php echo number_format($partsUsedTotal, 2); ?></div>
+                                        <?php endif; ?>
                                     </td>
 
                                     <td>
@@ -924,97 +1234,83 @@ function getDisplayCost($jo) {
                                             <button
                                                 type="button"
                                                 class="jo-action-btn jo-view-btn"
-                                                title="View Details"
-                                                aria-label="View Details"
                                                 data-bs-toggle="modal"
-                                                data-bs-target="#viewJobOrderModal<?php echo $jobOrderId; ?>"
-                                            >
-                                                <i class="bi bi-eye"></i>
+                                                data-bs-target="#viewJobOrderModal<?php echo $jobOrderId; ?>">
+                                                <i class="bi bi-eye"></i> View
                                             </button>
 
-                                            <?php if ($status === 'Pending' || $status === 'In Progress'): ?>
+                                            <?php if (($status === 'Pending' || $status === 'In Progress') && $canEditJobOrders): ?>
                                                 <button
                                                     type="button"
                                                     class="jo-action-btn jo-edit-btn"
-                                                    title="Edit Job Order"
-                                                    aria-label="Edit Job Order"
                                                     data-bs-toggle="modal"
-                                                    data-bs-target="#editJobOrderModal<?php echo $jobOrderId; ?>"
-                                                >
-                                                    <i class="bi bi-pencil-square"></i>
+                                                    data-bs-target="#editJobOrderModal<?php echo $jobOrderId; ?>">
+                                                    <i class="bi bi-pencil-square"></i> Edit
                                                 </button>
                                             <?php endif; ?>
 
-                                            <?php if ($status === 'Pending'): ?>
+                                            <?php if ($status === 'Pending' && $canUpdateRepairProgress): ?>
                                                 <form action="../controllers/JobOrderController.php" method="POST" class="jo-action-form">
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="In Progress">
-
-                                                    <button
-                                                        type="submit"
-                                                        class="jo-action-btn jo-start-btn"
-                                                        title="Start Work"
-                                                        aria-label="Start Work"
-                                                    >
-                                                        <i class="bi bi-play-fill"></i>
+                                                    <button type="submit" class="jo-action-btn jo-start-btn">
+                                                        <i class="bi bi-play-fill"></i> Start
                                                     </button>
                                                 </form>
                                             <?php endif; ?>
 
-                                            <?php if ($status === 'In Progress'): ?>
+                                            <?php if ($status === 'In Progress' && $canUpdateRepairProgress): ?>
+                                                <form action="../controllers/JobOrderController.php" method="POST" class="jo-action-form">
+                                                    <input type="hidden" name="action" value="update_status">
+                                                    <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
+                                                    <input type="hidden" name="status" value="Ready for Pickup">
+                                                    <button type="submit" class="jo-action-btn jo-ready-btn">
+                                                        <i class="bi bi-bag-check"></i> Ready
+                                                    </button>
+                                                </form>
+                                            <?php endif; ?>
+
+                                            <?php if (($status === 'Ready for Pickup' || $status === 'In Progress') && $canCompleteJobOrders): ?>
                                                 <form action="../controllers/JobOrderController.php" method="POST" class="jo-action-form">
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="Completed">
-
-                                                    <button
-                                                        type="submit"
-                                                        class="jo-action-btn jo-complete-btn"
-                                                        title="Complete Job"
-                                                        aria-label="Complete Job"
-                                                    >
-                                                        <i class="bi bi-check-lg"></i>
+                                                    <button type="submit" class="jo-action-btn jo-complete-btn">
+                                                        <i class="bi bi-check-lg"></i> Complete
                                                     </button>
                                                 </form>
                                             <?php endif; ?>
 
-                                            <?php if ($status === 'Pending' || $status === 'In Progress'): ?>
+                                            <?php if (($status === 'Pending' || $status === 'In Progress' || $status === 'Ready for Pickup') && $canCancelJobOrders): ?>
                                                 <form
                                                     action="../controllers/JobOrderController.php"
                                                     method="POST"
                                                     class="jo-action-form"
-                                                    onsubmit="return confirm('Cancel this job order? This will mark the record as Cancelled.');"
-                                                >
+                                                    onsubmit="return confirm('Cancel this job order? This will mark the record as Cancelled.');">
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="Cancelled">
-
-                                                    <button
-                                                        type="submit"
-                                                        class="jo-action-btn jo-cancel-btn"
-                                                        title="Cancel Job Order"
-                                                        aria-label="Cancel Job Order"
-                                                    >
-                                                        <i class="bi bi-x-lg"></i>
+                                                    <button type="submit" class="jo-action-btn jo-cancel-btn">
+                                                        <i class="bi bi-x-lg"></i> Cancel
                                                     </button>
                                                 </form>
                                             <?php endif; ?>
 
-                                            <?php if ($status === 'Completed'): ?>
-                                                <a
-                                                    href="billing.php"
-                                                    class="jo-action-btn jo-billing-btn"
-                                                    title="Open Billing / Invoice"
-                                                    aria-label="Open Billing / Invoice"
-                                                >
-                                                    <i class="bi bi-receipt"></i>
+                                            <?php if ($status === 'Completed' && $canAccessBilling): ?>
+                                                <a href="billing.php" class="jo-action-btn jo-billing-btn">
+                                                    <i class="bi bi-receipt"></i> Billing
                                                 </a>
+                                            <?php endif; ?>
+
+                                            <?php if (($status === 'Completed' && !$canAccessBilling) || ($status === 'Cancelled')): ?>
+                                                <span class="jo-no-action">No action</span>
                                             <?php endif; ?>
                                         </div>
                                     </td>
                                 </tr>
 
+                                <?php ob_start(); ?>
                                 <div class="modal fade" id="viewJobOrderModal<?php echo $jobOrderId; ?>" tabindex="-1">
                                     <div class="modal-dialog modal-dialog-centered modal-lg">
                                         <div class="modal-content">
@@ -1028,24 +1324,13 @@ function getDisplayCost($jo) {
 
                                             <div class="modal-body job-detail-body">
                                                 <div class="job-detail-profile">
-                                                    <div class="job-detail-avatar">
-                                                        <i class="bi bi-tools"></i>
-                                                    </div>
-
+                                                    <div class="job-detail-avatar"><i class="bi bi-tools"></i></div>
                                                     <div>
-                                                        <div class="job-detail-name">
-                                                            <?php echo htmlspecialchars($jobNumber); ?>
-                                                        </div>
-
-                                                        <span class="<?php echo $badgeClass; ?>">
-                                                            <?php echo htmlspecialchars($status); ?>
-                                                        </span>
-
+                                                        <div class="job-detail-name"><?php echo htmlspecialchars($jobNumber); ?></div>
+                                                        <span class="<?php echo $badgeClass; ?>"><?php echo htmlspecialchars($status); ?></span>
                                                         <div class="job-detail-sub">
                                                             <?php echo htmlspecialchars($customerName); ?>
-                                                            <?php if ($plateNumber !== ''): ?>
-                                                                • <?php echo htmlspecialchars($plateNumber); ?>
-                                                            <?php endif; ?>
+                                                            <?php if ($plateNumber !== ''): ?> • <?php echo htmlspecialchars($plateNumber); ?><?php endif; ?>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1054,118 +1339,199 @@ function getDisplayCost($jo) {
                                                     <div class="job-detail-field">
                                                         <div class="job-detail-label">
                                                             <span>Customer</span>
-                                                            <span class="linked-note">
-                                                                <i class="bi bi-check-circle-fill"></i>
-                                                                Linked
-                                                            </span>
+                                                            <span class="linked-note"><i class="bi bi-check-circle-fill"></i> Linked</span>
                                                         </div>
-                                                        <div class="job-detail-value">
-                                                            <?php echo htmlspecialchars($customerName); ?>
-                                                        </div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($customerName); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
                                                         <div class="job-detail-label">
                                                             <span>Vehicle</span>
-                                                            <span class="linked-note">
-                                                                <i class="bi bi-check-circle-fill"></i>
-                                                                Linked
-                                                            </span>
+                                                            <span class="linked-note"><i class="bi bi-check-circle-fill"></i> Linked</span>
                                                         </div>
                                                         <div class="job-detail-value">
                                                             <?php echo htmlspecialchars($plateNumber); ?>
-                                                            <?php if ($vehicleLabel !== ''): ?>
-                                                                — <?php echo htmlspecialchars($vehicleLabel); ?>
-                                                            <?php endif; ?>
+                                                            <?php if ($vehicleLabel !== ''): ?> — <?php echo htmlspecialchars($vehicleLabel); ?><?php endif; ?>
                                                         </div>
+                                                    </div>
+
+                                                    <div class="job-detail-field">
+                                                        <div class="job-detail-label"><span>Request Source</span></div>
+                                                        <div class="job-detail-value">
+                                                            <span class="<?php echo $sourceBadgeClass; ?>"><?php echo htmlspecialchars($requestSource); ?></span>
+                                                        </div>
+                                                    </div>
+
+                                                    <div class="job-detail-field">
+                                                        <div class="job-detail-label"><span>Assigned Mechanic</span></div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($displayMechanic); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field full">
-                                                        <div class="job-detail-label">
-                                                            <span>Description</span>
-                                                        </div>
-                                                        <div class="job-detail-value long-text">
-                                                            <?php echo htmlspecialchars($description); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Repair Description</span></div>
+                                                        <div class="job-detail-value long-text"><?php echo htmlspecialchars($description); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Status</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            <?php echo htmlspecialchars($status); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Status</span></div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($status); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Estimated Cost</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            ₱<?php echo number_format(floatval($jo['estimated_cost'] ?? 0), 2); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Estimated Cost</span></div>
+                                                        <div class="job-detail-value">₱<?php echo number_format(floatval($jo['estimated_cost'] ?? 0), 2); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Final Cost</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            ₱<?php echo number_format(floatval($jo['final_cost'] ?? 0), 2); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Parts Used Total</span></div>
+                                                        <div class="job-detail-value">₱<?php echo number_format($partsUsedTotal, 2); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Requires Down Payment</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            <?php echo !empty($jo['requires_down_payment']) ? 'Yes' : 'No'; ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Job Total</span></div>
+                                                        <div class="job-detail-value">₱<?php echo number_format($displayCost, 2); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Down Payment Amount</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            ₱<?php echo number_format(floatval($jo['down_payment_amount'] ?? 0), 2); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Requires Down Payment</span></div>
+                                                        <div class="job-detail-value"><?php echo !empty($jo['requires_down_payment']) ? 'Yes' : 'No'; ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Date Created</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            <?php echo htmlspecialchars($dateCreated); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Down Payment Amount</span></div>
+                                                        <div class="job-detail-value">₱<?php echo number_format(floatval($jo['down_payment_amount'] ?? 0), 2); ?></div>
                                                     </div>
 
                                                     <div class="job-detail-field">
-                                                        <div class="job-detail-label">
-                                                            <span>Date Completed</span>
-                                                        </div>
-                                                        <div class="job-detail-value">
-                                                            <?php echo htmlspecialchars($dateCompleted); ?>
-                                                        </div>
+                                                        <div class="job-detail-label"><span>Date Created</span></div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($dateCreated); ?></div>
                                                     </div>
+
+                                                    <div class="job-detail-field">
+                                                        <div class="job-detail-label"><span>Target Completion Date</span></div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($expectedCompletionDate); ?></div>
+                                                    </div>
+
+                                                    <div class="job-detail-field">
+                                                        <div class="job-detail-label"><span>Date Completed</span></div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($dateCompleted); ?></div>
+                                                    </div>
+
+                                                    <div class="job-detail-field">
+                                                        <div class="job-detail-label"><span>Completed By</span></div>
+                                                        <div class="job-detail-value"><?php echo htmlspecialchars($completedByName !== '' ? $completedByName : 'N/A'); ?></div>
+                                                    </div>
+
+                                                    <?php if ($status === 'Cancelled' && !empty($jo['cancellation_reason'])): ?>
+                                                        <div class="job-detail-field full">
+                                                            <div class="job-detail-label"><span>Cancellation Reason</span></div>
+                                                            <div class="job-detail-value long-text"><?php echo htmlspecialchars($jo['cancellation_reason']); ?></div>
+                                                        </div>
+                                                    <?php endif; ?>
+                                                </div>
+
+                                                <div class="parts-used-section">
+                                                    <div class="parts-used-header">
+                                                        <div>
+                                                            <div class="parts-used-title">Parts Used</div>
+                                                            <p class="parts-used-subtitle">Optional record of parts/materials used during this repair.</p>
+                                                        </div>
+                                                        <span class="parts-used-total">Parts Total: ₱<?php echo number_format($partsUsedTotal, 2); ?></span>
+                                                    </div>
+
+                                                    <?php if (empty($partsUsedForJob)): ?>
+                                                        <div class="parts-used-empty">No parts have been recorded for this job order yet.</div>
+                                                    <?php else: ?>
+                                                        <div class="parts-used-table-wrap">
+                                                            <table class="parts-used-table">
+                                                                <thead>
+                                                                    <tr>
+                                                                        <th>Part</th>
+                                                                        <th>Qty</th>
+                                                                        <th>Unit Price</th>
+                                                                        <th>Subtotal</th>
+                                                                        <th>Recorded By</th>
+                                                                        <th>Date</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    <?php foreach ($partsUsedForJob as $usedPart): ?>
+                                                                        <tr>
+                                                                            <td>
+                                                                                <strong><?php echo htmlspecialchars($usedPart['part_name']); ?></strong>
+                                                                                <?php if (!empty($usedPart['notes'])): ?>
+                                                                                    <div class="parts-note"><?php echo htmlspecialchars($usedPart['notes']); ?></div>
+                                                                                <?php endif; ?>
+                                                                            </td>
+                                                                            <td><?php echo intval($usedPart['quantity_used']); ?> <?php echo htmlspecialchars($usedPart['unit'] ?? ''); ?></td>
+                                                                            <td class="money-cell">₱<?php echo number_format(floatval($usedPart['unit_price_at_use']), 2); ?></td>
+                                                                            <td class="money-cell">₱<?php echo number_format(floatval($usedPart['subtotal']), 2); ?></td>
+                                                                            <td><?php echo htmlspecialchars(trim($usedPart['used_by_name'] ?? '') ?: 'N/A'); ?></td>
+                                                                            <td><?php echo htmlspecialchars(formatDateTimeValue($usedPart['used_at'] ?? null)); ?></td>
+                                                                        </tr>
+                                                                    <?php endforeach; ?>
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    <?php endif; ?>
+
+                                                    <?php if (in_array($status, ['Pending', 'In Progress'], true) && $canUpdateRepairProgress): ?>
+                                                        <div class="add-part-used-box">
+                                                            <div class="add-part-title"><i class="bi bi-plus-circle me-1"></i> Add Part Used</div>
+
+                                                            <?php if (empty($availableParts)): ?>
+                                                                <div class="parts-used-empty mb-0">No active parts are available in inventory.</div>
+                                                            <?php else: ?>
+                                                                <form action="../controllers/JobOrderController.php" method="POST">
+                                                                    <input type="hidden" name="action" value="add_part_used">
+                                                                    <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
+
+                                                                    <div class="add-part-grid">
+                                                                        <div class="add-part-field">
+                                                                            <label>Part</label>
+                                                                            <select name="part_id" class="add-part-control" required>
+                                                                                <option value="" disabled selected>Select part</option>
+                                                                                <?php foreach ($availableParts as $partOption): ?>
+                                                                                    <?php
+                                                                                        $stock = intval($partOption['quantity_on_hand']);
+                                                                                        $partLabel = $partOption['part_name'];
+                                                                                        if (!empty($partOption['brand'])) $partLabel .= ' - ' . $partOption['brand'];
+                                                                                        if (!empty($partOption['specification'])) $partLabel .= ' (' . $partOption['specification'] . ')';
+                                                                                    ?>
+                                                                                    <?php if ($stock > 0): ?>
+                                                                                        <option value="<?php echo intval($partOption['part_id']); ?>">
+                                                                                            <?php echo htmlspecialchars($partLabel); ?> | Stock: <?php echo $stock; ?> | ₱<?php echo number_format(floatval($partOption['unit_price']), 2); ?>
+                                                                                        </option>
+                                                                                    <?php endif; ?>
+                                                                                <?php endforeach; ?>
+                                                                            </select>
+                                                                        </div>
+
+                                                                        <div class="add-part-field">
+                                                                            <label>Quantity</label>
+                                                                            <input type="number" name="quantity_used" class="add-part-control" min="1" value="1" required>
+                                                                        </div>
+
+                                                                        <div class="add-part-field">
+                                                                            <label>Notes</label>
+                                                                            <input type="text" name="notes" class="add-part-control" maxlength="500" placeholder="Optional">
+                                                                        </div>
+
+                                                                        <button type="submit" class="add-part-btn" onclick="return confirm('Record this part as used and deduct it from inventory stock?');">
+                                                                            Add Part
+                                                                        </button>
+                                                                    </div>
+                                                                </form>
+                                                            <?php endif; ?>
+                                                        </div>
+                                                    <?php endif; ?>
                                                 </div>
                                             </div>
 
                                             <div class="modal-footer job-detail-footer">
-                                                <button type="button" class="job-detail-close-btn" data-bs-dismiss="modal">
-                                                    Close
-                                                </button>
-
-                                                <?php if ($status === 'Pending' || $status === 'In Progress'): ?>
-                                                    <button
-                                                        type="button"
-                                                        class="job-detail-edit-btn"
-                                                        data-bs-target="#editJobOrderModal<?php echo $jobOrderId; ?>"
-                                                        data-bs-toggle="modal"
-                                                    >
+                                                <button type="button" class="job-detail-close-btn" data-bs-dismiss="modal">Close</button>
+                                                <?php if (($status === 'Pending' || $status === 'In Progress') && $canEditJobOrders): ?>
+                                                    <button type="button" class="job-detail-edit-btn" data-bs-target="#editJobOrderModal<?php echo $jobOrderId; ?>" data-bs-toggle="modal">
                                                         Edit Job Order
                                                     </button>
                                                 <?php endif; ?>
@@ -1174,111 +1540,72 @@ function getDisplayCost($jo) {
                                     </div>
                                 </div>
 
-                                <?php if ($status === 'Pending' || $status === 'In Progress'): ?>
-                                    <div class="modal fade" id="editJobOrderModal<?php echo $jobOrderId; ?>" tabindex="-1">
-                                        <div class="modal-dialog modal-dialog-centered modal-lg">
-                                            <div class="modal-content">
-                                                <form action="../controllers/JobOrderController.php" method="POST">
-                                                    <input type="hidden" name="action" value="update_details">
-                                                    <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
+                                <?php if (($status === 'Pending' || $status === 'In Progress') && $canEditJobOrders): ?>
+                                <div class="modal fade" id="editJobOrderModal<?php echo $jobOrderId; ?>" tabindex="-1">
+                                    <div class="modal-dialog modal-dialog-centered modal-lg">
+                                        <div class="modal-content">
+                                            <form action="../controllers/JobOrderController.php" method="POST">
+                                                <input type="hidden" name="action" value="update_details">
+                                                <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
 
-                                                    <div class="modal-header">
-                                                        <div>
-                                                            <h5 class="modal-title">Edit Job Order</h5>
-                                                            <small class="text-muted"><?php echo htmlspecialchars($jobNumber); ?></small>
-                                                        </div>
-                                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                <div class="modal-header">
+                                                    <div>
+                                                        <h5 class="modal-title">Edit Job Order</h5>
+                                                        <small class="text-muted"><?php echo htmlspecialchars($jobNumber); ?></small>
                                                     </div>
+                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                </div>
 
-                                                    <div class="modal-body">
-                                                        <div class="minimal-job-form">
-                                                            <div class="minimal-section-title">Basic Job Order Details</div>
+                                                <div class="modal-body">
+                                                    <div class="minimal-job-form">
+                                                        <div class="minimal-section-title">Basic Job Order Details</div>
 
-                                                            <div class="minimal-form-grid">
-                                                                <div class="minimal-form-field full">
-                                                                    <label class="minimal-label">Repair Description</label>
-                                                                    <textarea
-                                                                        name="description"
-                                                                        class="minimal-control"
-                                                                        required
-                                                                    ><?php echo htmlspecialchars($description); ?></textarea>
-                                                                    <div class="minimal-helper">
-                                                                        Update the issue, diagnosis, or requested repair description.
-                                                                    </div>
-                                                                </div>
+                                                        <div class="minimal-form-grid">
+                                                            <div class="minimal-form-field full">
+                                                                <label class="minimal-label">Repair Description</label>
+                                                                <textarea name="description" class="minimal-control" required><?php echo htmlspecialchars($description); ?></textarea>
+                                                                <div class="minimal-helper">Update the issue, diagnosis, or requested repair description.</div>
+                                                            </div>
 
-                                                                <div class="minimal-form-field">
-                                                                    <label class="minimal-label">Estimated Cost</label>
-                                                                    <input
-                                                                        type="number"
-                                                                        step="0.01"
-                                                                        min="0"
-                                                                        name="estimated_cost"
-                                                                        class="minimal-control"
-                                                                        value="<?php echo htmlspecialchars(floatval($jo['estimated_cost'] ?? 0)); ?>"
-                                                                        required
-                                                                    >
-                                                                    <div class="minimal-helper">
-                                                                        Initial estimated amount for this repair job.
-                                                                    </div>
-                                                                </div>
+                                                            <div class="minimal-form-field">
+                                                                <label class="minimal-label">Estimated Cost</label>
+                                                                <input type="number" step="0.01" min="0" name="estimated_cost" class="minimal-control" value="<?php echo htmlspecialchars(floatval($jo['estimated_cost'] ?? 0)); ?>" required>
+                                                                <div class="minimal-helper">Initial estimated amount for this repair job.</div>
+                                                            </div>
 
-                                                                <div class="minimal-form-field">
-                                                                    <label class="minimal-label">Down Payment Amount</label>
-                                                                    <input
-                                                                        type="number"
-                                                                        step="0.01"
-                                                                        min="0"
-                                                                        name="down_payment_amount"
-                                                                        class="minimal-control"
-                                                                        value="<?php echo htmlspecialchars(floatval($jo['down_payment_amount'] ?? 0)); ?>"
-                                                                    >
-                                                                    <div class="minimal-helper">
-                                                                        Leave as 0 if no down payment is required.
-                                                                    </div>
-                                                                </div>
+                                                            <div class="minimal-form-field">
+                                                                <label class="minimal-label">Down Payment Amount</label>
+                                                                <input type="number" step="0.01" min="0" name="down_payment_amount" class="minimal-control" value="<?php echo htmlspecialchars(floatval($jo['down_payment_amount'] ?? 0)); ?>">
+                                                                <div class="minimal-helper">Leave as 0 if no down payment is required.</div>
+                                                            </div>
 
-                                                                <div class="minimal-check-field">
-                                                                    <input
-                                                                        class="form-check-input"
-                                                                        type="checkbox"
-                                                                        name="requires_down_payment"
-                                                                        id="requiresDownPayment<?php echo $jobOrderId; ?>"
-                                                                        <?php echo !empty($jo['requires_down_payment']) ? 'checked' : ''; ?>
-                                                                    >
-                                                                    <label for="requiresDownPayment<?php echo $jobOrderId; ?>">
-                                                                        Requires Down Payment
-                                                                    </label>
-                                                                </div>
+                                                            <div class="minimal-check-field">
+                                                                <input class="form-check-input" type="checkbox" name="requires_down_payment" id="requiresDownPayment<?php echo $jobOrderId; ?>" <?php echo !empty($jo['requires_down_payment']) ? 'checked' : ''; ?>>
+                                                                <label for="requiresDownPayment<?php echo $jobOrderId; ?>">Requires Down Payment</label>
+                                                            </div>
 
-                                                                <div class="minimal-form-field full">
-                                                                    <div class="minimal-helper">
-                                                                        Only Pending or In Progress job orders can be edited.
-                                                                    </div>
-                                                                </div>
+                                                            <div class="minimal-form-field full">
+                                                                <div class="minimal-helper">Only Pending or In Progress job orders can be edited. Parts used are recorded separately in the View Details modal.</div>
                                                             </div>
                                                         </div>
                                                     </div>
+                                                </div>
 
-                                                    <div class="modal-footer minimal-modal-footer">
-                                                        <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                                                            Cancel
-                                                        </button>
-
-                                                        <button type="submit" class="minimal-save-btn">
-                                                            Save Changes
-                                                        </button>
-                                                    </div>
-                                                </form>
-                                            </div>
+                                                <div class="modal-footer minimal-modal-footer">
+                                                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">Cancel</button>
+                                                    <button type="submit" class="minimal-save-btn">Save Changes</button>
+                                                </div>
+                                            </form>
                                         </div>
                                     </div>
+                                </div>
                                 <?php endif; ?>
 
+                                <?php $jobOrderModals .= ob_get_clean(); ?>
                             <?php endforeach; ?>
 
                             <tr id="noJobResults" style="display:none;">
-                                <td colspan="8">
+                                <td colspan="9">
                                     <div class="jo-empty-state">
                                         <i class="bi bi-search"></i>
                                         <div class="fw-bold mb-1">No matching job orders found</div>
@@ -1288,7 +1615,7 @@ function getDisplayCost($jo) {
                             </tr>
                         <?php else: ?>
                             <tr>
-                                <td colspan="8">
+                                <td colspan="9">
                                     <div class="jo-empty-state">
                                         <i class="bi bi-clipboard-x"></i>
                                         <div class="fw-bold mb-1">No job orders found</div>
@@ -1301,7 +1628,11 @@ function getDisplayCost($jo) {
                 </table>
             </div>
 
-            <?php if ($_SESSION['role'] !== 'Head Mechanic'): ?>
+            <div class="jo-pagination-wrap" id="jobOrderPagination"></div>
+
+            <?php echo $jobOrderModals; ?>
+
+            <?php if ($canCreateJobOrders): ?>
                 <div class="modal fade" id="createJobOrderModal" tabindex="-1" aria-hidden="true">
                     <div class="modal-dialog modal-dialog-centered modal-lg">
                         <div class="modal-content">
@@ -1347,46 +1678,53 @@ function getDisplayCost($jo) {
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
-                                            <div class="minimal-helper">
-                                                Choose the vehicle that will be assigned to this job order.
-                                            </div>
+                                            <div class="minimal-helper">Choose the vehicle that will be assigned to this job order.</div>
+                                        </div>
+
+                                        <div class="minimal-form-field">
+                                            <label class="minimal-label">Request Source</label>
+                                            <select name="request_source" class="minimal-control" required>
+                                                <option value="Walk-in" selected>Walk-in</option>
+                                                <option value="Online">Online</option>
+                                            </select>
+                                            <div class="minimal-helper">Use Online only if the repair request came from the customer portal.</div>
+                                        </div>
+
+                                        <div class="minimal-form-field">
+                                            <label class="minimal-label">Assigned Mechanic</label>
+                                            <select name="assigned_mechanic_id" class="minimal-control">
+                                                <option value="">Unassigned</option>
+                                                <?php foreach ($mechanics as $mechanic): ?>
+                                                    <option value="<?php echo intval($mechanic['user_id']); ?>">
+                                                        <?php echo htmlspecialchars($mechanic['first_name'] . ' ' . $mechanic['last_name']); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <div class="minimal-helper">Optional for walk-in job orders, but recommended for tracking.</div>
                                         </div>
 
                                         <div class="minimal-form-field full">
                                             <label class="minimal-label">Repair Description</label>
-                                            <textarea
-                                                name="description"
-                                                class="minimal-control"
-                                                placeholder="Describe the issue, symptoms, diagnosis, or requested repair..."
-                                                required
-                                            ></textarea>
-                                            <div class="minimal-helper">
-                                                This will help mechanics and billing staff understand the repair scope.
-                                            </div>
+                                            <textarea name="description" class="minimal-control" placeholder="Describe the issue, symptoms, diagnosis, or requested repair..." required></textarea>
+                                            <div class="minimal-helper">This will help mechanics and billing staff understand the repair scope.</div>
                                         </div>
 
                                         <div class="minimal-form-field">
                                             <label class="minimal-label">Estimated Cost (₱)</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                min="0"
-                                                name="estimated_cost"
-                                                class="minimal-control"
-                                                placeholder="0.00"
-                                                required
-                                            >
-                                            <div class="minimal-helper">
-                                                Initial amount for the repair job.
-                                            </div>
+                                            <input type="number" step="0.01" min="0" name="estimated_cost" class="minimal-control" placeholder="0.00" required>
+                                            <div class="minimal-helper">Initial amount for the repair job before optional parts used are added.</div>
+                                        </div>
+
+                                        <div class="minimal-form-field">
+                                            <label class="minimal-label">Target Completion Date</label>
+                                            <input type="date" name="expected_completion_date" class="minimal-control">
+                                            <div class="minimal-helper">Optional internal target date for shop planning.</div>
                                         </div>
                                     </div>
                                 </div>
 
                                 <div class="modal-footer minimal-modal-footer">
-                                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                                        Cancel
-                                    </button>
+                                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">Cancel</button>
                                     <button type="submit" class="minimal-save-btn" <?php echo count($vehicles) === 0 ? 'disabled' : ''; ?>>
                                         Save Job Order
                                     </button>
@@ -1397,7 +1735,6 @@ function getDisplayCost($jo) {
                 </div>
             <?php endif; ?>
 
-
         </div>
     </main>
 </div>
@@ -1405,50 +1742,128 @@ function getDisplayCost($jo) {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-    const tabs = document.querySelectorAll('.jo-tab');
-    const rows = document.querySelectorAll('.job-row');
-    const searchInput = document.getElementById('searchInput');
-    const noResults = document.getElementById('noJobResults');
+const ITEMS_PER_PAGE = 5;
 
-    let activeFilter = 'All';
+const tabs = document.querySelectorAll('.jo-tab');
+const rows = Array.from(document.querySelectorAll('.job-row'));
+const searchInput = document.getElementById('searchInput');
+const noResults = document.getElementById('noJobResults');
+const pagination = document.getElementById('jobOrderPagination');
 
-    function applyFilters() {
-        const term = searchInput.value.trim().toLowerCase();
-        let visibleCount = 0;
+let activeFilter = 'All';
+let currentPage = 1;
 
-        rows.forEach(row => {
-            const status = row.getAttribute('data-status');
-            const searchText = row.getAttribute('data-search') || '';
+function getFilteredRows() {
+    const term = searchInput ? searchInput.value.trim().toLowerCase() : '';
 
-            const matchesStatus = activeFilter === 'All' || status === activeFilter;
-            const matchesSearch = searchText.includes(term);
+    return rows.filter(row => {
+        const status = row.getAttribute('data-status');
+        const searchText = row.getAttribute('data-search') || '';
 
-            if (matchesStatus && matchesSearch) {
-                row.style.display = '';
-                visibleCount++;
-            } else {
-                row.style.display = 'none';
-            }
-        });
+        const matchesStatus = activeFilter === 'All' || status === activeFilter;
+        const matchesSearch = searchText.includes(term);
 
-        if (noResults) {
-            noResults.style.display = (visibleCount === 0 && rows.length > 0) ? '' : 'none';
-        }
+        return matchesStatus && matchesSearch;
+    });
+}
+
+function renderPagination(totalPages) {
+    if (!pagination) {
+        return;
     }
 
-    tabs.forEach(tab => {
-        tab.addEventListener('click', function() {
-            tabs.forEach(t => t.classList.remove('active'));
-            this.classList.add('active');
+    pagination.innerHTML = '';
 
-            activeFilter = this.getAttribute('data-filter');
+    if (totalPages <= 1) {
+        pagination.style.display = 'none';
+        return;
+    }
+
+    pagination.style.display = 'flex';
+
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = 'jo-page-btn';
+    prevButton.innerHTML = '&laquo;';
+    prevButton.disabled = currentPage === 1;
+    prevButton.addEventListener('click', function () {
+        if (currentPage > 1) {
+            currentPage--;
+            applyFilters();
+        }
+    });
+    pagination.appendChild(prevButton);
+
+    for (let page = 1; page <= totalPages; page++) {
+        const pageButton = document.createElement('button');
+        pageButton.type = 'button';
+        pageButton.className = 'jo-page-btn' + (page === currentPage ? ' active' : '');
+        pageButton.textContent = page;
+        pageButton.addEventListener('click', function () {
+            currentPage = page;
             applyFilters();
         });
+        pagination.appendChild(pageButton);
+    }
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'jo-page-btn';
+    nextButton.innerHTML = '&raquo;';
+    nextButton.disabled = currentPage === totalPages;
+    nextButton.addEventListener('click', function () {
+        if (currentPage < totalPages) {
+            currentPage++;
+            applyFilters();
+        }
+    });
+    pagination.appendChild(nextButton);
+}
+
+function applyFilters() {
+    const filteredRows = getFilteredRows();
+    const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE) || 1;
+
+    if (currentPage > totalPages) {
+        currentPage = totalPages;
+    }
+
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+
+    rows.forEach(row => {
+        row.style.display = 'none';
     });
 
-    if (searchInput) {
-        searchInput.addEventListener('input', applyFilters);
+    filteredRows.slice(start, end).forEach(row => {
+        row.style.display = '';
+    });
+
+    if (noResults) {
+        noResults.style.display = (filteredRows.length === 0 && rows.length > 0) ? '' : 'none';
     }
+
+    renderPagination(totalPages);
+}
+
+tabs.forEach(tab => {
+    tab.addEventListener('click', function() {
+        tabs.forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        activeFilter = this.getAttribute('data-filter');
+        currentPage = 1;
+        applyFilters();
+    });
+});
+
+if (searchInput) {
+    searchInput.addEventListener('input', function () {
+        currentPage = 1;
+        applyFilters();
+    });
+}
+
+applyFilters();
 </script>
 
 </body>

@@ -4,7 +4,9 @@ session_start();
 require_once '../config/Database.php';
 require_once '../models/Billing.php';
 
-if (!isset($_SESSION['logged_in'])) {
+$allowedRoles = ['Owner', 'Cashier'];
+
+if (!isset($_SESSION['logged_in']) || !in_array($_SESSION['role'], $allowedRoles)) {
     header("Location: login.php");
     exit;
 }
@@ -99,7 +101,7 @@ $bills = $billing->getPendingBills();
 
     .billing-filter-grid {
         display: grid;
-        grid-template-columns: minmax(260px, 1fr) 240px 240px 105px;
+        grid-template-columns: minmax(260px, 1fr) 220px 220px 105px;
         gap: 0.85rem;
         align-items: end;
         padding-bottom: 1rem;
@@ -199,9 +201,10 @@ $bills = $billing->getPendingBills();
 
     .billing-table {
         width: 100%;
-        min-width: 1320px;
+        min-width: 1120px;
         border-collapse: collapse;
         background: transparent;
+        margin-bottom: 0;
     }
 
     .billing-table thead th {
@@ -210,14 +213,14 @@ $bills = $billing->getPendingBills();
         font-weight: 900;
         text-transform: uppercase;
         letter-spacing: 0.35px;
-        padding: 0.9rem 0.85rem;
+        padding: 0.9rem 0.75rem;
         border-bottom: 1px solid #dcdfe4;
         background: transparent;
         white-space: nowrap;
     }
 
     .billing-table tbody td {
-        padding: 1rem 0.85rem;
+        padding: 1rem 0.75rem;
         vertical-align: middle;
         border-bottom: 1px solid #e8ebef;
         color: var(--dashboard-text-main);
@@ -257,18 +260,47 @@ $bills = $billing->getPendingBills();
         white-space: nowrap;
     }
 
-    .billing-money {
-        font-size: 0.95rem;
+    .billing-amount-summary {
+        min-width: 230px;
+    }
+
+    .amount-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.45rem;
+    }
+
+    .amount-box {
+        border: 1px solid #edf0f4;
+        border-radius: 12px;
+        padding: 0.45rem 0.55rem;
+        background: rgba(248, 250, 252, 0.65);
+    }
+
+    .amount-label {
+        display: block;
+        color: var(--dashboard-text-muted);
+        font-size: 0.66rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.25px;
+        line-height: 1.15;
+    }
+
+    .amount-value {
+        display: block;
+        color: var(--dashboard-text-main);
+        font-size: 0.78rem;
+        font-weight: 900;
         white-space: nowrap;
+        margin-top: 0.15rem;
     }
 
-    .billing-money.total {
+    .amount-value.total {
         color: #047857;
-        font-weight: 900;
     }
 
-    .billing-money.balance {
-        font-weight: 900;
+    .amount-value.balance {
         color: var(--dashboard-text-main);
     }
 
@@ -303,13 +335,12 @@ $bills = $billing->getPendingBills();
         color: #047857;
     }
 
-    .billing-invoice-cell,
-    .billing-payment-cell {
-        min-width: 170px;
+    .billing-invoice-cell {
+        min-width: 130px;
     }
 
     .billing-payment-cell {
-        min-width: 405px;
+        min-width: 315px;
     }
 
     .billing-action-btn,
@@ -348,15 +379,22 @@ $bills = $billing->getPendingBills();
     }
 
     .billing-pay-btn {
-        background: #15803d;
-        border: 1px solid #15803d;
-        color: #fff;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        color: var(--dashboard-text-main);
+        width: 58px;
+        min-width: 58px;
+        height: 38px;
+        padding: 0.35rem 0.55rem;
+        justify-self: start;
+        border-radius: 999px;
+        font-weight: 900;
     }
 
     .billing-pay-btn:hover {
-        background: #166534;
-        border-color: #166534;
-        color: #fff;
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
     }
 
     .payment-form {
@@ -365,15 +403,14 @@ $bills = $billing->getPendingBills();
     }
 
     .payment-grid {
-        display: flex;
-        gap: 0.5rem;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: 90px 115px 120px 58px;
+        gap: 0.45rem;
         align-items: center;
     }
 
     .payment-grid input,
     .payment-grid select {
-        width: 125px;
         min-height: 38px;
         border-radius: 10px;
         border: 1px solid #d9dee6;
@@ -382,8 +419,8 @@ $bills = $billing->getPendingBills();
         box-shadow: none;
     }
 
-    .reference-number {
-        width: 145px !important;
+    .reference-number.d-none {
+        display: none !important;
     }
 
     .billing-helper {
@@ -413,15 +450,69 @@ $bills = $billing->getPendingBills();
         font-weight: 900 !important;
     }
 
+    .billing-pagination-wrap {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .billing-page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        color: var(--dashboard-text-muted);
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.45rem 0.75rem;
+        transition: 0.2s ease;
+    }
+
+    .billing-page-btn:hover:not(:disabled) {
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
+    }
+
+    .billing-page-btn.active {
+        background: var(--dashboard-primary);
+        border-color: var(--dashboard-primary);
+        color: var(--black);
+    }
+
+    .billing-page-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
     @media (max-width: 1199.98px) {
         .billing-filter-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .payment-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .billing-pay-btn {
+            grid-column: 1 / -1;
         }
     }
 
     @media (max-width: 991.98px) {
         .billing-header h1 {
             font-size: 2rem;
+        }
+
+        .amount-summary-grid {
+            grid-template-columns: 1fr;
         }
     }
 
@@ -451,15 +542,16 @@ $bills = $billing->getPendingBills();
             min-height: 42px;
         }
 
-        .payment-grid input,
-        .payment-grid select,
-        .reference-number,
-        .payment-grid button {
-            width: 100% !important;
+        .payment-grid {
+            grid-template-columns: 1fr;
         }
 
         .billing-payment-cell {
             min-width: 100%;
+        }
+
+        .billing-pagination-wrap {
+            justify-content: center;
         }
     }
 </style>
@@ -548,9 +640,7 @@ $bills = $billing->getPendingBills();
                         <tr>
                             <th>Reference No.</th>
                             <th>Customer</th>
-                            <th>Total</th>
-                            <th>Paid</th>
-                            <th>Balance</th>
+                            <th>Amount Summary</th>
                             <th>Status</th>
                             <th>Invoice</th>
                             <th>Payment</th>
@@ -592,16 +682,23 @@ $bills = $billing->getPendingBills();
                                         <?php echo htmlspecialchars($customerName); ?>
                                     </td>
 
-                                    <td class="billing-money total">
-                                        ₱<?php echo number_format($total, 2); ?>
-                                    </td>
+                                    <td class="billing-amount-summary">
+                                        <div class="amount-summary-grid">
+                                            <div class="amount-box">
+                                                <span class="amount-label">Total</span>
+                                                <span class="amount-value total">₱<?php echo number_format($total, 2); ?></span>
+                                            </div>
 
-                                    <td class="billing-money">
-                                        ₱<?php echo number_format($paid, 2); ?>
-                                    </td>
+                                            <div class="amount-box">
+                                                <span class="amount-label">Paid</span>
+                                                <span class="amount-value">₱<?php echo number_format($paid, 2); ?></span>
+                                            </div>
 
-                                    <td class="billing-money balance">
-                                        ₱<?php echo number_format($balance, 2); ?>
+                                            <div class="amount-box">
+                                                <span class="amount-label">Balance</span>
+                                                <span class="amount-value balance">₱<?php echo number_format($balance, 2); ?></span>
+                                            </div>
+                                        </div>
                                     </td>
 
                                     <td>
@@ -667,6 +764,7 @@ $bills = $billing->getPendingBills();
                                                         name="reference_number"
                                                         class="form-control form-control-sm reference-number"
                                                         placeholder="Reference"
+                                                        disabled
                                                     >
 
                                                     <button class="btn billing-pay-btn">
@@ -691,7 +789,7 @@ $bills = $billing->getPendingBills();
                         <?php else: ?>
 
                             <tr>
-                                <td colspan="8">
+                                <td colspan="6">
                                     <div class="billing-empty-state">
                                         <i class="bi bi-receipt-cutoff"></i>
                                         <div class="fw-bold mb-1">No pending billing items</div>
@@ -703,7 +801,7 @@ $bills = $billing->getPendingBills();
                         <?php endif; ?>
 
                         <tr id="noBillingResults" style="display:none;">
-                            <td colspan="8">
+                            <td colspan="6">
                                 <div class="billing-empty-state">
                                     <i class="bi bi-search"></i>
                                     <div class="fw-bold mb-1">No billing records match your search/filter</div>
@@ -715,6 +813,8 @@ $bills = $billing->getPendingBills();
                 </table>
             </div>
 
+            <div class="billing-pagination-wrap" id="billingPagination"></div>
+
         </div>
     </main>
 </div>
@@ -722,7 +822,41 @@ $bills = $billing->getPendingBills();
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+function updateReferenceField(form) {
+    const method = form.querySelector('.payment-method');
+    const ref = form.querySelector('.reference-number');
+
+    if (!method || !ref) {
+        return;
+    }
+
+    const needsReference = ['GCash', 'Bank Transfer', 'Cheque'].includes(method.value);
+
+    if (needsReference) {
+        ref.classList.remove('d-none');
+        ref.disabled = false;
+        ref.required = true;
+        ref.placeholder = method.value + ' reference';
+    } else {
+        ref.value = '';
+        ref.required = false;
+        ref.disabled = true;
+        ref.classList.add('d-none');
+        ref.placeholder = 'Reference';
+    }
+}
+
 document.querySelectorAll('.payment-form').forEach(form => {
+    const method = form.querySelector('.payment-method');
+
+    updateReferenceField(form);
+
+    if (method) {
+        method.addEventListener('change', function () {
+            updateReferenceField(form);
+        });
+    }
+
     form.addEventListener('submit', e => {
         const method = form.querySelector('.payment-method');
         const ref = form.querySelector('.reference-number');
@@ -737,25 +871,29 @@ document.querySelectorAll('.payment-form').forEach(form => {
         if (['GCash', 'Bank Transfer', 'Cheque'].includes(method.value) && ref.value.trim() === '') {
             alert('Reference required');
             e.preventDefault();
+            return;
         }
     });
 });
+
+const ITEMS_PER_PAGE = 5;
 
 const searchInput = document.getElementById('billingSearch');
 const typeFilter = document.getElementById('typeFilter');
 const statusFilter = document.getElementById('statusFilter');
 const clearFilters = document.getElementById('clearFilters');
-const rows = document.querySelectorAll('.billing-row');
+const rows = Array.from(document.querySelectorAll('.billing-row'));
 const noResults = document.getElementById('noBillingResults');
+const pagination = document.getElementById('billingPagination');
 
-function applyBillingFilters() {
-    const searchValue = searchInput.value.trim().toLowerCase();
-    const typeValue = typeFilter.value;
-    const statusValue = statusFilter.value;
+let currentPage = 1;
 
-    let visibleCount = 0;
+function getFilteredRows() {
+    const searchValue = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const typeValue = typeFilter ? typeFilter.value : 'all';
+    const statusValue = statusFilter ? statusFilter.value : 'all';
 
-    rows.forEach(row => {
+    return rows.filter(row => {
         const rowSearch = row.dataset.search || '';
         const rowType = row.dataset.type || '';
         const rowStatus = row.dataset.status || '';
@@ -764,39 +902,130 @@ function applyBillingFilters() {
         const matchesType = typeValue === 'all' || rowType === typeValue;
         const matchesStatus = statusValue === 'all' || rowStatus === statusValue;
 
-        if (matchesSearch && matchesType && matchesStatus) {
-            row.style.display = '';
-            visibleCount++;
-        } else {
-            row.style.display = 'none';
+        return matchesSearch && matchesType && matchesStatus;
+    });
+}
+
+function renderPagination(totalPages) {
+    if (!pagination) {
+        return;
+    }
+
+    pagination.innerHTML = '';
+
+    if (totalPages <= 1) {
+        pagination.style.display = 'none';
+        return;
+    }
+
+    pagination.style.display = 'flex';
+
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = 'billing-page-btn';
+    prevButton.innerHTML = '&laquo;';
+    prevButton.disabled = currentPage === 1;
+    prevButton.addEventListener('click', function () {
+        if (currentPage > 1) {
+            currentPage--;
+            applyBillingFilters();
         }
+    });
+    pagination.appendChild(prevButton);
+
+    for (let page = 1; page <= totalPages; page++) {
+        const pageButton = document.createElement('button');
+        pageButton.type = 'button';
+        pageButton.className = 'billing-page-btn' + (page === currentPage ? ' active' : '');
+        pageButton.textContent = page;
+        pageButton.addEventListener('click', function () {
+            currentPage = page;
+            applyBillingFilters();
+        });
+        pagination.appendChild(pageButton);
+    }
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'billing-page-btn';
+    nextButton.innerHTML = '&raquo;';
+    nextButton.disabled = currentPage === totalPages;
+    nextButton.addEventListener('click', function () {
+        if (currentPage < totalPages) {
+            currentPage++;
+            applyBillingFilters();
+        }
+    });
+    pagination.appendChild(nextButton);
+}
+
+function applyBillingFilters() {
+    const filteredRows = getFilteredRows();
+    const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE) || 1;
+
+    if (currentPage > totalPages) {
+        currentPage = totalPages;
+    }
+
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+
+    rows.forEach(row => {
+        row.style.display = 'none';
+    });
+
+    filteredRows.slice(start, end).forEach(row => {
+        row.style.display = '';
     });
 
     if (noResults) {
-        noResults.style.display = (visibleCount === 0 && rows.length > 0) ? '' : 'none';
+        noResults.style.display = filteredRows.length === 0 && rows.length > 0 ? '' : 'none';
     }
+
+    renderPagination(totalPages);
 }
 
 if (searchInput) {
-    searchInput.addEventListener('input', applyBillingFilters);
+    searchInput.addEventListener('input', function () {
+        currentPage = 1;
+        applyBillingFilters();
+    });
 }
 
 if (typeFilter) {
-    typeFilter.addEventListener('change', applyBillingFilters);
+    typeFilter.addEventListener('change', function () {
+        currentPage = 1;
+        applyBillingFilters();
+    });
 }
 
 if (statusFilter) {
-    statusFilter.addEventListener('change', applyBillingFilters);
+    statusFilter.addEventListener('change', function () {
+        currentPage = 1;
+        applyBillingFilters();
+    });
 }
 
 if (clearFilters) {
     clearFilters.addEventListener('click', () => {
-        if (searchInput) searchInput.value = '';
-        if (typeFilter) typeFilter.value = 'all';
-        if (statusFilter) statusFilter.value = 'all';
+        if (searchInput) {
+            searchInput.value = '';
+        }
+
+        if (typeFilter) {
+            typeFilter.value = 'all';
+        }
+
+        if (statusFilter) {
+            statusFilter.value = 'all';
+        }
+
+        currentPage = 1;
         applyBillingFilters();
     });
 }
+
+applyBillingFilters();
 </script>
 
 </body>

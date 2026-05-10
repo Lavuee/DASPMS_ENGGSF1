@@ -488,6 +488,48 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
         font-weight: 900 !important;
     }
 
+    .vehicle-pagination-wrap {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .vehicle-page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        color: var(--dashboard-text-muted);
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.45rem 0.75rem;
+        transition: 0.2s ease;
+    }
+
+    .vehicle-page-btn:hover:not(:disabled) {
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
+    }
+
+    .vehicle-page-btn.active {
+        background: var(--dashboard-primary);
+        border-color: var(--dashboard-primary);
+        color: var(--black);
+    }
+
+    .vehicle-page-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
     .modal-content {
         border-radius: 20px;
         border: 1px solid var(--border-light);
@@ -780,6 +822,10 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
             font-size: 1.75rem;
         }
 
+        .vehicle-pagination-wrap {
+            justify-content: center;
+        }
+
         .vehicle-search-bar {
             height: 42px;
             min-height: 42px;
@@ -918,6 +964,10 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                 $badgeClass = getVehicleStatusBadgeClass($status);
                                 $notes = !empty($v['notes']) ? $v['notes'] : 'No notes provided';
                                 $createdAt = !empty($v['created_at']) ? date('M d, Y', strtotime($v['created_at'])) : 'N/A';
+                                $deactivatedAt = !empty($v['deactivated_at']) ? date('M d, Y h:i A', strtotime($v['deactivated_at'])) : 'N/A';
+                                $archivedAt = !empty($v['archived_at']) ? date('M d, Y h:i A', strtotime($v['archived_at'])) : 'N/A';
+
+                                $makeModel = trim(($v['make'] ?? '') . ' ' . ($v['model'] ?? ''));
 
                                 $searchText = strtolower(
                                     ($v['plate_number'] ?? '') . ' ' .
@@ -960,8 +1010,8 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                 <td>
                                     <div class="vehicle-line mb-1">
                                         <i class="bi bi-wrench-adjustable"></i>
-                                        <span title="<?php echo htmlspecialchars(($v['make'] ?? '') . ' ' . ($v['model'] ?? '')); ?>">
-                                            <?php echo htmlspecialchars(($v['make'] ?? '') . ' ' . ($v['model'] ?? '')); ?>
+                                        <span title="<?php echo htmlspecialchars($makeModel); ?>">
+                                            <?php echo htmlspecialchars($makeModel); ?>
                                         </span>
                                     </div>
                                     <div class="vehicle-line">
@@ -1136,7 +1186,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                         <span>Make / Model</span>
                                                     </div>
                                                     <div class="vehicle-detail-value">
-                                                        <?php echo htmlspecialchars(($v['make'] ?? '') . ' ' . ($v['model'] ?? '')); ?>
+                                                        <?php echo htmlspecialchars($makeModel); ?>
                                                     </div>
                                                 </div>
 
@@ -1182,7 +1232,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                             <span>Deactivated At</span>
                                                         </div>
                                                         <div class="vehicle-detail-value">
-                                                            <?php echo htmlspecialchars($v['deactivated_at']); ?>
+                                                            <?php echo htmlspecialchars($deactivatedAt); ?>
                                                         </div>
                                                     </div>
                                                 <?php endif; ?>
@@ -1193,7 +1243,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                             <span>Archived At</span>
                                                         </div>
                                                         <div class="vehicle-detail-value">
-                                                            <?php echo htmlspecialchars($v['archived_at']); ?>
+                                                            <?php echo htmlspecialchars($archivedAt); ?>
                                                         </div>
                                                     </div>
                                                 <?php endif; ?>
@@ -1205,7 +1255,12 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                 Close
                                             </button>
 
-                                            <button type="button" class="vehicle-detail-edit-btn" data-bs-toggle="modal" data-bs-target="#editVehicleModal<?php echo $vehicleId; ?>">
+                                            <button
+                                                type="button"
+                                                class="vehicle-detail-edit-btn"
+                                                data-bs-target="#editVehicleModal<?php echo $vehicleId; ?>"
+                                                data-bs-toggle="modal"
+                                            >
                                                 Edit Vehicle
                                             </button>
                                         </div>
@@ -1224,7 +1279,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                             <div class="modal-header">
                                                 <div>
                                                     <h5 class="modal-title">Edit Vehicle</h5>
-                                                    <small class="text-muted">Update vehicle owner and vehicle details.</small>
+                                                    <small class="text-muted">Update vehicle and ownership details.</small>
                                                 </div>
                                                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                             </div>
@@ -1237,8 +1292,6 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                         <div class="minimal-form-field full">
                                                             <label class="minimal-label">Owner</label>
                                                             <select name="customer_id" class="minimal-control" required>
-                                                                <option value="" disabled>Choose Customer</option>
-
                                                                 <?php foreach ($customersList as $c): ?>
                                                                     <option
                                                                         value="<?php echo intval($c['customer_id']); ?>"
@@ -1260,7 +1313,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                                 type="text"
                                                                 name="plate_number"
                                                                 class="minimal-control text-uppercase"
-                                                                value="<?php echo htmlspecialchars($v['plate_number']); ?>"
+                                                                value="<?php echo htmlspecialchars($v['plate_number'] ?? ''); ?>"
                                                                 required
                                                             >
                                                             <div class="minimal-helper">
@@ -1274,7 +1327,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                                 type="text"
                                                                 name="make"
                                                                 class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($v['make']); ?>"
+                                                                value="<?php echo htmlspecialchars($v['make'] ?? ''); ?>"
                                                                 required
                                                             >
                                                         </div>
@@ -1285,7 +1338,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                                 type="text"
                                                                 name="model"
                                                                 class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($v['model']); ?>"
+                                                                value="<?php echo htmlspecialchars($v['model'] ?? ''); ?>"
                                                                 required
                                                             >
                                                         </div>
@@ -1297,7 +1350,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                                 name="year"
                                                                 class="minimal-control"
                                                                 maxlength="4"
-                                                                value="<?php echo htmlspecialchars($v['year']); ?>"
+                                                                value="<?php echo htmlspecialchars($v['year'] ?? ''); ?>"
                                                                 required
                                                             >
                                                         </div>
@@ -1308,7 +1361,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                                 type="text"
                                                                 name="color"
                                                                 class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($v['color']); ?>"
+                                                                value="<?php echo htmlspecialchars($v['color'] ?? ''); ?>"
                                                                 required
                                                             >
                                                         </div>
@@ -1368,6 +1421,8 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                 </tbody>
             </table>
         </div>
+
+        <div class="vehicle-pagination-wrap" id="vehiclePagination"></div>
 
     </div>
 </main>
@@ -1496,32 +1551,114 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
-const vehicleSearch = document.getElementById('vehicleSearch');
-const vehiclesTable = document.getElementById('vehiclesTable');
-const noVehicleResults = document.getElementById('noVehicleResults');
+document.addEventListener('DOMContentLoaded', function () {
+    const ITEMS_PER_PAGE = 5;
 
-if (vehicleSearch && vehiclesTable) {
-    vehicleSearch.addEventListener('input', function () {
-        const searchValue = this.value.trim().toLowerCase();
-        const rows = vehiclesTable.querySelectorAll('tbody tr.vehicle-row');
-        let visibleCount = 0;
+    const vehicleSearch = document.getElementById('vehicleSearch');
+    const vehiclesTable = document.getElementById('vehiclesTable');
+    const noVehicleResults = document.getElementById('noVehicleResults');
+    const vehiclePagination = document.getElementById('vehiclePagination');
+    const vehicleRows = vehiclesTable ? Array.from(vehiclesTable.querySelectorAll('tbody tr.vehicle-row')) : [];
 
-        rows.forEach(row => {
+    let currentPage = 1;
+
+    function getFilteredRows() {
+        const searchValue = vehicleSearch ? vehicleSearch.value.trim().toLowerCase() : '';
+
+        return vehicleRows.filter(function (row) {
             const text = row.dataset.search || '';
+            return text.includes(searchValue);
+        });
+    }
 
-            if (text.includes(searchValue)) {
-                row.style.display = '';
-                visibleCount++;
-            } else {
-                row.style.display = 'none';
+    function renderPagination(totalPages) {
+        if (!vehiclePagination) {
+            return;
+        }
+
+        vehiclePagination.innerHTML = '';
+
+        if (totalPages <= 1) {
+            vehiclePagination.style.display = 'none';
+            return;
+        }
+
+        vehiclePagination.style.display = 'flex';
+
+        const prevButton = document.createElement('button');
+        prevButton.type = 'button';
+        prevButton.className = 'vehicle-page-btn';
+        prevButton.innerHTML = '&laquo;';
+        prevButton.disabled = currentPage === 1;
+        prevButton.addEventListener('click', function () {
+            if (currentPage > 1) {
+                currentPage--;
+                applyVehiclePagination();
             }
+        });
+        vehiclePagination.appendChild(prevButton);
+
+        for (let page = 1; page <= totalPages; page++) {
+            const pageButton = document.createElement('button');
+            pageButton.type = 'button';
+            pageButton.className = 'vehicle-page-btn' + (page === currentPage ? ' active' : '');
+            pageButton.textContent = page;
+            pageButton.addEventListener('click', function () {
+                currentPage = page;
+                applyVehiclePagination();
+            });
+            vehiclePagination.appendChild(pageButton);
+        }
+
+        const nextButton = document.createElement('button');
+        nextButton.type = 'button';
+        nextButton.className = 'vehicle-page-btn';
+        nextButton.innerHTML = '&raquo;';
+        nextButton.disabled = currentPage === totalPages;
+        nextButton.addEventListener('click', function () {
+            if (currentPage < totalPages) {
+                currentPage++;
+                applyVehiclePagination();
+            }
+        });
+        vehiclePagination.appendChild(nextButton);
+    }
+
+    function applyVehiclePagination() {
+        const filteredRows = getFilteredRows();
+        const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE) || 1;
+
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
+        }
+
+        const start = (currentPage - 1) * ITEMS_PER_PAGE;
+        const end = start + ITEMS_PER_PAGE;
+
+        vehicleRows.forEach(function (row) {
+            row.style.display = 'none';
+        });
+
+        filteredRows.slice(start, end).forEach(function (row) {
+            row.style.display = '';
         });
 
         if (noVehicleResults) {
-            noVehicleResults.style.display = visibleCount === 0 && rows.length > 0 ? '' : 'none';
+            noVehicleResults.style.display = filteredRows.length === 0 && vehicleRows.length > 0 ? '' : 'none';
         }
-    });
-}
+
+        renderPagination(totalPages);
+    }
+
+    if (vehicleSearch && vehiclesTable) {
+        vehicleSearch.addEventListener('input', function () {
+            currentPage = 1;
+            applyVehiclePagination();
+        });
+    }
+
+    applyVehiclePagination();
+});
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

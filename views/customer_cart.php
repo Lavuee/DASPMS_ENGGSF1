@@ -98,10 +98,8 @@ function partImagePath($image)
     }
 
     .cart-layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 355px;
-        gap: 2rem;
-        align-items: start;
+        display: block;
+        width: 100%;
     }
 
     .cart-items-panel {
@@ -281,11 +279,13 @@ function partImagePath($image)
     }
 
     .summary-panel {
-        position: sticky;
-        top: 1rem;
+        position: static;
         background: transparent;
-        border-left: 1px solid rgba(17, 24, 39, 0.16);
-        padding-left: 1.6rem;
+        border-left: none;
+        border-top: 1px solid rgba(17, 24, 39, 0.16);
+        padding-left: 0;
+        padding-top: 1.2rem;
+        margin-top: 1.25rem;
         min-width: 0;
     }
 
@@ -293,7 +293,39 @@ function partImagePath($image)
         color: var(--dashboard-text-main);
         font-size: 1.15rem;
         font-weight: 900;
+        margin-bottom: 0.85rem;
+    }
+
+    .checkout-grid {
+        display: grid;
+        grid-template-columns: 0.85fr 1.1fr 1.15fr;
+        border-top: 1px solid rgba(17, 24, 39, 0.10);
+        border-bottom: 1px solid rgba(17, 24, 39, 0.10);
         margin-bottom: 1rem;
+    }
+
+    .checkout-section {
+        padding: 1.05rem 1.25rem;
+        min-width: 0;
+    }
+
+    .checkout-section:first-child {
+        padding-left: 0;
+    }
+
+    .checkout-section:last-child {
+        padding-right: 0;
+    }
+
+    .checkout-section + .checkout-section {
+        border-left: 1px solid rgba(17, 24, 39, 0.12);
+    }
+
+    .checkout-section-title {
+        color: var(--dashboard-text-main);
+        font-size: 0.95rem;
+        font-weight: 900;
+        margin-bottom: 0.9rem;
     }
 
     .summary-line {
@@ -302,19 +334,20 @@ function partImagePath($image)
         justify-content: space-between;
         gap: 1rem;
         color: var(--dashboard-text-muted);
-        font-size: 0.88rem;
-        margin-bottom: 0.8rem;
+        font-size: 0.86rem;
+        margin-bottom: 0.75rem;
     }
 
     .summary-line strong {
         color: var(--black);
         font-weight: 900;
+        text-align: right;
     }
 
     .summary-divider {
         border: 0;
         border-top: 1px solid rgba(17, 24, 39, 0.16);
-        margin: 1.05rem 0;
+        margin: 0.95rem 0;
     }
 
     .summary-total {
@@ -322,7 +355,7 @@ function partImagePath($image)
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
-        margin-bottom: 1.2rem;
+        margin-bottom: 0;
     }
 
     .summary-total span {
@@ -335,6 +368,77 @@ function partImagePath($image)
         color: var(--black);
         font-size: 1.15rem;
         font-weight: 900;
+        text-align: right;
+    }
+
+    .pickup-schedule-box,
+    .payment-method-box {
+        border: none;
+        padding: 0;
+        margin-bottom: 0;
+    }
+
+    .pickup-label,
+    .payment-label {
+        display: block;
+        color: var(--dashboard-text-muted);
+        font-size: 0.72rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.35px;
+        margin-bottom: 0.35rem;
+    }
+
+    .pickup-control,
+    .payment-control {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid rgba(17, 24, 39, 0.16);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.62);
+        color: var(--dashboard-text-main);
+        font-size: 0.88rem;
+        font-weight: 700;
+        padding: 0.55rem 0.75rem;
+        box-shadow: none;
+    }
+
+    .pickup-control:focus,
+    .payment-control:focus {
+        border-color: var(--dashboard-primary);
+        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.18);
+        outline: none;
+    }
+
+    .pickup-textarea,
+    .payment-textarea {
+        min-height: 78px;
+        resize: vertical;
+        line-height: 1.5;
+    }
+
+    .pickup-helper,
+    .payment-helper,
+    .payment-mini-note {
+        color: var(--dashboard-text-muted);
+        font-size: 0.75rem;
+        line-height: 1.5;
+        margin-top: 0.55rem;
+    }
+
+    .gcash-fields {
+        display: none;
+        margin-top: 1rem;
+    }
+
+    .gcash-downpayment-box {
+        display: none;
+        margin-top: 1rem;
+    }
+
+    .gcash-full-note {
+        display: none;
+        margin-top: 1rem;
     }
 
     .reservation-note {
@@ -342,16 +446,29 @@ function partImagePath($image)
         border: 1px solid rgba(245, 197, 24, 0.35);
         color: var(--dashboard-text-main);
         border-radius: 14px;
-        padding: 0.9rem 1rem;
+        padding: 0.85rem 1rem;
         font-size: 0.82rem;
         line-height: 1.55;
-        margin-bottom: 1rem;
+        margin-bottom: 0.9rem;
+    }
+
+    .checkout-button-row {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-top: 0.95rem;
+    }
+
+    .clear-cart-form {
+        margin: 0;
     }
 
     .reserve-btn,
     .clear-btn,
     .browse-empty-btn {
-        min-height: 46px;
+        min-height: 44px;
         border-radius: 0;
         font-size: 0.9rem;
         font-weight: 900;
@@ -362,11 +479,17 @@ function partImagePath($image)
         transition: 0.2s ease;
     }
 
+    .reserve-btn,
+    .clear-btn {
+        width: 230px;
+        min-width: 230px;
+        max-width: 230px;
+    }
+
     .reserve-btn {
         background: var(--black);
         border: 1px solid var(--black);
         color: var(--white);
-        width: 100%;
     }
 
     .reserve-btn:hover {
@@ -384,7 +507,6 @@ function partImagePath($image)
         background: transparent;
         border: 1px solid rgba(17, 24, 39, 0.38);
         color: var(--dashboard-text-main);
-        width: 100%;
     }
 
     .clear-btn:hover {
@@ -441,16 +563,21 @@ function partImagePath($image)
     }
 
     @media (max-width: 1199.98px) {
-        .cart-layout {
+        .checkout-grid {
             grid-template-columns: 1fr;
+            border-top: 1px solid rgba(17, 24, 39, 0.10);
+            border-bottom: 1px solid rgba(17, 24, 39, 0.10);
         }
 
-        .summary-panel {
-            position: static;
+        .checkout-section,
+        .checkout-section:first-child,
+        .checkout-section:last-child {
+            padding: 1rem 0;
+        }
+
+        .checkout-section + .checkout-section {
             border-left: none;
-            border-top: 1px solid rgba(17, 24, 39, 0.16);
-            padding-left: 0;
-            padding-top: 1.5rem;
+            border-top: 1px solid rgba(17, 24, 39, 0.10);
         }
     }
 
@@ -512,6 +639,26 @@ function partImagePath($image)
             width: 100%;
             max-width: 90px;
         }
+
+        .checkout-button-row {
+            flex-direction: column;
+        }
+
+        .reserve-btn,
+        .clear-btn {
+            width: 100%;
+            min-width: 0;
+            max-width: 320px;
+        }
+
+        .clear-cart-form {
+            width: 100%;
+            max-width: 320px;
+        }
+
+        .clear-cart-form .clear-btn {
+            max-width: 100%;
+        }
     }
 </style>
 </head>
@@ -539,7 +686,7 @@ function partImagePath($image)
         </div>
 
         <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success alert-dismissible fade show cart-alert">
+            <div class="alert alert-success alert-dismissible fade show cart-alert" role="alert">
                 <i class="bi bi-check-circle-fill me-2"></i>
                 <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -547,7 +694,7 @@ function partImagePath($image)
         <?php endif; ?>
 
         <?php if (isset($_SESSION['error_message'])): ?>
-            <div class="alert alert-danger alert-dismissible fade show cart-alert">
+            <div class="alert alert-danger alert-dismissible fade show cart-alert" role="alert">
                 <i class="bi bi-exclamation-circle-fill me-2"></i>
                 <?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -665,60 +812,180 @@ function partImagePath($image)
                     </div>
                 </div>
 
-                <aside class="summary-panel">
-                    <h5 class="summary-title">Cart Totals</h5>
-
-                    <div class="summary-line">
-                        <span>Selected Items</span>
-                        <strong id="selectedItemCount">0</strong>
-                    </div>
-
-                    <div class="summary-line">
-                        <span>Total Items in Cart</span>
-                        <strong><?php echo count($cart); ?></strong>
-                    </div>
-
-                    <div class="summary-line">
-                        <span>Reservation Type</span>
-                        <strong>Pickup</strong>
-                    </div>
-
-                    <div class="summary-line">
-                        <span>Payment</span>
-                        <strong>At Shop</strong>
-                    </div>
-
-                    <hr class="summary-divider">
-
-                    <div class="summary-total">
-                        <span>Selected Total</span>
-                        <strong id="selectedTotalDisplay">₱0.00</strong>
-                    </div>
-
-                    <div class="reservation-note">
-                        <strong>Note:</strong> Only checked items will be included in the reservation request. Payment will be made at the shop after approval and pickup confirmation.
-                    </div>
+                <section class="summary-panel">
+                    <h5 class="summary-title">Checkout Details</h5>
 
                     <form action="../controllers/CheckoutController.php" method="POST" class="mb-2" id="reserveForm">
-                        <button type="submit" class="btn reserve-btn" id="reserveBtn" disabled>
+                        <div class="checkout-grid">
+
+                            <div class="checkout-section">
+                                <h6 class="checkout-section-title">Cart Totals</h6>
+
+                                <div class="summary-line">
+                                    <span>Selected Items</span>
+                                    <strong id="selectedItemCount">0</strong>
+                                </div>
+
+                                <div class="summary-line">
+                                    <span>Total Items in Cart</span>
+                                    <strong><?php echo count($cart); ?></strong>
+                                </div>
+
+                                <div class="summary-line">
+                                    <span>Reservation Type</span>
+                                    <strong>Pickup</strong>
+                                </div>
+
+                                <div class="summary-line">
+                                    <span>Payment</span>
+                                    <strong id="paymentSummaryDisplay">At Shop</strong>
+                                </div>
+
+                                <hr class="summary-divider">
+
+                                <div class="summary-total">
+                                    <span>Selected Total</span>
+                                    <strong id="selectedTotalDisplay">₱0.00</strong>
+                                </div>
+                            </div>
+
+                            <div class="checkout-section">
+                                <h6 class="checkout-section-title">Preferred Pickup</h6>
+
+                                <div class="pickup-schedule-box">
+                                    <label class="pickup-label">Preferred Pickup Date</label>
+                                    <input
+                                        type="date"
+                                        name="preferred_pickup_date"
+                                        class="pickup-control"
+                                        min="<?php echo date('Y-m-d'); ?>"
+                                        required
+                                    >
+
+                                    <label class="pickup-label mt-3">Preferred Pickup Time</label>
+                                    <input
+                                        type="time"
+                                        name="preferred_pickup_time"
+                                        class="pickup-control"
+                                        required
+                                    >
+
+                                    <label class="pickup-label mt-3">Pickup Notes</label>
+                                    <textarea
+                                        name="pickup_notes"
+                                        class="pickup-control pickup-textarea"
+                                        maxlength="500"
+                                        placeholder="Example: I will pick up the item after class/work."
+                                    ></textarea>
+
+                                    <div class="pickup-helper">
+                                        The shop will still confirm item availability and pickup schedule before release.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="checkout-section">
+                                <h6 class="checkout-section-title">Payment Method</h6>
+
+                                <div class="payment-method-box">
+                                    <label class="payment-label">Payment Method</label>
+                                    <select
+                                        name="payment_method"
+                                        id="paymentMethod"
+                                        class="payment-control"
+                                        required
+                                    >
+                                        <option value="Cash on Pickup" selected>Cash on Pickup</option>
+                                        <option value="GCash Down Payment">GCash Down Payment</option>
+                                        <option value="GCash Full Payment">GCash Full Payment</option>
+                                    </select>
+
+                                    <div id="gcashFields" class="gcash-fields">
+                                        <label class="payment-label">GCash Reference Number</label>
+                                        <input
+                                            type="text"
+                                            name="gcash_reference"
+                                            id="gcashReference"
+                                            class="payment-control"
+                                            maxlength="100"
+                                            placeholder="Enter GCash reference number"
+                                        >
+
+                                        <div id="gcashDownpaymentBox" class="gcash-downpayment-box">
+                                            <label class="payment-label mt-3">GCash Down Payment Amount</label>
+                                            <input
+                                                type="number"
+                                                name="gcash_payment_amount"
+                                                id="gcashPaymentAmount"
+                                                class="payment-control"
+                                                min="1"
+                                                step="0.01"
+                                                placeholder="Enter amount sent through GCash"
+                                            >
+
+                                            <div class="payment-mini-note">
+                                                Down payment must be less than the selected total. The remaining balance will be paid at the shop.
+                                            </div>
+                                        </div>
+
+                                        <div id="gcashFullNote" class="gcash-full-note">
+                                            <div class="payment-helper">
+                                                Full payment amount will match the selected total:
+                                                <strong id="gcashFullAmountDisplay">₱0.00</strong>.
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <label class="payment-label mt-3">Payment Notes</label>
+                                    <textarea
+                                        name="payment_notes"
+                                        class="payment-control payment-textarea"
+                                        maxlength="500"
+                                        placeholder="Optional note about your payment or reservation."
+                                    ></textarea>
+
+                                    <div class="payment-helper">
+                                        Cash on Pickup means you will pay at the shop. GCash Down Payment records a partial payment.
+                                        GCash Full Payment records the full selected total after admin verification.
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div class="reservation-note">
+                            <strong>Note:</strong> Only checked items will be included in the reservation request.
+                            GCash payments are manually verified by the shop before approval.
+                        </div>
+                    </form>
+
+                    <div class="checkout-button-row">
+                        <button
+                            type="submit"
+                            class="btn reserve-btn"
+                            id="reserveBtn"
+                            form="reserveForm"
+                            disabled
+                        >
                             <i class="bi bi-check2-circle"></i>
                             Reserve Selected Items
                         </button>
-                    </form>
 
-                    <form
-                        action="../controllers/CartController.php"
-                        method="POST"
-                        onsubmit="return confirm('Clear all items from your cart?');"
-                    >
-                        <input type="hidden" name="action" value="clear">
+                        <form
+                            action="../controllers/CartController.php"
+                            method="POST"
+                            class="clear-cart-form"
+                            onsubmit="return confirm('Clear all items from your cart?');"
+                        >
+                            <input type="hidden" name="action" value="clear">
 
-                        <button type="submit" class="btn clear-btn">
-                            <i class="bi bi-trash3"></i>
-                            Clear Cart
-                        </button>
-                    </form>
-                </aside>
+                            <button type="submit" class="btn clear-btn">
+                                <i class="bi bi-trash3"></i>
+                                Clear Cart
+                            </button>
+                        </form>
+                    </div>
+                </section>
 
             </div>
         <?php endif; ?>
@@ -728,12 +995,42 @@ function partImagePath($image)
 </div>
 
 <script>
+const cartAlerts = document.querySelectorAll('.cart-alert');
+
+cartAlerts.forEach(alertBox => {
+    setTimeout(() => {
+        if (!document.body.contains(alertBox)) {
+            return;
+        }
+
+        alertBox.classList.remove('show');
+
+        setTimeout(() => {
+            if (alertBox.parentNode) {
+                alertBox.remove();
+            }
+        }, 200);
+    }, 3000);
+});
+
 const selectAllItems = document.getElementById('selectAllItems');
 const itemChecks = document.querySelectorAll('.cart-check');
 const selectedItemCount = document.getElementById('selectedItemCount');
 const selectedTotalDisplay = document.getElementById('selectedTotalDisplay');
 const reserveForm = document.getElementById('reserveForm');
 const reserveBtn = document.getElementById('reserveBtn');
+
+const paymentMethod = document.getElementById('paymentMethod');
+const paymentSummaryDisplay = document.getElementById('paymentSummaryDisplay');
+
+const gcashFields = document.getElementById('gcashFields');
+const gcashReference = document.getElementById('gcashReference');
+const gcashDownpaymentBox = document.getElementById('gcashDownpaymentBox');
+const gcashPaymentAmount = document.getElementById('gcashPaymentAmount');
+const gcashFullNote = document.getElementById('gcashFullNote');
+const gcashFullAmountDisplay = document.getElementById('gcashFullAmountDisplay');
+
+let selectedTotal = 0;
 
 function formatCurrency(amount) {
     return '₱' + amount.toLocaleString('en-PH', {
@@ -753,6 +1050,8 @@ function updateSelectedSummary() {
         }
     });
 
+    selectedTotal = total;
+
     if (selectedItemCount) {
         selectedItemCount.textContent = count;
     }
@@ -761,14 +1060,73 @@ function updateSelectedSummary() {
         selectedTotalDisplay.textContent = formatCurrency(total);
     }
 
+    if (gcashFullAmountDisplay) {
+        gcashFullAmountDisplay.textContent = formatCurrency(total);
+    }
+
     if (reserveBtn) {
         reserveBtn.disabled = count === 0;
+    }
+
+    if (gcashPaymentAmount) {
+        if (total > 0) {
+            gcashPaymentAmount.max = Math.max(total - 0.01, 0).toFixed(2);
+        } else {
+            gcashPaymentAmount.removeAttribute('max');
+        }
     }
 
     if (selectAllItems) {
         selectAllItems.checked = count === itemChecks.length && itemChecks.length > 0;
         selectAllItems.indeterminate = count > 0 && count < itemChecks.length;
     }
+}
+
+function togglePaymentFields() {
+    if (!paymentMethod) {
+        return;
+    }
+
+    const method = paymentMethod.value;
+    const isGcash = method === 'GCash Down Payment' || method === 'GCash Full Payment';
+
+    if (paymentSummaryDisplay) {
+        paymentSummaryDisplay.textContent = method === 'Cash on Pickup' ? 'At Shop' : method;
+    }
+
+    if (gcashFields) {
+        gcashFields.style.display = isGcash ? 'block' : 'none';
+    }
+
+    if (gcashReference) {
+        gcashReference.required = isGcash;
+
+        if (!isGcash) {
+            gcashReference.value = '';
+        }
+    }
+
+    if (gcashDownpaymentBox) {
+        gcashDownpaymentBox.style.display = method === 'GCash Down Payment' ? 'block' : 'none';
+    }
+
+    if (gcashFullNote) {
+        gcashFullNote.style.display = method === 'GCash Full Payment' ? 'block' : 'none';
+    }
+
+    if (gcashPaymentAmount) {
+        gcashPaymentAmount.required = method === 'GCash Down Payment';
+
+        if (method !== 'GCash Down Payment') {
+            gcashPaymentAmount.value = '';
+        }
+    }
+}
+
+if (paymentMethod) {
+    paymentMethod.addEventListener('change', function () {
+        togglePaymentFields();
+    });
 }
 
 if (selectAllItems) {
@@ -778,11 +1136,15 @@ if (selectAllItems) {
         });
 
         updateSelectedSummary();
+        togglePaymentFields();
     });
 }
 
 itemChecks.forEach(check => {
-    check.addEventListener('change', updateSelectedSummary);
+    check.addEventListener('change', function () {
+        updateSelectedSummary();
+        togglePaymentFields();
+    });
 });
 
 if (reserveForm) {
@@ -792,11 +1154,31 @@ if (reserveForm) {
         if (selected.length === 0) {
             e.preventDefault();
             alert('Please select at least one item to reserve.');
+            return;
+        }
+
+        if (paymentMethod && paymentMethod.value === 'GCash Down Payment') {
+            const amount = parseFloat(gcashPaymentAmount.value || 0);
+
+            if (amount <= 0 || amount >= selectedTotal) {
+                e.preventDefault();
+                alert('Down payment must be greater than zero and less than the selected total.');
+                return;
+            }
+        }
+
+        if (paymentMethod && paymentMethod.value === 'GCash Full Payment') {
+            if (selectedTotal <= 0) {
+                e.preventDefault();
+                alert('Please select valid items before using full payment.');
+                return;
+            }
         }
     });
 }
 
 updateSelectedSummary();
+togglePaymentFields();
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

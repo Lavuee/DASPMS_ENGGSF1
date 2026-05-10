@@ -1,7 +1,9 @@
 <?php
 session_start();
 
-if (!isset($_SESSION['logged_in'])) {
+$allowedRoles = ['Owner', 'Cashier'];
+
+if (!isset($_SESSION['logged_in']) || !in_array($_SESSION['role'], $allowedRoles)) {
     header("Location: login.php");
     exit;
 }

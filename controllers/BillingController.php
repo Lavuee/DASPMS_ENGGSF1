@@ -45,9 +45,7 @@ try {
         } else {
             $_SESSION['error_message'] = "Invoice already exists or could not be generated.";
         }
-    }
-
-    elseif ($action === 'pay') {
+    } elseif ($action === 'pay') {
         $invoice_id = intval($_POST['invoice_id'] ?? 0);
         $user_id = intval($_SESSION['user_id']);
         $amount = floatval($_POST['amount'] ?? 0);
@@ -77,12 +75,9 @@ try {
         } else {
             $_SESSION['error_message'] = "Unable to record payment. Please check the invoice balance.";
         }
-    }
-
-    else {
+    } else {
         throw new Exception("Invalid billing action.");
     }
-
 } catch (Exception $e) {
     $_SESSION['error_message'] = "System Error: " . $e->getMessage();
 }

@@ -311,19 +311,21 @@ foreach ($statusCountsRaw as $row) {
 ========================= */
 if ($statusFilter === 'All') {
     $stmt = $db->prepare("
-        SELECT *
-        FROM customer
+        SELECT c.*, u.username AS login_username
+        FROM customer c
+        LEFT JOIN user u ON c.user_id = u.user_id
         ORDER BY
-            FIELD(status, 'Active', 'Inactive', 'Archived'),
-            first_name ASC
+            FIELD(c.status, 'Active', 'Inactive', 'Archived'),
+            c.first_name ASC
     ");
     $stmt->execute();
 } else {
     $stmt = $db->prepare("
-        SELECT *
-        FROM customer
-        WHERE status = ?
-        ORDER BY first_name ASC
+        SELECT c.*, u.username AS login_username
+        FROM customer c
+        LEFT JOIN user u ON c.user_id = u.user_id
+        WHERE c.status = ?
+        ORDER BY c.first_name ASC
     ");
     $stmt->execute([$statusFilter]);
 }
@@ -499,15 +501,16 @@ $displayCount = count($customers);
         -webkit-overflow-scrolling: touch;
     }
 
-    .customers-table {
+    .customer-table {
         width: 100%;
         min-width: 1180px;
+        margin-bottom: 0;
         border-collapse: collapse;
         background: transparent;
-        margin-bottom: 0;
     }
 
-    .customers-table thead th {
+    .customer-table thead th {
+        background: transparent;
         color: var(--dashboard-text-muted);
         font-size: 0.82rem;
         font-weight: 900;
@@ -515,33 +518,33 @@ $displayCount = count($customers);
         letter-spacing: 0.35px;
         padding: 0.9rem 0.85rem;
         border-bottom: 1px solid #dcdfe4;
-        background: transparent;
         white-space: nowrap;
     }
 
-    .customers-table tbody td {
+    .customer-table tbody td {
         padding: 1rem 0.85rem;
         border-bottom: 1px solid #e8ebef;
         vertical-align: middle;
         color: var(--dashboard-text-main);
         background: transparent;
         font-size: 0.95rem;
+        white-space: nowrap;
     }
 
-    .customers-table tbody tr:hover td {
+    .customer-table tbody tr:hover td {
         background: rgba(245, 197, 24, 0.035);
     }
 
-    .customers-table th:last-child,
-    .customers-table td:last-child {
+    .customer-table th:last-child,
+    .customer-table td:last-child {
         min-width: 190px;
     }
 
-    .customer-profile {
+    .customer-profile-cell {
         display: flex;
         align-items: center;
-        gap: 0.8rem;
-        min-width: 0;
+        gap: 0.75rem;
+        min-width: 230px;
     }
 
     .customer-avatar {
@@ -550,83 +553,52 @@ $displayCount = count($customers);
         border-radius: 14px;
         background: var(--dashboard-primary-soft);
         color: var(--black);
-        font-size: 0.92rem;
-        font-weight: 900;
-        display: flex;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
+        font-size: 0.86rem;
+        font-weight: 900;
         flex-shrink: 0;
     }
 
     .customer-name {
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
         font-weight: 900;
-        margin-bottom: 0.15rem;
-        max-width: 175px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        color: var(--dashboard-text-main);
+        line-height: 1.25;
     }
 
-    .customer-sub {
-        color: var(--dashboard-text-muted);
+    .customer-subtext {
         font-size: 0.78rem;
-        font-weight: 500;
-    }
-
-    .contact-stack {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-        min-width: 0;
-    }
-
-    .contact-line {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        color: var(--dashboard-text-main);
-        font-size: 0.88rem;
-        min-width: 0;
-    }
-
-    .contact-line i {
         color: var(--dashboard-text-muted);
-        flex-shrink: 0;
-    }
-
-    .contact-line span {
-        display: inline-block;
-        max-width: 185px;
+        font-weight: 600;
+        margin-top: 0.12rem;
+        max-width: 260px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
-    .address-cell {
-        max-width: 190px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-    }
-
-    .credit-text {
-        font-size: 0.95rem;
-        white-space: nowrap;
-    }
-
+    .customer-type-badge,
     .status-badge {
         display: inline-flex;
         align-items: center;
-        gap: 0.4rem;
-        border-radius: 999px;
+        justify-content: center;
+        gap: 0.35rem;
         padding: 0.42rem 0.72rem;
+        border-radius: 999px;
         font-size: 0.78rem;
         font-weight: 900;
         white-space: nowrap;
+    }
+
+    .type-walkin {
+        background: #f3f4f6;
+        color: #374151;
+    }
+
+    .type-registered {
+        background: #e8f7ef;
+        color: #15803d;
     }
 
     .status-active {
@@ -644,23 +616,19 @@ $displayCount = count($customers);
         color: #475569;
     }
 
-    .action-group {
+    .customer-action-group {
         display: flex;
-        justify-content: flex-end;
         align-items: center;
+        justify-content: flex-end;
         gap: 0.45rem;
         flex-wrap: nowrap;
     }
 
-    .action-form {
-        margin: 0;
-        display: inline-flex;
-    }
-
-    .icon-action-btn {
+    .customer-action-btn {
         width: 38px;
         height: 38px;
         border-radius: 10px;
+        padding: 0;
         border: 1px solid #e5e7eb;
         background: #fff;
         color: var(--dashboard-text-muted);
@@ -670,315 +638,163 @@ $displayCount = count($customers);
         text-decoration: none;
         font-size: 0.95rem;
         transition: all 0.2s ease;
+        white-space: nowrap;
     }
 
-    .icon-action-btn:hover {
+    .customer-action-btn:hover {
         transform: translateY(-1px);
     }
 
-    .icon-action-btn.view-btn:hover {
-        background: #eef2ff;
-        border-color: #c7d2fe;
-        color: #4338ca;
-    }
-
-    .icon-action-btn.edit-btn:hover {
+    .customer-action-btn.edit-btn:hover {
         background: var(--dashboard-primary);
         border-color: var(--dashboard-primary);
         color: var(--black);
     }
 
-    .icon-action-btn.deactivate-btn:hover {
-        background: #fff7ed;
-        border-color: #fdba74;
-        color: #c2410c;
-    }
-
-    .icon-action-btn.reactivate-btn:hover {
-        background: #ecfdf5;
-        border-color: #a7f3d0;
-        color: #047857;
-    }
-
-    .icon-action-btn.archive-btn:hover {
+    .customer-action-btn.danger:hover {
         background: #fff1f2;
         border-color: #fecdd3;
         color: #be123c;
     }
 
-    .empty-state {
+    .customer-action-btn.success:hover {
+        background: #ecfdf5;
+        border-color: #bbf7d0;
+        color: #15803d;
+    }
+
+    .customer-empty {
         padding: 3rem 1rem;
         text-align: center;
         color: var(--dashboard-text-muted);
         font-size: 0.95rem;
     }
 
-    .empty-state i {
-        display: block;
-        color: var(--dashboard-primary);
+    .customer-empty i {
         font-size: 2.25rem;
-        margin-bottom: 0.75rem;
+        color: var(--dashboard-primary);
+        display: block;
+        margin-bottom: 0.7rem;
     }
 
-    .empty-state .fw-bold {
+    .customer-empty .fw-bold {
         color: var(--dashboard-text-main);
         font-size: 0.95rem;
         font-weight: 900 !important;
     }
 
-    .modal-content {
-        border-radius: 20px;
-        border: 1px solid var(--border-light);
-        overflow: hidden;
-    }
-
-    .modal-header {
-        border-bottom: 1px solid var(--border-light);
-        background: #fffdf5;
-    }
-
-    .modal-footer {
-        border-top: 1px solid var(--border-light);
-    }
-
-    .modal-title {
-        font-size: 1rem;
-        font-weight: 900;
-    }
-
-    .modal-header small {
-        font-size: 0.78rem;
-    }
-
-    .form-label {
-        font-size: 0.84rem;
-        font-weight: 800;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.45rem;
-    }
-
-    .form-control {
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
-        padding: 0.78rem 0.95rem;
-        font-size: 0.95rem;
-    }
-
-    .form-control:focus {
-        border-color: var(--dashboard-primary);
-        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.18);
-    }
-
-    .customer-detail-body {
-        padding: 1.5rem;
-    }
-
-    .customer-detail-profile {
+    .customer-pagination-wrap {
         display: flex;
+        justify-content: flex-end;
         align-items: center;
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-        padding-bottom: 1.25rem;
-        border-bottom: 1px solid #eef2f6;
+        gap: 0.35rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
     }
 
-    .customer-detail-avatar {
-        width: 64px;
-        height: 64px;
-        border-radius: 18px;
-        background: var(--dashboard-primary-soft);
-        color: var(--black);
-        font-size: 1.15rem;
+    .customer-page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        color: var(--dashboard-text-muted);
+        border-radius: 999px;
+        font-size: 0.82rem;
         font-weight: 900;
-        display: flex;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        flex-shrink: 0;
+        padding: 0.45rem 0.75rem;
+        transition: 0.2s ease;
     }
 
-    .customer-detail-name {
-        font-size: 1.15rem;
+    .customer-page-btn:hover:not(:disabled) {
+        border-color: var(--dashboard-primary);
+        background: #fffaf0;
+        color: var(--black);
+    }
+
+    .customer-page-btn.active {
+        background: var(--dashboard-primary);
+        border-color: var(--dashboard-primary);
+        color: var(--black);
+    }
+
+    .customer-page-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
+    .customer-modal .modal-content {
+        border: none;
+        border-radius: 22px;
+        overflow: hidden;
+        box-shadow: 0 25px 60px rgba(17, 17, 17, 0.18);
+    }
+
+    .customer-modal .modal-header {
+        background: #fff;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 1.15rem 1.35rem;
+    }
+
+    .customer-modal .modal-title {
         font-weight: 900;
         color: var(--dashboard-text-main);
-        margin-bottom: 0.4rem;
-        line-height: 1.15;
     }
 
-    .customer-detail-sub {
-        color: var(--dashboard-text-muted);
-        font-size: 0.84rem;
-        margin-top: 0.35rem;
+    .customer-modal .modal-body {
+        padding: 1.35rem;
     }
 
-    .profile-detail-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        column-gap: 1.35rem;
-        row-gap: 1.2rem;
+    .customer-modal .modal-footer {
+        border-top: 1px solid #e5e7eb;
+        padding: 1rem 1.35rem;
     }
 
-    .profile-detail-field {
-        min-width: 0;
-    }
-
-    .profile-detail-field.full {
-        grid-column: 1 / -1;
-    }
-
-    .profile-detail-label {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
-        color: var(--dashboard-text-muted);
-        font-size: 0.76rem;
+    .form-label-custom {
+        font-size: 0.78rem;
         font-weight: 900;
+        color: #4b5563;
+        text-transform: uppercase;
+        letter-spacing: 0.35px;
         margin-bottom: 0.35rem;
     }
 
-    .profile-detail-value {
-        border: none;
-        border-bottom: 1px solid #d7dde5;
-        padding: 0.55rem 0 0.65rem 0;
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        font-weight: 800;
-        min-height: 38px;
-        word-break: break-word;
-    }
-
-    .profile-detail-value.long-text {
-        min-height: 74px;
-        line-height: 1.5;
-    }
-
-    .verified-note {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        color: #047857;
-        font-size: 0.72rem;
-        font-weight: 800;
-        white-space: nowrap;
-    }
-
-    .customer-detail-footer {
-        border-top: none;
-        padding-top: 0.6rem;
-    }
-
-    .customer-detail-close-btn,
-    .minimal-cancel-btn {
+    .form-control-custom {
+        min-height: 44px;
         border: 1px solid #e5e7eb;
-        background: transparent;
+        border-radius: 14px;
+        padding: 0.65rem 0.85rem;
         color: var(--dashboard-text-main);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        transition: 0.2s ease;
+        font-size: 0.92rem;
+        box-shadow: none !important;
     }
 
-    .customer-detail-close-btn:hover,
-    .minimal-cancel-btn:hover {
-        background: #f8fafc;
-        color: var(--black);
+    .form-control-custom:focus {
+        border-color: var(--dashboard-primary);
+        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.18) !important;
     }
 
-    .customer-detail-edit-btn,
-    .minimal-save-btn {
-        border: 1px solid var(--dashboard-primary);
+    .modal-save-btn {
         background: var(--dashboard-primary);
+        border: 1px solid var(--dashboard-primary);
         color: var(--black);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
         font-weight: 900;
-        transition: 0.2s ease;
+        border-radius: 999px;
+        padding: 0.65rem 1.1rem;
     }
 
-    .customer-detail-edit-btn:hover,
-    .minimal-save-btn:hover {
+    .modal-save-btn:hover {
         background: var(--black);
         border-color: var(--black);
         color: var(--white);
     }
 
-    .minimal-customer-form {
-        padding: 0.25rem 0;
-    }
-
-    .minimal-section-title {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-primary);
-        margin-bottom: 1.35rem;
-        padding-bottom: 0.85rem;
-        border-bottom: 1px solid #dfe3e8;
-    }
-
-    .minimal-form-grid {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        column-gap: 1.2rem;
-        row-gap: 1.4rem;
-    }
-
-    .minimal-form-field {
-        min-width: 0;
-        grid-column: span 2;
-    }
-
-    .minimal-form-field.half {
-        grid-column: span 3;
-    }
-
-    .minimal-form-field.full {
-        grid-column: 1 / -1;
-    }
-
-    .minimal-label {
-        display: block;
-        font-size: 0.76rem;
+    .modal-cancel-btn {
+        border-radius: 999px;
         font-weight: 800;
-        color: var(--dashboard-text-muted);
-        margin-bottom: 0.35rem;
-    }
-
-    .minimal-control {
-        width: 100%;
-        border: none;
-        border-bottom: 1px solid #cfd6df;
-        border-radius: 0;
-        padding: 0.45rem 0 0.55rem 0;
-        font-size: 0.95rem;
-        color: var(--dashboard-text-main);
-        background: transparent;
-        box-shadow: none;
-    }
-
-    .minimal-control:focus {
-        border-color: var(--dashboard-primary);
-        outline: none;
-        box-shadow: none;
-        background: transparent;
-    }
-
-    textarea.minimal-control {
-        min-height: 95px;
-        resize: vertical;
-        line-height: 1.5;
-    }
-
-    .minimal-helper {
-        color: var(--dashboard-text-muted);
-        font-size: 0.76rem;
-        margin-top: 0.35rem;
-    }
-
-    .minimal-modal-footer {
-        border-top: none;
-        padding-top: 0.75rem;
+        padding: 0.65rem 1.1rem;
     }
 
     @media (max-width: 991.98px) {
@@ -1011,40 +827,13 @@ $displayCount = count($customers);
             font-size: 1.75rem;
         }
 
+        .customer-pagination-wrap {
+            justify-content: center;
+        }
+
         .customer-search-bar {
             height: 42px;
             min-height: 42px;
-        }
-
-        .profile-detail-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .customer-detail-profile {
-            align-items: flex-start;
-        }
-
-        .customer-detail-footer,
-        .minimal-modal-footer {
-            flex-direction: column-reverse;
-            align-items: stretch;
-        }
-
-        .customer-detail-close-btn,
-        .customer-detail-edit-btn,
-        .minimal-cancel-btn,
-        .minimal-save-btn {
-            width: 100%;
-        }
-
-        .minimal-form-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .minimal-form-field,
-        .minimal-form-field.half,
-        .minimal-form-field.full {
-            grid-column: 1 / -1;
         }
     }
 </style>
@@ -1053,704 +842,565 @@ $displayCount = count($customers);
 <body>
 
 <div class="app-wrapper">
-<?php include '../includes/sidebar.php'; ?>
+    <?php include '../includes/sidebar.php'; ?>
 
-<main class="main-content">
-    <div class="customers-page">
+    <main class="main-content">
+        <div class="customers-page">
 
-        <div class="customers-header">
-            <div>
-                <h2>Customers</h2>
-                <p class="customers-count-text">
-                    Showing <?php echo $displayCount; ?>
-                    <?php echo strtolower($statusFilter); ?>
-                    customer<?php echo $displayCount !== 1 ? 's' : ''; ?>
-                </p>
+            <div class="customers-header">
+                <div>
+                    <h2>Customers</h2>
+                    <p class="customers-count-text">
+                        Showing <?php echo $displayCount; ?>
+                        <?php echo strtolower($statusFilter); ?>
+                        customer<?php echo $displayCount !== 1 ? 's' : ''; ?>
+                    </p>
+                </div>
+
+                <button type="button" class="customer-add-btn" data-bs-toggle="modal" data-bs-target="#addCustomerModal">
+                    <i class="bi bi-person-plus-fill"></i>
+                    Add Walk-in Customer
+                </button>
             </div>
 
-            <button
-                class="btn customer-add-btn"
-                data-bs-toggle="modal"
-                data-bs-target="#addCustomerModal"
-            >
-                <i class="bi bi-plus-lg"></i>
-                Add Customer
-            </button>
-        </div>
+            <?php if(isset($_SESSION['success_message'])): ?>
+                <div class="alert alert-success alert-dismissible fade show customer-alert">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
 
-        <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success alert-dismissible fade show customer-alert">
-                <i class="bi bi-check-circle-fill me-2"></i>
-                <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
+            <?php if(isset($_SESSION['error_message'])): ?>
+                <div class="alert alert-danger alert-dismissible fade show customer-alert">
+                    <i class="bi bi-exclamation-circle-fill me-2"></i>
+                    <?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
 
-        <?php if (isset($_SESSION['error_message'])): ?>
-            <div class="alert alert-danger alert-dismissible fade show customer-alert">
-                <i class="bi bi-exclamation-circle-fill me-2"></i>
-                <?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
+            <div class="customer-filter-area">
+                <div>
+                    <label class="customer-filter-label">Search</label>
+                    <div class="customer-search-bar">
+                        <i class="bi bi-search"></i>
+                        <input
+                            type="text"
+                            id="customerSearchInput"
+                            placeholder="Search by name, contact, email, customer type, status, or address..."
+                        >
+                    </div>
+                </div>
 
-        <div class="customer-filter-area">
-            <div>
-                <label class="customer-filter-label">Search</label>
-                <div class="customer-search-bar">
-                    <i class="bi bi-search"></i>
-                    <input
-                        type="text"
-                        id="customerSearch"
-                        placeholder="Search by name, email, phone, address, or status..."
-                    >
+                <div class="customer-status-tabs">
+                    <a href="customers.php?status=Active" class="customer-status-tab <?php echo $statusFilter === 'Active' ? 'active' : ''; ?>">
+                        Active
+                    </a>
+
+                    <a href="customers.php?status=Inactive" class="customer-status-tab <?php echo $statusFilter === 'Inactive' ? 'active' : ''; ?>">
+                        Inactive
+                    </a>
+
+                    <a href="customers.php?status=Archived" class="customer-status-tab <?php echo $statusFilter === 'Archived' ? 'active' : ''; ?>">
+                        Archived
+                    </a>
+
+                    <a href="customers.php?status=All" class="customer-status-tab <?php echo $statusFilter === 'All' ? 'active' : ''; ?>">
+                        All
+                    </a>
                 </div>
             </div>
 
-            <div class="customer-status-tabs">
-                <a href="customers.php?status=Active" class="customer-status-tab <?php echo $statusFilter === 'Active' ? 'active' : ''; ?>">
-                    Active
-                </a>
-
-                <a href="customers.php?status=Inactive" class="customer-status-tab <?php echo $statusFilter === 'Inactive' ? 'active' : ''; ?>">
-                    Inactive
-                </a>
-
-                <a href="customers.php?status=Archived" class="customer-status-tab <?php echo $statusFilter === 'Archived' ? 'active' : ''; ?>">
-                    Archived
-                </a>
-
-                <a href="customers.php?status=All" class="customer-status-tab <?php echo $statusFilter === 'All' ? 'active' : ''; ?>">
-                    All
-                </a>
-            </div>
-        </div>
-
-        <div class="customer-table-wrap">
-            <table class="customers-table" id="customersTable">
-                <thead>
-                    <tr>
-                        <th>Profile</th>
-                        <th>Contact</th>
-                        <th>Address</th>
-                        <th>Credit</th>
-                        <th>Status</th>
-                        <th>Created</th>
-                        <th class="text-end">Actions</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    <?php if (count($customers) > 0): ?>
-                        <?php foreach ($customers as $c): ?>
-                            <?php
-                                $customerId = intval($c['customer_id']);
-                                $fullName = getFullName($c);
-                                $initials = getCustomerInitials($c['first_name'] ?? '', $c['last_name'] ?? '');
-                                $status = $c['status'] ?? 'Active';
-                                $badgeClass = getStatusBadgeClass($status);
-                                $address = !empty($c['address']) ? $c['address'] : 'no address provided';
-                                $email = !empty($c['email']) ? $c['email'] : 'No email provided';
-                                $createdAt = !empty($c['created_at']) ? date('M d, Y', strtotime($c['created_at'])) : 'N/A';
-                                $creditBalance = isset($c['credit_balance']) ? floatval($c['credit_balance']) : 0;
-
-                                $searchText = strtolower(
-                                    $fullName . ' ' .
-                                    ($c['email'] ?? '') . ' ' .
-                                    ($c['contact_number'] ?? '') . ' ' .
-                                    ($c['address'] ?? '') . ' ' .
-                                    ($c['status'] ?? '')
-                                );
-                            ?>
-
-                            <tr class="customer-row" data-search="<?php echo htmlspecialchars($searchText); ?>">
-                                <td>
-                                    <div class="customer-profile">
-                                        <div class="customer-avatar">
-                                            <?php echo htmlspecialchars($initials ?: 'C'); ?>
-                                        </div>
-
-                                        <div>
-                                            <div class="customer-name" title="<?php echo htmlspecialchars($fullName); ?>">
-                                                <?php echo htmlspecialchars($fullName); ?>
-                                            </div>
-                                            <div class="customer-sub">
-                                                Customer ID: <?php echo $customerId; ?>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <div class="contact-stack">
-                                        <div class="contact-line">
-                                            <i class="bi bi-telephone"></i>
-                                            <span title="<?php echo htmlspecialchars($c['contact_number']); ?>">
-                                                <?php echo htmlspecialchars($c['contact_number']); ?>
-                                            </span>
-                                        </div>
-
-                                        <div class="contact-line">
-                                            <i class="bi bi-envelope"></i>
-                                            <span title="<?php echo htmlspecialchars($email); ?>">
-                                                <?php echo htmlspecialchars($email); ?>
-                                            </span>
-                                        </div>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <div class="address-cell" title="<?php echo htmlspecialchars($address); ?>">
-                                        <i class="bi bi-geo-alt text-muted me-1"></i>
-                                        <?php echo htmlspecialchars($address); ?>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <?php if ($creditBalance > 0): ?>
-                                        <span class="credit-text fw-bold text-warning">
-                                            ₱<?php echo number_format($creditBalance, 2); ?>
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="credit-text text-muted">₱0.00</span>
-                                    <?php endif; ?>
-                                </td>
-
-                                <td>
-                                    <span class="<?php echo $badgeClass; ?>">
-                                        <i class="bi bi-circle-fill" style="font-size: 0.45rem;"></i>
-                                        <?php echo htmlspecialchars($status); ?>
-                                    </span>
-                                </td>
-
-                                <td>
-                                    <?php echo htmlspecialchars($createdAt); ?>
-                                </td>
-
-                                <td class="text-end">
-                                    <div class="action-group">
-
-                                        <button
-                                            type="button"
-                                            class="icon-action-btn view-btn"
-                                            title="View Customer"
-                                            data-bs-toggle="modal"
-                                            data-bs-target="#viewCustomerModal<?php echo $customerId; ?>"
-                                        >
-                                            <i class="bi bi-eye"></i>
-                                        </button>
-
-                                        <button
-                                            type="button"
-                                            class="icon-action-btn edit-btn"
-                                            title="Edit Customer"
-                                            data-bs-toggle="modal"
-                                            data-bs-target="#editCustomerModal<?php echo $customerId; ?>"
-                                        >
-                                            <i class="bi bi-pencil-square"></i>
-                                        </button>
-
-                                        <?php if ($isOwner): ?>
-
-                                            <?php if ($status === 'Active'): ?>
-                                                <form
-                                                    method="POST"
-                                                    action="customers.php?status=<?php echo urlencode($statusFilter); ?>"
-                                                    class="action-form"
-                                                    onsubmit="return confirm('Deactivate this customer profile?');"
-                                                >
-                                                    <input type="hidden" name="action" value="deactivate_customer">
-                                                    <input type="hidden" name="customer_id" value="<?php echo $customerId; ?>">
-                                                    <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
-
-                                                    <button
-                                                        type="submit"
-                                                        class="icon-action-btn deactivate-btn"
-                                                        title="Deactivate Customer"
-                                                    >
-                                                        <i class="bi bi-person-dash"></i>
-                                                    </button>
-                                                </form>
-                                            <?php else: ?>
-                                                <form
-                                                    method="POST"
-                                                    action="customers.php?status=<?php echo urlencode($statusFilter); ?>"
-                                                    class="action-form"
-                                                    onsubmit="return confirm('Reactivate this customer profile?');"
-                                                >
-                                                    <input type="hidden" name="action" value="reactivate_customer">
-                                                    <input type="hidden" name="customer_id" value="<?php echo $customerId; ?>">
-                                                    <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
-
-                                                    <button
-                                                        type="submit"
-                                                        class="icon-action-btn reactivate-btn"
-                                                        title="Reactivate Customer"
-                                                    >
-                                                        <i class="bi bi-person-check"></i>
-                                                    </button>
-                                                </form>
-                                            <?php endif; ?>
-
-                                            <?php if ($status !== 'Archived'): ?>
-                                                <form
-                                                    method="POST"
-                                                    action="customers.php?status=<?php echo urlencode($statusFilter); ?>"
-                                                    class="action-form"
-                                                    onsubmit="return confirm('Archive this customer profile? Historical records will be retained.');"
-                                                >
-                                                    <input type="hidden" name="action" value="archive_customer">
-                                                    <input type="hidden" name="customer_id" value="<?php echo $customerId; ?>">
-                                                    <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
-
-                                                    <button
-                                                        type="submit"
-                                                        class="icon-action-btn archive-btn"
-                                                        title="Archive Customer"
-                                                    >
-                                                        <i class="bi bi-archive"></i>
-                                                    </button>
-                                                </form>
-                                            <?php endif; ?>
-
-                                        <?php endif; ?>
-
+            <div class="customer-table-wrap">
+                <table class="table customer-table" id="customersTable">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Contact</th>
+                            <th>Email</th>
+                            <th>Customer Type</th>
+                            <th>Status</th>
+                            <th>Address</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($customers)): ?>
+                            <tr>
+                                <td colspan="7">
+                                    <div class="customer-empty">
+                                        <i class="bi bi-people"></i>
+                                        <div class="fw-bold mb-1">No customer records found</div>
+                                        <div>Add a walk-in customer or adjust your filter.</div>
                                     </div>
                                 </td>
                             </tr>
-
-                            <div class="modal fade" id="viewCustomerModal<?php echo $customerId; ?>" tabindex="-1">
-                                <div class="modal-dialog modal-dialog-centered modal-lg">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
+                        <?php else: ?>
+                            <?php foreach ($customers as $customer): ?>
+                                <?php
+                                    $customerName = getFullName($customer);
+                                    $customerType = empty($customer['user_id']) ? 'Walk-in' : 'Registered';
+                                    $customerTypeClass = empty($customer['user_id']) ? 'type-walkin' : 'type-registered';
+                                    $statusClass = getStatusBadgeClass($customer['status'] ?? 'Active');
+                                    $searchBlob = strtolower(
+                                        $customerName . ' ' .
+                                        ($customer['contact_number'] ?? '') . ' ' .
+                                        ($customer['email'] ?? '') . ' ' .
+                                        $customerType . ' ' .
+                                        ($customer['status'] ?? '') . ' ' .
+                                        ($customer['address'] ?? '')
+                                    );
+                                ?>
+                                <tr class="customer-row" data-search="<?php echo htmlspecialchars($searchBlob); ?>">
+                                    <td>
+                                        <div class="customer-profile-cell">
+                                            <div class="customer-avatar">
+                                                <?php echo htmlspecialchars(getCustomerInitials($customer['first_name'], $customer['last_name'])); ?>
+                                            </div>
                                             <div>
-                                                <h5 class="modal-title">Customer Details</h5>
-                                                <small class="text-muted">Viewing customer record #<?php echo $customerId; ?></small>
-                                            </div>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                        </div>
-
-                                        <div class="modal-body customer-detail-body">
-                                            <div class="customer-detail-profile">
-                                                <div class="customer-detail-avatar">
-                                                    <?php echo htmlspecialchars($initials ?: 'C'); ?>
+                                                <div class="customer-name">
+                                                    <?php echo htmlspecialchars($customerName); ?>
                                                 </div>
-
-                                                <div>
-                                                    <div class="customer-detail-name">
-                                                        <?php echo htmlspecialchars($fullName); ?>
-                                                    </div>
-
-                                                    <span class="<?php echo $badgeClass; ?>">
-                                                        <i class="bi bi-circle-fill" style="font-size: 0.45rem;"></i>
-                                                        <?php echo htmlspecialchars($status); ?>
-                                                    </span>
-
-                                                    <div class="customer-detail-sub">
-                                                        Customer ID: <?php echo $customerId; ?>
-                                                    </div>
+                                                <div class="customer-subtext">
+                                                    ID: <?php echo intval($customer['customer_id']); ?>
+                                                    <?php if (!empty($customer['login_username'])): ?>
+                                                        · Login: <?php echo htmlspecialchars($customer['login_username']); ?>
+                                                    <?php endif; ?>
                                                 </div>
-                                            </div>
-
-                                            <div class="profile-detail-grid">
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Full Name</span>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        <?php echo htmlspecialchars($fullName); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Email Address</span>
-                                                        <?php if (!empty($c['email'])): ?>
-                                                            <span class="verified-note">
-                                                                <i class="bi bi-check-circle-fill"></i>
-                                                                Saved
-                                                            </span>
-                                                        <?php endif; ?>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        <?php echo htmlspecialchars($email); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Contact Number</span>
-                                                        <span class="verified-note">
-                                                            <i class="bi bi-check-circle-fill"></i>
-                                                            Saved
-                                                        </span>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        <?php echo htmlspecialchars($c['contact_number']); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Status</span>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        <?php echo htmlspecialchars($status); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field full">
-                                                    <div class="profile-detail-label">
-                                                        <span>Address</span>
-                                                    </div>
-                                                    <div class="profile-detail-value long-text">
-                                                        <?php echo htmlspecialchars($address); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Credit Balance</span>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        ₱<?php echo number_format($creditBalance, 2); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Credit Due Date</span>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        <?php echo !empty($c['credit_due_date']) ? htmlspecialchars($c['credit_due_date']) : 'N/A'; ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="profile-detail-field">
-                                                    <div class="profile-detail-label">
-                                                        <span>Created At</span>
-                                                    </div>
-                                                    <div class="profile-detail-value">
-                                                        <?php echo htmlspecialchars($createdAt); ?>
-                                                    </div>
-                                                </div>
-
-                                                <?php if (!empty($c['deactivated_at'])): ?>
-                                                    <div class="profile-detail-field">
-                                                        <div class="profile-detail-label">
-                                                            <span>Deactivated At</span>
-                                                        </div>
-                                                        <div class="profile-detail-value">
-                                                            <?php echo htmlspecialchars($c['deactivated_at']); ?>
-                                                        </div>
-                                                    </div>
-                                                <?php endif; ?>
-
-                                                <?php if (!empty($c['archived_at'])): ?>
-                                                    <div class="profile-detail-field">
-                                                        <div class="profile-detail-label">
-                                                            <span>Archived At</span>
-                                                        </div>
-                                                        <div class="profile-detail-value">
-                                                            <?php echo htmlspecialchars($c['archived_at']); ?>
-                                                        </div>
-                                                    </div>
-                                                <?php endif; ?>
                                             </div>
                                         </div>
+                                    </td>
 
-                                        <div class="modal-footer customer-detail-footer">
-                                            <button type="button" class="customer-detail-close-btn" data-bs-dismiss="modal">
-                                                Close
+                                    <td>
+                                        <i class="bi bi-telephone me-1 text-muted"></i>
+                                        <?php echo htmlspecialchars($customer['contact_number'] ?? 'N/A'); ?>
+                                    </td>
+
+                                    <td>
+                                        <?php if (!empty($customer['email'])): ?>
+                                            <i class="bi bi-envelope me-1 text-muted"></i>
+                                            <?php echo htmlspecialchars($customer['email']); ?>
+                                        <?php else: ?>
+                                            <span class="text-muted">No email</span>
+                                        <?php endif; ?>
+                                    </td>
+
+                                    <td>
+                                        <span class="customer-type-badge <?php echo $customerTypeClass; ?>">
+                                            <i class="bi <?php echo $customerType === 'Registered' ? 'bi-person-check' : 'bi-person'; ?>"></i>
+                                            <?php echo $customerType; ?>
+                                        </span>
+                                    </td>
+
+                                    <td>
+                                        <span class="<?php echo $statusClass; ?>">
+                                            <?php echo htmlspecialchars($customer['status'] ?? 'Active'); ?>
+                                        </span>
+                                    </td>
+
+                                    <td>
+                                        <span title="<?php echo htmlspecialchars($customer['address'] ?? ''); ?>">
+                                            <?php
+                                                $address = $customer['address'] ?? 'No address';
+                                                echo htmlspecialchars(strlen($address) > 28 ? substr($address, 0, 28) . '...' : $address);
+                                            ?>
+                                        </span>
+                                    </td>
+
+                                    <td class="text-end">
+                                        <div class="customer-action-group">
+                                            <button
+                                                type="button"
+                                                class="customer-action-btn edit-btn"
+                                                title="Edit Customer"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#editCustomerModal"
+                                                data-customer-id="<?php echo intval($customer['customer_id']); ?>"
+                                                data-first-name="<?php echo htmlspecialchars($customer['first_name'] ?? '', ENT_QUOTES); ?>"
+                                                data-middle-name="<?php echo htmlspecialchars($customer['middle_name'] ?? '', ENT_QUOTES); ?>"
+                                                data-last-name="<?php echo htmlspecialchars($customer['last_name'] ?? '', ENT_QUOTES); ?>"
+                                                data-email="<?php echo htmlspecialchars($customer['email'] ?? '', ENT_QUOTES); ?>"
+                                                data-contact="<?php echo htmlspecialchars($customer['contact_number'] ?? '', ENT_QUOTES); ?>"
+                                                data-address="<?php echo htmlspecialchars($customer['address'] ?? '', ENT_QUOTES); ?>"
+                                            >
+                                                <i class="bi bi-pencil-square"></i>
                                             </button>
 
-                                            <button type="button" class="customer-detail-edit-btn" data-bs-toggle="modal" data-bs-target="#editCustomerModal<?php echo $customerId; ?>">
-                                                Edit Customer
-                                            </button>
+                                            <?php if ($isOwner): ?>
+                                                <?php if (($customer['status'] ?? 'Active') === 'Active'): ?>
+                                                    <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Deactivate this customer profile?">
+                                                        <input type="hidden" name="action" value="deactivate_customer">
+                                                        <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
+                                                        <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
+                                                        <button type="submit" class="customer-action-btn danger" title="Deactivate">
+                                                            <i class="bi bi-person-dash"></i>
+                                                        </button>
+                                                    </form>
+                                                <?php elseif (($customer['status'] ?? '') === 'Inactive'): ?>
+                                                    <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Reactivate this customer profile?">
+                                                        <input type="hidden" name="action" value="reactivate_customer">
+                                                        <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
+                                                        <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
+                                                        <button type="submit" class="customer-action-btn success" title="Reactivate">
+                                                            <i class="bi bi-person-check"></i>
+                                                        </button>
+                                                    </form>
+
+                                                    <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Archive this customer profile? This keeps historical records but removes it from active use.">
+                                                        <input type="hidden" name="action" value="archive_customer">
+                                                        <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
+                                                        <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
+                                                        <button type="submit" class="customer-action-btn danger" title="Archive">
+                                                            <i class="bi bi-archive"></i>
+                                                        </button>
+                                                    </form>
+                                                <?php elseif (($customer['status'] ?? '') === 'Archived'): ?>
+                                                    <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Restore this archived customer profile?">
+                                                        <input type="hidden" name="action" value="reactivate_customer">
+                                                        <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
+                                                        <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
+                                                        <button type="submit" class="customer-action-btn success" title="Restore">
+                                                            <i class="bi bi-arrow-counterclockwise"></i>
+                                                        </button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
                                         </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="modal fade" id="editCustomerModal<?php echo $customerId; ?>" tabindex="-1">
-                                <div class="modal-dialog modal-dialog-centered modal-lg">
-                                    <div class="modal-content">
-                                        <form method="POST" action="customers.php?status=<?php echo urlencode($statusFilter); ?>">
-                                            <input type="hidden" name="action" value="update_customer">
-                                            <input type="hidden" name="customer_id" value="<?php echo $customerId; ?>">
-                                            <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
-
-                                            <div class="modal-header">
-                                                <div>
-                                                    <h5 class="modal-title">Edit Customer</h5>
-                                                    <small class="text-muted">Update customer contact and profile details.</small>
-                                                </div>
-                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                            </div>
-
-                                            <div class="modal-body">
-                                                <div class="minimal-customer-form">
-                                                    <div class="minimal-section-title">Basic Customer Details</div>
-
-                                                    <div class="minimal-form-grid">
-                                                        <div class="minimal-form-field">
-                                                            <label class="minimal-label">First Name</label>
-                                                            <input
-                                                                type="text"
-                                                                name="first_name"
-                                                                class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($c['first_name']); ?>"
-                                                                required
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-form-field">
-                                                            <label class="minimal-label">Middle Name</label>
-                                                            <input
-                                                                type="text"
-                                                                name="middle_name"
-                                                                class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($c['middle_name'] ?? ''); ?>"
-                                                                placeholder="Optional"
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-form-field">
-                                                            <label class="minimal-label">Last Name</label>
-                                                            <input
-                                                                type="text"
-                                                                name="last_name"
-                                                                class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($c['last_name']); ?>"
-                                                                required
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-form-field half">
-                                                            <label class="minimal-label">Email</label>
-                                                            <input
-                                                                type="email"
-                                                                name="email"
-                                                                class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($c['email'] ?? ''); ?>"
-                                                                placeholder="Optional"
-                                                            >
-                                                            <div class="minimal-helper">
-                                                                Optional, but useful for customer records.
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="minimal-form-field half">
-                                                            <label class="minimal-label">Contact Number</label>
-                                                            <input
-                                                                type="text"
-                                                                name="contact_number"
-                                                                class="minimal-control"
-                                                                value="<?php echo htmlspecialchars($c['contact_number']); ?>"
-                                                                maxlength="11"
-                                                                required
-                                                            >
-                                                            <div class="minimal-helper">
-                                                                Required. Must be exactly 11 digits.
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="minimal-form-field full">
-                                                            <label class="minimal-label">Address</label>
-                                                            <textarea
-                                                                name="address"
-                                                                class="minimal-control"
-                                                                placeholder="Optional"
-                                                            ><?php echo htmlspecialchars($c['address'] ?? ''); ?></textarea>
-                                                            <div class="minimal-helper">
-                                                                If left blank, the system will save it as “no address provided.”
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div class="modal-footer minimal-modal-footer">
-                                                <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                                                    Cancel
-                                                </button>
-
-                                                <button type="submit" class="minimal-save-btn">
-                                                    Save Changes
-                                                </button>
-                                            </div>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-
-                        <?php endforeach; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
 
                         <tr id="noCustomerResults" style="display:none;">
                             <td colspan="7">
-                                <div class="empty-state">
+                                <div class="customer-empty">
                                     <i class="bi bi-search"></i>
                                     <div class="fw-bold mb-1">No matching customers found</div>
-                                    <div>Try another keyword or status filter.</div>
+                                    <div>Try another keyword or change the selected filter.</div>
                                 </div>
                             </td>
                         </tr>
+                    </tbody>
+                </table>
+            </div>
 
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="7">
-                                <div class="empty-state">
-                                    <i class="bi bi-people"></i>
-                                    <div class="fw-bold mb-1">No customers found</div>
-                                    <div>Add a customer record or switch to another status filter.</div>
-                                </div>
-                            </td>
-                        </tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+            <div class="customer-pagination-wrap" id="customerPagination"></div>
+
         </div>
-
-    </div>
-</main>
+    </main>
 </div>
 
-<div class="modal fade" id="addCustomerModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content">
-            <form method="POST" action="customers.php">
-                <input type="hidden" name="action" value="add_customer">
+<!-- ADD CUSTOMER MODAL -->
+<div class="modal fade customer-modal" id="addCustomerModal" tabindex="-1" aria-labelledby="addCustomerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <form method="POST" class="modal-content">
+            <input type="hidden" name="action" value="add_customer">
 
-                <div class="modal-header">
-                    <div>
-                        <h5 class="modal-title">Add Customer</h5>
-                        <small class="text-muted">Create a new customer profile.</small>
-                    </div>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="addCustomerModalLabel">Add Walk-in Customer</h5>
+                    <p class="mb-0 text-muted small">
+                        This creates a customer profile only. No username or login account is required.
+                    </p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body">
+                <div class="alert alert-light border mb-3" style="border-radius: 14px;">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Walk-in customers are stored for service history, vehicle linking, billing, and future transactions.
                 </div>
 
-                <div class="modal-body">
-                    <div class="minimal-customer-form">
-                        <div class="minimal-section-title">Basic Customer Details</div>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label-custom">First Name <span class="text-danger">*</span></label>
+                        <input type="text" name="first_name" class="form-control form-control-custom" required>
+                    </div>
 
-                        <div class="minimal-form-grid">
-                            <div class="minimal-form-field">
-                                <label class="minimal-label">First Name</label>
-                                <input
-                                    type="text"
-                                    name="first_name"
-                                    class="minimal-control"
-                                    required
-                                >
-                            </div>
+                    <div class="col-md-4">
+                        <label class="form-label-custom">Middle Name</label>
+                        <input type="text" name="middle_name" class="form-control form-control-custom">
+                    </div>
 
-                            <div class="minimal-form-field">
-                                <label class="minimal-label">Middle Name</label>
-                                <input
-                                    type="text"
-                                    name="middle_name"
-                                    class="minimal-control"
-                                    placeholder="Optional"
-                                >
-                            </div>
+                    <div class="col-md-4">
+                        <label class="form-label-custom">Last Name <span class="text-danger">*</span></label>
+                        <input type="text" name="last_name" class="form-control form-control-custom" required>
+                    </div>
 
-                            <div class="minimal-form-field">
-                                <label class="minimal-label">Last Name</label>
-                                <input
-                                    type="text"
-                                    name="last_name"
-                                    class="minimal-control"
-                                    required
-                                >
-                            </div>
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Contact Number <span class="text-danger">*</span></label>
+                        <input
+                            type="text"
+                            name="contact_number"
+                            class="form-control form-control-custom"
+                            maxlength="11"
+                            pattern="[0-9]{11}"
+                            placeholder="Example: 09123456789"
+                            required
+                        >
+                    </div>
 
-                            <div class="minimal-form-field half">
-                                <label class="minimal-label">Email</label>
-                                <input
-                                    type="email"
-                                    name="email"
-                                    class="minimal-control"
-                                    placeholder="Optional"
-                                >
-                                <div class="minimal-helper">
-                                    Optional, but useful for customer records.
-                                </div>
-                            </div>
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Email Address</label>
+                        <input
+                            type="email"
+                            name="email"
+                            class="form-control form-control-custom"
+                            placeholder="Optional for walk-in customer"
+                        >
+                    </div>
 
-                            <div class="minimal-form-field half">
-                                <label class="minimal-label">Contact Number</label>
-                                <input
-                                    type="text"
-                                    name="contact_number"
-                                    class="minimal-control"
-                                    maxlength="11"
-                                    placeholder="11-digit number"
-                                    required
-                                >
-                                <div class="minimal-helper">
-                                    Required. Must be exactly 11 digits.
-                                </div>
-                            </div>
-
-                            <div class="minimal-form-field full">
-                                <label class="minimal-label">Address</label>
-                                <textarea
-                                    name="address"
-                                    class="minimal-control"
-                                    placeholder="Optional"
-                                ></textarea>
-                                <div class="minimal-helper">
-                                    If left blank, the system will save it as “no address provided.”
-                                </div>
-                            </div>
-                        </div>
+                    <div class="col-12">
+                        <label class="form-label-custom">Address</label>
+                        <textarea
+                            name="address"
+                            class="form-control form-control-custom"
+                            rows="3"
+                            placeholder="Optional address"
+                        ></textarea>
                     </div>
                 </div>
+            </div>
 
-                <div class="modal-footer minimal-modal-footer">
-                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                        Cancel
-                    </button>
-
-                    <button type="submit" class="minimal-save-btn">
-                        Save Customer
-                    </button>
-                </div>
-            </form>
-        </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary modal-cancel-btn" data-bs-dismiss="modal">
+                    Cancel
+                </button>
+                <button type="submit" class="btn modal-save-btn">
+                    <i class="bi bi-save me-1"></i>
+                    Save Customer
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 
-<script>
-const customerSearch = document.getElementById('customerSearch');
-const customersTable = document.getElementById('customersTable');
-const noCustomerResults = document.getElementById('noCustomerResults');
+<!-- EDIT CUSTOMER MODAL -->
+<div class="modal fade customer-modal" id="editCustomerModal" tabindex="-1" aria-labelledby="editCustomerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <form method="POST" class="modal-content">
+            <input type="hidden" name="action" value="update_customer">
+            <input type="hidden" name="customer_id" id="edit_customer_id">
+            <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
 
-if (customerSearch && customersTable) {
-    customerSearch.addEventListener('input', function () {
-        const searchValue = this.value.trim().toLowerCase();
-        const rows = customersTable.querySelectorAll('tbody tr.customer-row');
-        let visibleCount = 0;
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="editCustomerModalLabel">Edit Customer</h5>
+                    <p class="mb-0 text-muted small">
+                        Update customer contact details without changing login credentials.
+                    </p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
 
-        rows.forEach(row => {
-            const text = row.dataset.search || '';
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label-custom">First Name <span class="text-danger">*</span></label>
+                        <input type="text" name="first_name" id="edit_first_name" class="form-control form-control-custom" required>
+                    </div>
 
-            if (text.includes(searchValue)) {
-                row.style.display = '';
-                visibleCount++;
-            } else {
-                row.style.display = 'none';
-            }
-        });
+                    <div class="col-md-4">
+                        <label class="form-label-custom">Middle Name</label>
+                        <input type="text" name="middle_name" id="edit_middle_name" class="form-control form-control-custom">
+                    </div>
 
-        if (noCustomerResults) {
-            noCustomerResults.style.display = visibleCount === 0 && rows.length > 0 ? '' : 'none';
-        }
-    });
-}
-</script>
+                    <div class="col-md-4">
+                        <label class="form-label-custom">Last Name <span class="text-danger">*</span></label>
+                        <input type="text" name="last_name" id="edit_last_name" class="form-control form-control-custom" required>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Contact Number <span class="text-danger">*</span></label>
+                        <input
+                            type="text"
+                            name="contact_number"
+                            id="edit_contact_number"
+                            class="form-control form-control-custom"
+                            maxlength="11"
+                            pattern="[0-9]{11}"
+                            required
+                        >
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Email Address</label>
+                        <input
+                            type="email"
+                            name="email"
+                            id="edit_email"
+                            class="form-control form-control-custom"
+                            placeholder="Optional for walk-in customer"
+                        >
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label-custom">Address</label>
+                        <textarea
+                            name="address"
+                            id="edit_address"
+                            class="form-control form-control-custom"
+                            rows="3"
+                        ></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary modal-cancel-btn" data-bs-dismiss="modal">
+                    Cancel
+                </button>
+                <button type="submit" class="btn modal-save-btn">
+                    <i class="bi bi-save me-1"></i>
+                    Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const ITEMS_PER_PAGE = 5;
+
+    const searchInput = document.getElementById('customerSearchInput');
+    const customerRows = Array.from(document.querySelectorAll('.customer-row'));
+    const noResults = document.getElementById('noCustomerResults');
+    const pagination = document.getElementById('customerPagination');
+    const editCustomerModal = document.getElementById('editCustomerModal');
+    const confirmForms = document.querySelectorAll('.action-confirm-form');
+
+    let currentPage = 1;
+
+    function getFilteredRows() {
+        const searchValue = searchInput ? searchInput.value.toLowerCase().trim() : '';
+
+        return customerRows.filter(function (row) {
+            const searchableText = row.getAttribute('data-search') || '';
+            return searchableText.includes(searchValue);
+        });
+    }
+
+    function renderPagination(totalPages) {
+        if (!pagination) {
+            return;
+        }
+
+        pagination.innerHTML = '';
+
+        if (totalPages <= 1) {
+            pagination.style.display = 'none';
+            return;
+        }
+
+        pagination.style.display = 'flex';
+
+        const prevButton = document.createElement('button');
+        prevButton.type = 'button';
+        prevButton.className = 'customer-page-btn';
+        prevButton.innerHTML = '&laquo;';
+        prevButton.disabled = currentPage === 1;
+        prevButton.addEventListener('click', function () {
+            if (currentPage > 1) {
+                currentPage--;
+                applyCustomerFilters();
+            }
+        });
+        pagination.appendChild(prevButton);
+
+        for (let page = 1; page <= totalPages; page++) {
+            const pageButton = document.createElement('button');
+            pageButton.type = 'button';
+            pageButton.className = 'customer-page-btn' + (page === currentPage ? ' active' : '');
+            pageButton.textContent = page;
+            pageButton.addEventListener('click', function () {
+                currentPage = page;
+                applyCustomerFilters();
+            });
+            pagination.appendChild(pageButton);
+        }
+
+        const nextButton = document.createElement('button');
+        nextButton.type = 'button';
+        nextButton.className = 'customer-page-btn';
+        nextButton.innerHTML = '&raquo;';
+        nextButton.disabled = currentPage === totalPages;
+        nextButton.addEventListener('click', function () {
+            if (currentPage < totalPages) {
+                currentPage++;
+                applyCustomerFilters();
+            }
+        });
+        pagination.appendChild(nextButton);
+    }
+
+    function applyCustomerFilters() {
+        const filteredRows = getFilteredRows();
+        const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE) || 1;
+
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
+        }
+
+        const start = (currentPage - 1) * ITEMS_PER_PAGE;
+        const end = start + ITEMS_PER_PAGE;
+
+        customerRows.forEach(function (row) {
+            row.style.display = 'none';
+        });
+
+        filteredRows.slice(start, end).forEach(function (row) {
+            row.style.display = '';
+        });
+
+        if (noResults) {
+            noResults.style.display = filteredRows.length === 0 && customerRows.length > 0 ? '' : 'none';
+        }
+
+        renderPagination(totalPages);
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('input', function () {
+            currentPage = 1;
+            applyCustomerFilters();
+        });
+    }
+
+    if (editCustomerModal) {
+        editCustomerModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+
+            if (!button) {
+                return;
+            }
+
+            document.getElementById('edit_customer_id').value = button.getAttribute('data-customer-id') || '';
+            document.getElementById('edit_first_name').value = button.getAttribute('data-first-name') || '';
+            document.getElementById('edit_middle_name').value = button.getAttribute('data-middle-name') || '';
+            document.getElementById('edit_last_name').value = button.getAttribute('data-last-name') || '';
+            document.getElementById('edit_email').value = button.getAttribute('data-email') || '';
+            document.getElementById('edit_contact_number').value = button.getAttribute('data-contact') || '';
+            document.getElementById('edit_address').value = button.getAttribute('data-address') || '';
+        });
+    }
+
+    confirmForms.forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            const message = form.getAttribute('data-confirm-message') || 'Are you sure you want to continue?';
+
+            if (!confirm(message)) {
+                event.preventDefault();
+            }
+        });
+    });
+
+    applyCustomerFilters();
+});
+</script>
 
 </body>
 </html>

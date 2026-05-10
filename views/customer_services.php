@@ -10,52 +10,50 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-$partCategories = [];
+$serviceCategories = [];
 $dbError = '';
 
 try {
     $query = "
         SELECT
-            part_id,
+            service_id,
+            service_name,
             category,
-            brand,
-            part_name,
+            base_price,
+            requires_down_payment,
+            warranty_days,
             description,
-            specification,
-            compatibility,
-            unit,
-            image,
-            unit_price,
-            quantity_on_hand
-        FROM part
+            full_description,
+            features,
+            image
+        FROM service
         WHERE is_active = 1
-          AND quantity_on_hand > 0
-        ORDER BY category ASC, part_name ASC
+        ORDER BY category ASC, service_name ASC
     ";
 
     $stmt = $db->prepare($query);
     $stmt->execute();
-    $parts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $services = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    foreach ($parts as $part) {
-        $categoryKey = trim(html_entity_decode((string)($part['category'] ?? 'Uncategorized'), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    foreach ($services as $service) {
+        $categoryKey = trim(html_entity_decode((string)($service['category'] ?? 'Uncategorized'), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
         $categoryKey = $categoryKey !== '' ? $categoryKey : 'Uncategorized';
 
-        $partCategories[$categoryKey][] = $part;
+        $serviceCategories[$categoryKey][] = $service;
     }
 } catch (Exception $e) {
-    $dbError = 'Unable to load parts at the moment.';
+    $dbError = 'Unable to load services at the moment.';
 }
 
-function partImagePath($image)
+function serviceImagePath($image)
 {
     $fallback = 'default.png';
 
     if (!$image) {
-        return '../assets/images/parts/' . $fallback;
+        return '../assets/images/services/' . $fallback;
     }
 
-    return '../assets/images/parts/' . htmlspecialchars($image);
+    return '../assets/images/services/' . htmlspecialchars($image);
 }
 
 function displayText($value, $fallback = 'N/A')
@@ -68,13 +66,28 @@ function displayText($value, $fallback = 'N/A')
 
     return htmlspecialchars($value);
 }
+
+function shortText($value, $fallback = 'Service details will be confirmed by the shop after assessment.', $limit = 115)
+{
+    $value = trim(html_entity_decode((string)($value ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+    if ($value === '') {
+        $value = $fallback;
+    }
+
+    if (mb_strlen($value) > $limit) {
+        $value = mb_substr($value, 0, $limit) . '...';
+    }
+
+    return htmlspecialchars($value);
+}
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Browse Parts - Norily's Repair Shop</title>
+<title>Services Offered - Norily's Repair Shop</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -86,12 +99,12 @@ function displayText($value, $fallback = 'N/A')
         overflow-x: hidden;
     }
 
-    .customer-parts-page {
+    .customer-services-page {
         width: 100%;
         max-width: 100%;
     }
 
-    .parts-header {
+    .services-header {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
@@ -100,7 +113,7 @@ function displayText($value, $fallback = 'N/A')
         margin-bottom: 1.35rem;
     }
 
-    .parts-header h2 {
+    .services-header h2 {
         font-size: 2rem;
         font-weight: 900;
         color: var(--dashboard-text-main);
@@ -108,14 +121,14 @@ function displayText($value, $fallback = 'N/A')
         line-height: 1.1;
     }
 
-    .parts-header p {
+    .services-header p {
         color: var(--dashboard-text-muted);
         font-size: 0.95rem;
         font-weight: 500;
         margin-bottom: 0;
     }
 
-    .cart-pill-btn {
+    .request-pill-btn {
         height: 44px;
         border-radius: 999px;
         padding: 0.6rem 1rem;
@@ -125,9 +138,20 @@ function displayText($value, $fallback = 'N/A')
         align-items: center;
         gap: 0.45rem;
         white-space: nowrap;
+        background: var(--dashboard-primary);
+        border: 1px solid var(--dashboard-primary);
+        color: var(--black);
+        text-decoration: none;
+        transition: 0.2s ease;
     }
 
-    .parts-toolbar {
+    .request-pill-btn:hover {
+        background: var(--black);
+        border-color: var(--black);
+        color: var(--white);
+    }
+
+    .services-toolbar {
         display: grid;
         grid-template-columns: minmax(260px, 1fr) 160px;
         gap: 0.85rem;
@@ -137,7 +161,7 @@ function displayText($value, $fallback = 'N/A')
         border-bottom: 1px solid #e5e7eb;
     }
 
-    .parts-filter-label {
+    .services-filter-label {
         display: block;
         color: var(--dashboard-text-muted);
         font-size: 0.76rem;
@@ -147,7 +171,7 @@ function displayText($value, $fallback = 'N/A')
         margin-bottom: 0.35rem;
     }
 
-    .parts-search-bar {
+    .services-search-bar {
         min-height: 44px;
         display: flex;
         align-items: center;
@@ -160,19 +184,19 @@ function displayText($value, $fallback = 'N/A')
         transition: 0.2s ease;
     }
 
-    .parts-search-bar:focus-within {
+    .services-search-bar:focus-within {
         border-color: rgba(245, 197, 24, 0.65);
         box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.12);
         background: rgba(255, 255, 255, 0.90);
     }
 
-    .parts-search-bar i {
+    .services-search-bar i {
         font-size: 1.05rem;
         color: var(--dashboard-text-muted);
         flex-shrink: 0;
     }
 
-    .parts-search-bar input {
+    .services-search-bar input {
         width: 100%;
         border: none;
         outline: none;
@@ -181,7 +205,7 @@ function displayText($value, $fallback = 'N/A')
         font-size: 0.92rem;
     }
 
-    .parts-clear-btn {
+    .services-clear-btn {
         height: 44px;
         border-radius: 999px;
         padding: 0.55rem 0.85rem;
@@ -193,7 +217,7 @@ function displayText($value, $fallback = 'N/A')
         transition: 0.2s ease;
     }
 
-    .parts-clear-btn:hover {
+    .services-clear-btn:hover {
         background: rgba(255, 255, 255, 0.90);
         color: var(--black);
     }
@@ -224,11 +248,11 @@ function displayText($value, $fallback = 'N/A')
         color: var(--black);
     }
 
-    .parts-category {
-        margin-bottom: 2.7rem;
+    .services-category {
+        margin-bottom: 2.8rem;
     }
 
-    .parts-category-header {
+    .services-category-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -236,7 +260,7 @@ function displayText($value, $fallback = 'N/A')
         margin-bottom: 1rem;
     }
 
-    .parts-category-title {
+    .services-category-title {
         font-size: 0.88rem;
         font-weight: 900;
         color: var(--dashboard-text-main);
@@ -245,66 +269,64 @@ function displayText($value, $fallback = 'N/A')
         margin-bottom: 0;
     }
 
-    .parts-category-count {
+    .services-category-count {
         color: var(--dashboard-text-muted);
         font-size: 0.82rem;
         font-weight: 700;
     }
 
-    .parts-grid {
+    .services-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 1.4rem;
+        gap: 1.45rem;
     }
 
-    .part-card {
+    .service-card {
         min-width: 0;
         display: flex;
         flex-direction: column;
         align-items: center;
         text-align: center;
-        padding: 1.25rem 1rem 1.15rem;
+        padding: 1.3rem 1.05rem 1.2rem;
         border: 1px solid rgba(15, 23, 42, 0.08);
         border-radius: 18px;
         background: transparent;
         transition: 0.2s ease;
     }
 
-    .part-card:hover {
+    .service-card:hover {
         transform: translateY(-3px);
         border-color: rgba(245, 197, 24, 0.52);
         background: rgba(255, 255, 255, 0.12);
     }
 
-    .part-image-wrap {
+    .service-image-wrap {
         width: 100%;
-        min-height: 250px;
+        min-height: 210px;
         background: transparent;
         border: none;
-        border-radius: 0;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 0.7rem 0.5rem 1rem;
+        padding: 0.6rem 0.5rem 0.9rem;
         margin-bottom: 0.85rem;
-        position: relative;
         overflow: visible;
     }
 
-    .part-image-wrap img {
+    .service-image-wrap img {
         max-width: 100%;
-        max-height: 205px;
+        max-height: 175px;
         object-fit: contain;
         filter: drop-shadow(0 18px 18px rgba(17, 24, 39, 0.10));
         transition: 0.2s ease;
     }
 
-    .part-card:hover .part-image-wrap img {
+    .service-card:hover .service-image-wrap img {
         transform: scale(1.035);
         filter: drop-shadow(0 22px 20px rgba(17, 24, 39, 0.13));
     }
 
-    .part-info {
+    .service-info {
         width: 100%;
         min-width: 0;
         display: flex;
@@ -312,62 +334,57 @@ function displayText($value, $fallback = 'N/A')
         align-items: center;
     }
 
-    .part-name {
+    .service-name {
         color: var(--dashboard-text-main);
-        font-size: 1.02rem;
+        font-size: 1.03rem;
         font-weight: 900;
         margin-bottom: 0.35rem;
         line-height: 1.3;
         max-width: 100%;
         text-transform: uppercase;
         letter-spacing: 0.4px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
     }
 
-    .part-category {
+    .service-category-label {
         color: var(--dashboard-primary);
         font-size: 0.72rem;
         font-weight: 900;
         text-transform: uppercase;
         letter-spacing: 0.8px;
-        margin-bottom: 0.48rem;
+        margin-bottom: 0.55rem;
         max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
     }
 
-    .part-price {
+    .service-desc {
+        color: var(--dashboard-text-muted);
+        font-size: 0.82rem;
+        font-weight: 600;
+        line-height: 1.5;
+        min-height: 3.6rem;
+        margin-bottom: 0.85rem;
+        max-width: 95%;
+    }
+
+    .service-price {
         color: #047857;
-        font-size: 0.98rem;
+        font-size: 0.95rem;
         font-weight: 900;
-        white-space: nowrap;
-        margin-bottom: 0.12rem;
+        margin-bottom: 0.15rem;
     }
 
-    .part-unit {
+    .service-price-note {
         color: var(--dashboard-text-muted);
         font-size: 0.7rem;
         font-weight: 700;
-        white-space: nowrap;
-        margin-bottom: 0.35rem;
-    }
-
-    .part-availability {
-        color: var(--dashboard-text-muted);
-        font-size: 0.72rem;
-        font-weight: 800;
         margin-bottom: 0.85rem;
     }
 
-    .part-details-link {
+    .service-details-link {
         border: 1px solid rgba(15, 23, 42, 0.12);
         background: rgba(255, 255, 255, 0.42);
         color: var(--dashboard-text-main);
         border-radius: 999px;
-        padding: 0.48rem 0.95rem;
+        padding: 0.5rem 0.95rem;
         font-size: 0.78rem;
         font-weight: 900;
         text-decoration: none;
@@ -375,7 +392,7 @@ function displayText($value, $fallback = 'N/A')
         transition: 0.2s ease;
     }
 
-    .part-details-link:hover {
+    .service-details-link:hover {
         background: var(--dashboard-primary);
         border-color: var(--dashboard-primary);
         color: var(--black);
@@ -402,50 +419,50 @@ function displayText($value, $fallback = 'N/A')
         margin-bottom: 1.5rem;
     }
 
-    .parts-alert {
+    .services-alert {
         border-radius: 16px;
         font-size: 0.92rem;
     }
 
     @media (max-width: 1199.98px) {
-        .parts-grid {
+        .services-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
     }
 
     @media (max-width: 767.98px) {
-        .parts-header {
+        .services-header {
             flex-direction: column;
             align-items: stretch;
         }
 
-        .cart-pill-btn {
+        .request-pill-btn {
             width: 100%;
             justify-content: center;
         }
 
-        .parts-header h2 {
+        .services-header h2 {
             font-size: 1.75rem;
         }
 
-        .parts-toolbar {
+        .services-toolbar {
             grid-template-columns: 1fr;
         }
 
-        .parts-clear-btn {
+        .services-clear-btn {
             width: 100%;
         }
 
-        .parts-grid {
+        .services-grid {
             grid-template-columns: 1fr;
         }
 
-        .part-image-wrap {
-            min-height: 220px;
+        .service-image-wrap {
+            min-height: 195px;
         }
 
-        .part-image-wrap img {
-            max-height: 180px;
+        .service-image-wrap img {
+            max-height: 155px;
         }
     }
 </style>
@@ -457,22 +474,22 @@ function displayText($value, $fallback = 'N/A')
 <?php include '../includes/sidebar.php'; ?>
 
 <main class="main-content">
-    <div class="customer-parts-page">
+    <div class="customer-services-page">
 
-        <div class="parts-header">
+        <div class="services-header">
             <div>
-                <h2>Browse Parts</h2>
-                <p>Select available parts and add them to your cart for reservation.</p>
+                <h2>Services Offered</h2>
+                <p>Browse available repair services before submitting a service request.</p>
             </div>
 
-            <a href="customer_cart.php" class="btn btn-outline-primary cart-pill-btn">
-                <i class="bi bi-cart3"></i>
-                View Cart
+            <a href="customer_service_requests.php" class="request-pill-btn">
+                <i class="bi bi-calendar-check"></i>
+                My Requests
             </a>
         </div>
 
         <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success alert-dismissible fade show parts-alert">
+            <div class="alert alert-success alert-dismissible fade show services-alert">
                 <i class="bi bi-check-circle-fill me-2"></i>
                 <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -480,34 +497,34 @@ function displayText($value, $fallback = 'N/A')
         <?php endif; ?>
 
         <?php if (isset($_SESSION['error_message'])): ?>
-            <div class="alert alert-danger alert-dismissible fade show parts-alert">
+            <div class="alert alert-danger alert-dismissible fade show services-alert">
                 <i class="bi bi-exclamation-circle-fill me-2"></i>
                 <?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
 
-        <div class="parts-toolbar">
+        <div class="services-toolbar">
             <div>
-                <label class="parts-filter-label" for="partsSearch">Search</label>
-                <div class="parts-search-bar">
+                <label class="services-filter-label" for="servicesSearch">Search</label>
+                <div class="services-search-bar">
                     <i class="bi bi-search"></i>
                     <input
                         type="text"
-                        id="partsSearch"
-                        placeholder="Search by part name, brand, category, specification, or compatibility..."
+                        id="servicesSearch"
+                        placeholder="Search by service name, category, description, or features..."
                     >
                 </div>
             </div>
 
-            <button type="button" id="clearSearch" class="parts-clear-btn">
+            <button type="button" id="clearSearch" class="services-clear-btn">
                 Clear
             </button>
         </div>
 
-        <?php if (!$dbError && !empty($partCategories)): ?>
+        <?php if (!$dbError && !empty($serviceCategories)): ?>
             <div class="category-nav">
-                <?php foreach ($partCategories as $category => $parts): ?>
+                <?php foreach ($serviceCategories as $category => $services): ?>
                     <a href="#cat-<?php echo htmlspecialchars(md5($category)); ?>" class="category-chip">
                         <?php echo displayText($category); ?>
                     </a>
@@ -517,87 +534,94 @@ function displayText($value, $fallback = 'N/A')
 
         <div class="empty-state no-results" id="noResults">
             <i class="bi bi-search"></i>
-            <div class="fw-bold mb-1">No matching parts found</div>
+            <div class="fw-bold mb-1">No matching services found</div>
             <div>Try another keyword or browse the categories below.</div>
         </div>
 
         <?php if ($dbError): ?>
             <div class="empty-state">
                 <i class="bi bi-exclamation-circle"></i>
-                <div class="fw-bold mb-1">Parts unavailable</div>
+                <div class="fw-bold mb-1">Services unavailable</div>
                 <div><?php echo htmlspecialchars($dbError); ?></div>
             </div>
 
-        <?php elseif (empty($partCategories)): ?>
+        <?php elseif (empty($serviceCategories)): ?>
             <div class="empty-state">
-                <i class="bi bi-box-seam"></i>
-                <div class="fw-bold mb-1">No parts available</div>
-                <div>No parts are currently available for reservation.</div>
+                <i class="bi bi-wrench-adjustable-circle"></i>
+                <div class="fw-bold mb-1">No services available</div>
+                <div>No services are currently available for online request.</div>
             </div>
 
         <?php else: ?>
-            <?php foreach ($partCategories as $category => $parts): ?>
-                <section class="parts-category" id="cat-<?php echo htmlspecialchars(md5($category)); ?>">
-                    <div class="parts-category-header">
-                        <h5 class="parts-category-title">
+            <?php foreach ($serviceCategories as $category => $services): ?>
+                <section class="services-category" id="cat-<?php echo htmlspecialchars(md5($category)); ?>">
+                    <div class="services-category-header">
+                        <h5 class="services-category-title">
                             <?php echo displayText($category); ?>
                         </h5>
 
-                        <span class="parts-category-count">
-                            <?php echo count($parts); ?> item<?php echo count($parts) !== 1 ? 's' : ''; ?>
+                        <span class="services-category-count">
+                            <?php echo count($services); ?> service<?php echo count($services) !== 1 ? 's' : ''; ?>
                         </span>
                     </div>
 
-                    <div class="parts-grid">
-                        <?php foreach ($parts as $part): ?>
+                    <div class="services-grid">
+                        <?php foreach ($services as $service): ?>
                             <?php
                                 $searchText = strtolower(
-                                    html_entity_decode(($part['part_name'] ?? '') . ' ' .
-                                    ($part['brand'] ?? '') . ' ' .
-                                    ($part['category'] ?? '') . ' ' .
-                                    ($part['description'] ?? '') . ' ' .
-                                    ($part['specification'] ?? '') . ' ' .
-                                    ($part['compatibility'] ?? '') . ' ' .
-                                    ($part['unit'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8')
+                                    html_entity_decode(($service['service_name'] ?? '') . ' ' .
+                                    ($service['category'] ?? '') . ' ' .
+                                    ($service['description'] ?? '') . ' ' .
+                                    ($service['full_description'] ?? '') . ' ' .
+                                    ($service['features'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8')
                                 );
+
+                                $basePrice = floatval($service['base_price'] ?? 0);
                             ?>
 
                             <div
-                                class="part-card"
+                                class="service-card"
                                 data-search="<?php echo htmlspecialchars($searchText); ?>"
                             >
-                                <div class="part-image-wrap">
+                                <div class="service-image-wrap">
                                     <img
-                                        src="<?php echo partImagePath($part['image'] ?? ''); ?>"
-                                        alt="<?php echo displayText($part['part_name'] ?? 'Part image'); ?>"
+                                        src="<?php echo serviceImagePath($service['image'] ?? ''); ?>"
+                                        alt="<?php echo displayText($service['service_name'] ?? 'Service image'); ?>"
                                     >
                                 </div>
 
-                                <div class="part-info">
-                                    <div class="part-name" title="<?php echo displayText($part['part_name'] ?? ''); ?>">
-                                        <?php echo displayText($part['part_name'] ?? ''); ?>
+                                <div class="service-info">
+                                    <div class="service-name" title="<?php echo displayText($service['service_name'] ?? ''); ?>">
+                                        <?php echo displayText($service['service_name'] ?? ''); ?>
                                     </div>
 
-                                    <div class="part-category" title="<?php echo displayText($part['category'] ?? ''); ?>">
-                                        <?php echo displayText($part['category'] ?? ''); ?>
+                                    <div class="service-category-label" title="<?php echo displayText($service['category'] ?? ''); ?>">
+                                        <?php echo displayText($service['category'] ?? ''); ?>
                                     </div>
 
-                                    <div class="part-price">
-                                        ₱<?php echo number_format(floatval($part['unit_price']), 2); ?>
+                                    <div class="service-desc">
+                                        <?php echo shortText($service['description'] ?? ''); ?>
                                     </div>
 
-                                    <div class="part-unit">
-                                        per <?php echo displayText($part['unit'] ?? '', 'piece'); ?>
-                                    </div>
-
-                                    <div class="part-availability">
-                                        <?php echo intval($part['quantity_on_hand']); ?>
-                                        <?php echo displayText($part['unit'] ?? '', 'unit'); ?>(s) available
-                                    </div>
+                                    <?php if ($basePrice > 0): ?>
+                                        <div class="service-price">
+                                            Starts at ₱<?php echo number_format($basePrice, 2); ?>
+                                        </div>
+                                        <div class="service-price-note">
+                                            Final cost depends on assessment.
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="service-price">
+                                            Cost after assessment
+                                        </div>
+                                        <div class="service-price-note">
+                                            Final price will be confirmed by the shop.
+                                        </div>
+                                    <?php endif; ?>
 
                                     <a
-                                        href="customer_part_details.php?id=<?php echo intval($part['part_id']); ?>"
-                                        class="part-details-link"
+                                        href="customer_service_details.php?id=<?php echo intval($service['service_id']); ?>"
+                                        class="service-details-link"
                                     >
                                         View Details
                                     </a>
@@ -614,13 +638,13 @@ function displayText($value, $fallback = 'N/A')
 </div>
 
 <script>
-const searchInput = document.getElementById('partsSearch');
+const searchInput = document.getElementById('servicesSearch');
 const clearSearch = document.getElementById('clearSearch');
-const cards = document.querySelectorAll('.part-card');
+const cards = document.querySelectorAll('.service-card');
 const noResults = document.getElementById('noResults');
-const categories = document.querySelectorAll('.parts-category');
+const categories = document.querySelectorAll('.services-category');
 
-function applyPartsSearch() {
+function applyServicesSearch() {
     const value = searchInput.value.trim().toLowerCase();
     let visibleCount = 0;
 
@@ -636,7 +660,7 @@ function applyPartsSearch() {
     });
 
     categories.forEach(category => {
-        const visibleCards = category.querySelectorAll('.part-card:not([style*="display: none"])');
+        const visibleCards = category.querySelectorAll('.service-card:not([style*="display: none"])');
         category.style.display = visibleCards.length > 0 ? '' : 'none';
     });
 
@@ -646,13 +670,13 @@ function applyPartsSearch() {
 }
 
 if (searchInput) {
-    searchInput.addEventListener('input', applyPartsSearch);
+    searchInput.addEventListener('input', applyServicesSearch);
 }
 
 if (clearSearch) {
     clearSearch.addEventListener('click', function () {
         searchInput.value = '';
-        applyPartsSearch();
+        applyServicesSearch();
     });
 }
 </script>

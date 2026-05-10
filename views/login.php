@@ -509,7 +509,7 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
                         <label class="auth-label">Username or Email</label>
                         <div class="custom-input-group">
                             <span class="custom-input-icon"><i class="bi bi-person"></i></span>
-                            <input type="text" name="login_id" class="custom-input" placeholder="Enter username or email" required>
+                            <input type="text" name="login_id" class="custom-input" placeholder="Enter email or staff username" required>
                         </div>
                     </div>
 
@@ -545,7 +545,7 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
                     <input type="hidden" name="action" value="register">
 
                     <h1 class="auth-title">Create Account</h1>
-                    <p class="auth-subtitle">Join Norily's Repair Shop to track your vehicles online</p>
+                    <p class="auth-subtitle">Join Norily's Repair Shop to track your vehicles and service records online</p>
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
@@ -578,17 +578,14 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
                             <label class="auth-label">Phone Number</label>
                             <div class="custom-input-group">
                                 <span class="custom-input-icon"><i class="bi bi-telephone"></i></span>
-                                <input type="text" name="phone" class="custom-input" placeholder="Phone number" required>
+                                <input type="text" name="phone" class="custom-input" placeholder="11-digit phone number" maxlength="11" required>
                             </div>
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="auth-label">Choose a Username</label>
-                        <div class="custom-input-group">
-                            <span class="custom-input-icon"><i class="bi bi-at"></i></span>
-                            <input type="text" name="username" class="custom-input" placeholder="Choose a username" required>
-                        </div>
+                    <div class="alert alert-light border mb-3" style="font-size: 0.88rem; border-radius: 14px;">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Your email address will be used for login. No separate username is required.
                     </div>
 
                     <div class="mb-4">

@@ -1,4 +1,4 @@
-<?php
+<?php 
 $currentPage = basename($_SERVER['PHP_SELF']);
 $userInitial = strtoupper(substr($_SESSION['first_name'], 0, 1));
 $userRole = $_SESSION['role'];
@@ -11,6 +11,13 @@ $dashboardMap = [
 ];
 
 $dashLink = $dashboardMap[$userRole] ?? 'login.php';
+
+/*
+    Financial modules such as Billing, Payment, and Invoice History
+    should only be accessible to roles assigned to payment/billing work.
+    Head Mechanic should not see these modules.
+*/
+$canAccessFinancialModules = ($userRole === 'Owner' || $userRole === 'Cashier');
 
 $cartCount = 0;
 if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
@@ -34,8 +41,8 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
             <i class="bi bi-grid-1x2"></i> Dashboard
         </a>
 
-        <?php if ($userRole === 'Customer'): ?>
-            <a href="customer_parts.php" class="nav-link <?php echo ($currentPage == 'customer_parts.php') ? 'active' : ''; ?>">
+            <?php if ($userRole === 'Customer'): ?>
+            <a href="customer_parts.php" class="nav-link <?php echo ($currentPage == 'customer_parts.php' || $currentPage == 'customer_part_details.php') ? 'active' : ''; ?>">
                 <i class="bi bi-box-seam"></i> Browse Parts
             </a>
 
@@ -44,6 +51,14 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
                 <?php if ($cartCount > 0): ?>
                     (<?php echo $cartCount; ?>)
                 <?php endif; ?>
+            </a>
+
+            <a href="customer_services.php" class="nav-link <?php echo ($currentPage == 'customer_services.php' || $currentPage == 'customer_service_details.php') ? 'active' : ''; ?>">
+                <i class="bi bi-wrench-adjustable-circle"></i> Services Offered
+            </a>
+
+            <a href="customer_service_requests.php" class="nav-link <?php echo ($currentPage == 'customer_service_requests.php' || $currentPage == 'customer_request_service.php') ? 'active' : ''; ?>">
+                <i class="bi bi-calendar-check"></i> My Service Requests
             </a>
         <?php endif; ?>
 
@@ -66,13 +81,23 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
                 <i class="bi bi-tools"></i> Job Orders
             </a>
 
+            <a href="service_requests.php" class="nav-link <?php echo ($currentPage == 'service_requests.php') ? 'active' : ''; ?>">
+                <i class="bi bi-calendar-check"></i> Service Requests
+            </a>
+
             <a href="online_orders.php" class="nav-link <?php echo ($currentPage == 'online_orders.php') ? 'active' : ''; ?>">
                 <i class="bi bi-globe"></i> Web Orders
             </a>
 
-            <a href="billing.php" class="nav-link <?php echo ($currentPage == 'billing.php') ? 'active' : ''; ?>">
-                <i class="bi bi-receipt"></i> Billing & Invoices
-            </a>
+            <?php if ($canAccessFinancialModules): ?>
+                <a href="billing.php" class="nav-link <?php echo ($currentPage == 'billing.php') ? 'active' : ''; ?>">
+                    <i class="bi bi-receipt"></i> Billing & Invoices
+                </a>
+
+                <a href="invoice_history.php" class="nav-link <?php echo ($currentPage == 'invoice_history.php') ? 'active' : ''; ?>">
+                    <i class="bi bi-clock-history"></i> Invoice History
+                </a>
+            <?php endif; ?>
         <?php endif; ?>
 
         <?php if ($userRole === 'Head Mechanic'): ?>
