@@ -3,9 +3,9 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: May 08, 2026 at 09:18 AM
+-- Generation Time: May 16, 2026 at 03:55 PM
 -- Server version: 10.4.32-MariaDB
--- PHP Version: 8.0.30
+-- PHP Version: 8.2.12
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -52,7 +52,11 @@ INSERT INTO `customer` (`customer_id`, `first_name`, `middle_name`, `last_name`,
 (1, 'John', NULL, 'Doe', 'customer@norilys.com', '09123456789', 'no address provided', 0.00, NULL, '2026-04-25 12:52:33', 4, 'Active', NULL, NULL),
 (2, 'Jennie', NULL, 'Batumbakal', 'jenjen@gmail.com', '09562372832', 'Ambiong', 0.00, NULL, '2026-04-30 00:04:19', NULL, 'Active', NULL, NULL),
 (4, 'Lisa', NULL, 'Manoban', 'lisamanoban@gmail.com', '09927373821', 'no address provided', 0.00, NULL, '2026-05-07 21:44:50', 6, 'Active', NULL, NULL),
-(5, 'Juan', NULL, 'Pedro', NULL, '09828328282', 'no address provided', 0.00, NULL, '2026-05-07 21:47:45', NULL, 'Active', NULL, NULL);
+(5, 'Juan', NULL, 'Pedro', NULL, '09828328282', 'no address provided', 0.00, NULL, '2026-05-07 21:47:45', NULL, 'Active', NULL, NULL),
+(14, 'Jani', NULL, 'afe', 'leela090104@gmail.com', '09260432900', 'baguio', 0.00, NULL, '2026-05-16 16:37:29', NULL, 'Active', NULL, NULL),
+(15, 'avi', NULL, 'ien', 'leelavinagustin@gmail.com', '33333333333', 'no address provided', 0.00, NULL, '2026-05-16 17:16:42', 15, 'Active', NULL, NULL),
+(16, 'Nicole', NULL, 'Atienza', 'nixatienza04@gmail.com', '09682742142', 'no address provided', 0.00, NULL, '2026-05-16 20:10:40', 16, 'Active', NULL, NULL),
+(17, 'ALaf', NULL, 'aer', NULL, '09876543212', 'baguio', 0.00, NULL, '2026-05-16 21:09:33', NULL, 'Active', NULL, NULL);
 
 -- --------------------------------------------------------
 
@@ -147,7 +151,9 @@ INSERT INTO `job_order` (`job_order_id`, `vehicle_id`, `customer_id`, `created_b
 (9, 1, 1, 1, NULL, 'JO-4D199', 'flat tire', 'Walk-in', 'Pending', 1000.00, 0.00, '2026-04-30 13:32:30', NULL, NULL, NULL, NULL, NULL, 0, 0.00),
 (10, 2, 2, 1, NULL, 'JO-87872', 'Worn out brake pads', 'Walk-in', 'Pending', 3300.00, 0.00, '2026-05-02 00:43:16', NULL, NULL, NULL, NULL, NULL, 0, 0.00),
 (11, 3, 4, 1, 3, 'JO-025D9', 'Online Service Request: Engine Overhaul\r\n\r\nCustomer Concern: leaking oil\r\n\r\nPreferred Appointment: 2026-05-10 09:00:00', 'Online', 'Cancelled', 3000.00, 0.00, '2026-05-07 23:57:05', NULL, NULL, NULL, NULL, '2026-05-08 00:06:39', 1, 500.00),
-(12, 3, 4, 1, 3, 'JO-3959A', 'Request Source: Online Service Appointment\n\nRequested Service: Alternator Repair\n\nCustomer Concern / Symptoms: change battery\n\nPreferred Appointment: May 15, 2026 10:00 AM', 'Online', 'Pending', 900.00, 0.00, '2026-05-08 00:40:23', NULL, NULL, NULL, NULL, NULL, 0, 0.00);
+(12, 3, 4, 1, 3, 'JO-3959A', 'Request Source: Online Service Appointment\n\nRequested Service: Alternator Repair\n\nCustomer Concern / Symptoms: change battery\n\nPreferred Appointment: May 15, 2026 10:00 AM', 'Online', 'Pending', 900.00, 0.00, '2026-05-08 00:40:23', NULL, NULL, NULL, NULL, NULL, 0, 0.00),
+(13, 4, 14, 1, NULL, 'JO-3693E', 'dh5t', 'Walk-in', 'In Progress', 5700.00, 0.00, '2026-05-16 16:37:29', NULL, NULL, NULL, NULL, NULL, 0, 0.00),
+(14, 5, 17, 1, NULL, 'JO-90B6E', 'fase', 'Walk-in', 'Completed', 7950.00, 0.00, '2026-05-16 21:09:33', NULL, '2026-05-16 21:12:09', 1, NULL, NULL, 0, 0.00);
 
 -- --------------------------------------------------------
 
@@ -163,6 +169,15 @@ CREATE TABLE `job_order_part` (
   `unit_price_at_use` decimal(10,2) NOT NULL,
   `subtotal` decimal(10,2) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `job_order_part`
+--
+
+INSERT INTO `job_order_part` (`job_part_id`, `job_order_id`, `part_id`, `quantity_used`, `unit_price_at_use`, `subtotal`) VALUES
+(1, 13, 5, 2, 300.00, 600.00),
+(2, 13, 5, 2, 300.00, 600.00),
+(3, 14, 7, 3, 1850.00, 5550.00);
 
 -- --------------------------------------------------------
 
@@ -186,7 +201,11 @@ CREATE TABLE `job_order_service` (
 
 INSERT INTO `job_order_service` (`job_service_id`, `job_order_id`, `service_id`, `quantity`, `unit_price`, `subtotal`, `notes`) VALUES
 (1, 11, 4, 1, 3000.00, 3000.00, 'Created from online service request SR-846974'),
-(2, 12, 1, 1, 900.00, 900.00, 'Created from online service request SR-B4F8B6');
+(2, 12, 1, 1, 900.00, 900.00, 'Created from online service request SR-B4F8B6'),
+(3, 13, 3, 1, 3000.00, 3000.00, NULL),
+(4, 13, 2, 1, 1500.00, 1500.00, NULL),
+(5, 14, 1, 1, 900.00, 900.00, NULL),
+(6, 14, 2, 1, 1500.00, 1500.00, NULL);
 
 -- --------------------------------------------------------
 
@@ -206,9 +225,9 @@ CREATE TABLE `part` (
   `unit_price` decimal(10,2) NOT NULL DEFAULT 0.00,
   `quantity_on_hand` smallint(6) NOT NULL DEFAULT 0,
   `low_stock_threshold` smallint(6) NOT NULL DEFAULT 3,
+  `supplier_id` int(11) DEFAULT 1,
   `is_low_stock` tinyint(1) NOT NULL DEFAULT 0,
-  `supplier_reference` varchar(50) DEFAULT NULL,
-  `supplier_email` varchar(150) DEFAULT NULL,
+  `primary_supplier_id` int(11) DEFAULT 1,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `cost_price` decimal(10,2) DEFAULT NULL,
   `image` varchar(255) DEFAULT NULL,
@@ -219,12 +238,13 @@ CREATE TABLE `part` (
 -- Dumping data for table `part`
 --
 
-INSERT INTO `part` (`part_id`, `category`, `brand`, `part_name`, `description`, `specification`, `compatibility`, `unit`, `unit_price`, `quantity_on_hand`, `low_stock_threshold`, `is_low_stock`, `supplier_reference`, `supplier_email`, `is_active`, `cost_price`, `image`, `full_description`) VALUES
-(2, '', NULL, 'yig', 'Battery part', NULL, NULL, 'piece', 876.00, 3, 5, 0, NULL, NULL, 0, 613.20, NULL, NULL),
-(3, 'Electrical Parts &amp; Supplies', 'Motolite', 'Capacitors', 'Common electrical supply used for motor, wiring, and repair support.', '12V', 'Toyota', 'piece', 500.00, 3, 5, 0, 'Initial catalog item', NULL, 1, 300.00, 'part-1777312816-ea5e6d58.png', 'Capacitors are electrical components commonly used to store and release electrical energy. In auto repair and electrical work, they may support motor operation, wiring repair, and other electrical maintenance needs.'),
-(4, 'Electrical Parts & Supplies', NULL, 'Switches', 'Selected switches used for automotive and electrical repair needs.', NULL, NULL, 'piece', 200.00, 7, 5, 0, 'Initial catalog item', NULL, 1, 100.00, 'part-1777312876-eba2dd31.png', 'Automotive switches are used to control electrical circuits in vehicles. They may be used for lights, accessories, wipers, auxiliary controls, and other repair or replacement needs.'),
-(5, 'Electrical Parts &amp; Supplies', 'Motolite', 'Magnetic Wires', 'Supply item used for rewinding and related electrical repair work.', '12V', 'Universal', 'piece', 300.00, 7, 5, 0, 'Initial catalog item', NULL, 1, 150.00, 'part-1777312956-8a3f9b73.png', 'Magnetic wires are commonly used for rewinding motors, alternators, starters, and other electrical components. They support repair work that requires replacement or restoration of electrical coils.'),
-(6, 'Starter & Motor Parts', NULL, 'Starter Armatures', 'Starter-related component used for starter motor repair and replacement support.', NULL, NULL, 'piece', 250.00, 8, 5, 0, 'Initial catalog item', NULL, 1, 100.00, 'part-1777313026-afdb8678.png', 'Starter armatures are internal starter motor components that help produce rotational force during engine starting. They are used when repairing or replacing damaged starter motor parts.');
+INSERT INTO `part` (`part_id`, `category`, `brand`, `part_name`, `description`, `specification`, `compatibility`, `unit`, `unit_price`, `quantity_on_hand`, `low_stock_threshold`, `supplier_id`, `is_low_stock`, `primary_supplier_id`, `is_active`, `cost_price`, `image`, `full_description`) VALUES
+(2, '', NULL, 'yig', 'Battery part', NULL, NULL, 'piece', 876.00, 3, 5, 1, 0, 1, 0, 613.20, NULL, NULL),
+(3, 'Electrical Parts & Supplies', 'Motolite', 'Capacitors', 'Common electrical supply used for motor, wiring, and repair support.', '12V', 'Toyota', 'piece', 500.00, 3, 4, 3, 0, 1, 1, 300.00, 'part-1777312816-ea5e6d58.png', 'Capacitors are electrical components commonly used to store and release electrical energy. In auto repair and electrical work, they may support motor operation, wiring repair, and other electrical maintenance needs.'),
+(4, 'Electrical Parts & Supplies', 'N/A', 'Switches', 'Selected switches used for automotive and electrical repair needs.', 'N/A', 'N/A', 'piece', 200.00, 3, 4, 3, 0, 1, 1, 100.00, 'part-1777312876-eba2dd31.png', 'Automotive switches are used to control electrical circuits in vehicles. They may be used for lights, accessories, wipers, auxiliary controls, and other repair or replacement needs.'),
+(5, 'Electrical Parts &amp; Supplies', 'Motolite', 'Magnetic Wires', 'Supply item used for rewinding and related electrical repair work.', '12V', 'Universal', 'piece', 300.00, 3, 4, 1, 0, 1, 1, 150.00, 'part-1777312956-8a3f9b73.png', 'Magnetic wires are commonly used for rewinding motors, alternators, starters, and other electrical components. They support repair work that requires replacement or restoration of electrical coils.'),
+(6, 'Starter & Motor Parts', 'N/A', 'Starter Armatures', 'Starter-related component used for starter motor repair and replacement support.', 'N/A', 'N/A', 'piece', 250.00, 2, 4, 1, 0, 1, 1, 100.00, 'part-1777313026-afdb8678.png', 'Starter armatures are internal starter motor components that help produce rotational force during engine starting. They are used when repairing or replacing damaged starter motor parts.'),
+(7, 'Steering & Suspension', '555', 'Tie Rod End', 'Heavy-duty forged steel outer tie rod end replacement for Honda Civic 2006-2011. Restores steering precision.', 'Heavy duty steel', 'Honda Civic 2006-2011', 'pair', 1850.00, 3, 4, 3, 0, 1, 1, 1295.00, 'part-1778936839-053e2e1a.webp', 'Premium aftermarket outer tie rod end manufactured by 555. Engineered with heavy-duty forged steel to restore precise steering response, eliminate steering wheel play, and prevent uneven tire wear. Designed to withstand harsh road conditions and heavy impacts. This assembly includes a pre-greased ball joint, durable weather-resistant dust boot, castle nut, and cotter pin for a complete, direct-fit OEM replacement. Highly recommended for vehicles frequently driven on rough or uneven terrain.');
 
 -- --------------------------------------------------------
 
@@ -432,7 +452,8 @@ INSERT INTO `service` (`service_id`, `service_name`, `category`, `base_price`, `
 (1, 'Alternator Repair', 'Rewinding Services', 900.00, 0, 0, 'Checks and repairs alternators to help ensure the vehicle battery charges properly while the engine is running.', 1, 'service-1777313156-beede1ed.png', 'Alternator repair helps restore proper charging performance for the vehicle battery and electrical system. This service may include inspection, diagnosis, component repair, and testing to ensure the alternator is working correctly.', 'Inspection\r\nAlternator component repair\r\nPost-maintenance testing'),
 (2, 'Starter Repair', 'Rewinding Services', 1500.00, 0, 0, 'Resolves starter-related problems that prevent the engine from starting properly.', 1, 'service-1777313219-75673d7f.png', 'Starter repair focuses on diagnosing and fixing starter motor problems that may prevent the engine from starting. The service may include inspection, replacement of faulty parts, cleaning, repair, and final function testing.', 'Starter inspection\r\nRepair or replacement of faulty parts\r\nFunction testing'),
 (3, 'Radiator Repair', 'Rewinding Services', 3000.00, 0, 0, 'Handles radiator leaks and overheating issues to help maintain stable engine temperature.', 1, 'service-1777313287-e1a38bf9.png', 'Radiator repair helps address cooling system issues such as leaks, overheating, and reduced cooling performance. The service may include leak detection, repair, and cooling performance checks.', 'Leak detection\r\nRadiator repair\r\nCooling performance check'),
-(4, 'Engine Overhaul', 'Other Services', 3000.00, 0, 0, 'Checks and repairs major engine-related issues to restore performance and reliability.', 1, 'service-1777313350-5f9ca8af.png', 'Engine overhaul involves inspecting and repairing major engine components to help restore performance, reliability, and safe operation. Actual recommendations depend on the vehicle condition after inspection.\r\nFeatures:', 'Engine inspection\r\nRepair recommendations\r\nMechanical checking');
+(4, 'Engine Overhaul', 'Other Services', 3000.00, 0, 0, 'Checks and repairs major engine-related issues to restore performance and reliability.', 1, 'service-1777313350-5f9ca8af.png', 'Engine overhaul involves inspecting and repairing major engine components to help restore performance, reliability, and safe operation. Actual recommendations depend on the vehicle condition after inspection.\r\nFeatures:', 'Engine inspection\r\nRepair recommendations\r\nMechanical checking'),
+(5, 'rtj', 'Rewinding Serivces', 3462.00, 1, 2, 'vsr', 1, '', 'sgr', 'srg');
 
 -- --------------------------------------------------------
 
@@ -493,6 +514,31 @@ CREATE TABLE `stock_in` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `supplier`
+--
+
+CREATE TABLE `supplier` (
+  `supplier_id` int(11) NOT NULL,
+  `supplier_name` varchar(100) NOT NULL,
+  `contact_person` varchar(100) DEFAULT NULL,
+  `email` varchar(150) NOT NULL,
+  `phone` varchar(20) DEFAULT NULL,
+  `address` text DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `supplier`
+--
+
+INSERT INTO `supplier` (`supplier_id`, `supplier_name`, `contact_person`, `email`, `phone`, `address`, `is_active`) VALUES
+(1, 'test', 'Lav.lee', 'leelav.viin@gmail.com', '91435544', '', 1),
+(2, 'dalig', 'Lav ash Ash', 'leela090104@gmail.com', '12341234', 'baguio', 1),
+(3, 'Castroil Car Workshop', 'Lav ash Ash', '20236455@s.ubaguio.edu', '09260432900', 'La Union', 1);
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `user`
 --
 
@@ -501,10 +547,12 @@ CREATE TABLE `user` (
   `first_name` varchar(50) DEFAULT NULL,
   `middle_name` varchar(20) DEFAULT NULL,
   `last_name` varchar(50) DEFAULT NULL,
-  `username` varchar(20) NOT NULL,
+  `username` varchar(255) NOT NULL,
   `password_hash` varchar(255) NOT NULL,
   `role` enum('Owner','Cashier','Head Mechanic','Customer') NOT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  `is_verified` tinyint(1) NOT NULL DEFAULT 0,
+  `verification_token` varchar(255) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `email` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -513,13 +561,15 @@ CREATE TABLE `user` (
 -- Dumping data for table `user`
 --
 
-INSERT INTO `user` (`user_id`, `first_name`, `middle_name`, `last_name`, `username`, `password_hash`, `role`, `is_active`, `created_at`, `email`) VALUES
-(1, 'Admin', NULL, 'Owner', 'owner', 'password123', 'Owner', 1, '2026-04-25 12:45:00', 'owner@norilys.com'),
-(2, 'Jane', NULL, 'Cashier', 'cashier', 'password123', 'Cashier', 1, '2026-04-25 12:45:00', 'cashier@norilys.com'),
-(3, 'Mike', NULL, 'Mechanic', 'mechanic', 'password123', 'Head Mechanic', 1, '2026-04-25 12:45:00', 'mechanic@norilys.com'),
-(4, 'John', NULL, 'Doe', 'customer', 'password123', 'Customer', 1, '2026-04-25 12:45:00', 'customer@norilys.com'),
-(5, 'Jennie', NULL, 'Batumbakal', 'jenjen@gmail.com', '$2y$10$8sBOpPTeqDxRJ.9ST8vfJOWXWnLvkuSTAFxL10On5XhMrIKcYL4.W', 'Customer', 1, '2026-04-30 00:53:51', 'jenjen@gmail.com'),
-(6, 'Lisa', NULL, 'Manoban', 'lisamanoban@gmail.co', '$2y$10$vuqV5LRcDPNyisFzDmwPIOcqTJbedUO6QY286aDdJzDDDnlZKrHl.', 'Customer', 1, '2026-05-07 21:44:50', 'lisamanoban@gmail.com');
+INSERT INTO `user` (`user_id`, `first_name`, `middle_name`, `last_name`, `username`, `password_hash`, `role`, `is_active`, `is_verified`, `verification_token`, `created_at`, `email`) VALUES
+(1, 'Admin', NULL, 'Owner', 'owner', 'password123', 'Owner', 1, 1, NULL, '2026-04-25 12:45:00', 'owner@norilys.com'),
+(2, 'Jane', NULL, 'Cashier', 'cashier', 'password123', 'Cashier', 1, 1, NULL, '2026-04-25 12:45:00', 'cashier@norilys.com'),
+(3, 'Mike', NULL, 'Mechanic', 'mechanic', 'password123', 'Head Mechanic', 1, 1, NULL, '2026-04-25 12:45:00', 'mechanic@norilys.com'),
+(4, 'John', NULL, 'Doe', 'customer', 'password123', 'Customer', 1, 1, NULL, '2026-04-25 12:45:00', 'customer@norilys.com'),
+(5, 'Jennie', NULL, 'Batumbakal', 'jenjen@gmail.com', '$2y$10$8sBOpPTeqDxRJ.9ST8vfJOWXWnLvkuSTAFxL10On5XhMrIKcYL4.W', 'Customer', 1, 1, NULL, '2026-04-30 00:53:51', 'jenjen@gmail.com'),
+(6, 'Lisa', NULL, 'Manoban', 'lisamanoban@gmail.co', '$2y$10$vuqV5LRcDPNyisFzDmwPIOcqTJbedUO6QY286aDdJzDDDnlZKrHl.', 'Customer', 1, 1, NULL, '2026-05-07 21:44:50', 'lisamanoban@gmail.com'),
+(15, 'avi', NULL, 'ien', 'leelavinagustin@gmail.com', '$2y$10$U1p6mNBgWvDbGDzbhExrYeJvLC3o3GyVqSCNJkexevPa4dD4sVHgW', 'Customer', 1, 1, NULL, '2026-05-16 17:16:42', 'leelavinagustin@gmail.com'),
+(16, 'Nicole', NULL, 'Atienza', 'nixatienza04@gmail.com', '$2y$10$.r520oBaRJbxQCMm6SbQ7ePPpGZJQ7OkO0jKGL8pDdVkzuYWmfPOm', 'Customer', 1, 0, '12d21350719ed8ed385538f2b570d71d', '2026-05-16 20:10:40', 'nixatienza04@gmail.com');
 
 -- --------------------------------------------------------
 
@@ -550,7 +600,9 @@ CREATE TABLE `vehicle` (
 INSERT INTO `vehicle` (`vehicle_id`, `customer_id`, `plate_number`, `vin`, `make`, `model`, `year`, `color`, `notes`, `status`, `deactivated_at`, `archived_at`, `created_at`) VALUES
 (1, 1, '564948', NULL, 'jhdjshdjsd', 'sdsds', '2001', 'red', '', 'Active', NULL, NULL, '2026-04-30 11:04:19'),
 (2, 2, '162712', NULL, 'Porsche', 'Taycan', '2020', 'Blue', NULL, 'Active', NULL, NULL, '2026-04-30 14:20:23'),
-(3, 4, '160527', NULL, 'Toyota', 'Taycan', '2018', 'Green', NULL, 'Active', NULL, NULL, '2026-05-07 21:51:06');
+(3, 4, '160527', NULL, 'Toyota', 'Taycan', '2018', 'Green', NULL, 'Active', NULL, NULL, '2026-05-07 21:51:06'),
+(4, 14, 'VAYUDRD', NULL, 'Rolls Royce', 'Dawn', '2021', 'Red', NULL, 'Active', NULL, NULL, '2026-05-16 16:37:29'),
+(5, 17, 'VAYUDRDAWE', NULL, 'Rolls Royce', 'Dawn', '2021', 'Red', NULL, 'Active', NULL, NULL, '2026-05-16 21:09:33');
 
 --
 -- Indexes for dumped tables
@@ -611,7 +663,8 @@ ALTER TABLE `job_order_service`
 -- Indexes for table `part`
 --
 ALTER TABLE `part`
-  ADD PRIMARY KEY (`part_id`);
+  ADD PRIMARY KEY (`part_id`),
+  ADD KEY `fk_part_supplier` (`primary_supplier_id`);
 
 --
 -- Indexes for table `part_order`
@@ -684,6 +737,12 @@ ALTER TABLE `stock_in`
   ADD KEY `fk_recorded_by_si` (`recorded_by`);
 
 --
+-- Indexes for table `supplier`
+--
+ALTER TABLE `supplier`
+  ADD PRIMARY KEY (`supplier_id`);
+
+--
 -- Indexes for table `user`
 --
 ALTER TABLE `user`
@@ -709,7 +768,7 @@ ALTER TABLE `vehicle`
 -- AUTO_INCREMENT for table `customer`
 --
 ALTER TABLE `customer`
-  MODIFY `customer_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `customer_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=18;
 
 --
 -- AUTO_INCREMENT for table `invoice`
@@ -721,25 +780,25 @@ ALTER TABLE `invoice`
 -- AUTO_INCREMENT for table `job_order`
 --
 ALTER TABLE `job_order`
-  MODIFY `job_order_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `job_order_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=15;
 
 --
 -- AUTO_INCREMENT for table `job_order_part`
 --
 ALTER TABLE `job_order_part`
-  MODIFY `job_part_id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `job_part_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT for table `job_order_service`
 --
 ALTER TABLE `job_order_service`
-  MODIFY `job_service_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `job_service_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT for table `part`
 --
 ALTER TABLE `part`
-  MODIFY `part_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `part_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT for table `part_order`
@@ -775,7 +834,7 @@ ALTER TABLE `pos_transaction`
 -- AUTO_INCREMENT for table `service`
 --
 ALTER TABLE `service`
-  MODIFY `service_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `service_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
 
 --
 -- AUTO_INCREMENT for table `service_request`
@@ -790,16 +849,22 @@ ALTER TABLE `stock_in`
   MODIFY `stock_in_id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `supplier`
+--
+ALTER TABLE `supplier`
+  MODIFY `supplier_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
 -- AUTO_INCREMENT for table `user`
 --
 ALTER TABLE `user`
-  MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=17;
 
 --
 -- AUTO_INCREMENT for table `vehicle`
 --
 ALTER TABLE `vehicle`
-  MODIFY `vehicle_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `vehicle_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
 
 --
 -- Constraints for dumped tables
@@ -842,6 +907,12 @@ ALTER TABLE `job_order_part`
 ALTER TABLE `job_order_service`
   ADD CONSTRAINT `fk_job_order_id_jos` FOREIGN KEY (`job_order_id`) REFERENCES `job_order` (`job_order_id`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_service_id_jos` FOREIGN KEY (`service_id`) REFERENCES `service` (`service_id`);
+
+--
+-- Constraints for table `part`
+--
+ALTER TABLE `part`
+  ADD CONSTRAINT `fk_part_supplier` FOREIGN KEY (`primary_supplier_id`) REFERENCES `supplier` (`supplier_id`) ON DELETE SET NULL;
 
 --
 -- Constraints for table `part_order`
