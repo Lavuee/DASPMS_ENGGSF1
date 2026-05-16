@@ -1,4 +1,6 @@
 <?php
+// ADDED: Include the automated restock alert engine
+require_once __DIR__ . '/../controllers/RestockAlert.php';
 
 class PartOrder {
     private $conn;
@@ -444,6 +446,9 @@ class PartOrder {
             if ($stmtDeduct->rowCount() === 0) {
                 throw new Exception("Unable to deduct stock for " . $item['part_name'] . ".");
             }
+            
+            // ADDED: Trigger automated restock email check
+            RestockAlert::checkAndSend($this->conn, $part_id);
         }
     }
 

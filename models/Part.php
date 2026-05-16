@@ -16,8 +16,7 @@ class Part {
     public $cost_price;
     public $quantity_on_hand;
     public $low_stock_threshold;
-    public $supplier_reference;
-    public $supplier_email;
+    public $supplier_id; // MODIFIED: Replaced text fields with strictly typed supplier_id
     public $image;
 
     public function __construct($db) {
@@ -87,8 +86,6 @@ class Part {
         $this->compatibility = $this->cleanForStorage($this->compatibility);
         $this->unit = $this->cleanForStorage($this->unit);
         $this->full_description = $this->cleanForStorage($this->full_description);
-        $this->supplier_reference = $this->cleanForStorage($this->supplier_reference);
-        $this->supplier_email = $this->cleanForStorage($this->supplier_email);
 
         if ($this->unit === '') {
             $this->unit = 'piece';
@@ -112,8 +109,7 @@ class Part {
                     cost_price,
                     quantity_on_hand,
                     low_stock_threshold,
-                    supplier_reference,
-                    supplier_email,
+                    supplier_id,
                     image,
                     is_active
                   )
@@ -131,8 +127,7 @@ class Part {
                     :cost_price,
                     :quantity_on_hand,
                     :low_stock_threshold,
-                    :supplier_reference,
-                    :supplier_email,
+                    :supplier_id,
                     :image,
                     1
                   )";
@@ -143,8 +138,7 @@ class Part {
         $specificationValue = $this->specification !== '' ? $this->specification : null;
         $compatibilityValue = $this->compatibility !== '' ? $this->compatibility : null;
         $fullDescriptionValue = $this->full_description !== '' ? $this->full_description : null;
-        $supplierReferenceValue = $this->supplier_reference !== '' ? $this->supplier_reference : null;
-        $supplierEmailValue = $this->supplier_email !== '' ? $this->supplier_email : null;
+        $supplierIdValue = !empty($this->supplier_id) ? intval($this->supplier_id) : null;
 
         $stmt->bindParam(":category", $this->category);
         $stmt->bindParam(":brand", $brandValue);
@@ -158,8 +152,7 @@ class Part {
         $stmt->bindParam(":cost_price", $this->cost_price);
         $stmt->bindParam(":quantity_on_hand", $this->quantity_on_hand);
         $stmt->bindParam(":low_stock_threshold", $this->low_stock_threshold);
-        $stmt->bindParam(":supplier_reference", $supplierReferenceValue);
-        $stmt->bindParam(":supplier_email", $supplierEmailValue);
+        $stmt->bindParam(":supplier_id", $supplierIdValue, PDO::PARAM_INT);
         $stmt->bindParam(":image", $this->image);
 
         return $stmt->execute();
@@ -175,8 +168,6 @@ class Part {
         $this->compatibility = $this->cleanForStorage($this->compatibility);
         $this->unit = $this->cleanForStorage($this->unit);
         $this->full_description = $this->cleanForStorage($this->full_description);
-        $this->supplier_reference = $this->cleanForStorage($this->supplier_reference);
-        $this->supplier_email = $this->cleanForStorage($this->supplier_email);
 
         if ($this->unit === '') {
             $this->unit = 'piece';
@@ -200,8 +191,7 @@ class Part {
                     cost_price = :cost_price,
                     quantity_on_hand = :quantity_on_hand,
                     low_stock_threshold = :low_stock_threshold,
-                    supplier_reference = :supplier_reference,
-                    supplier_email = :supplier_email,
+                    supplier_id = :supplier_id,
                     image = :image
                   WHERE part_id = :part_id";
 
@@ -211,8 +201,7 @@ class Part {
         $specificationValue = $this->specification !== '' ? $this->specification : null;
         $compatibilityValue = $this->compatibility !== '' ? $this->compatibility : null;
         $fullDescriptionValue = $this->full_description !== '' ? $this->full_description : null;
-        $supplierReferenceValue = $this->supplier_reference !== '' ? $this->supplier_reference : null;
-        $supplierEmailValue = $this->supplier_email !== '' ? $this->supplier_email : null;
+        $supplierIdValue = !empty($this->supplier_id) ? intval($this->supplier_id) : null;
 
         $stmt->bindParam(":part_id", $this->part_id, PDO::PARAM_INT);
         $stmt->bindParam(":category", $this->category);
@@ -227,8 +216,7 @@ class Part {
         $stmt->bindParam(":cost_price", $this->cost_price);
         $stmt->bindParam(":quantity_on_hand", $this->quantity_on_hand);
         $stmt->bindParam(":low_stock_threshold", $this->low_stock_threshold);
-        $stmt->bindParam(":supplier_reference", $supplierReferenceValue);
-        $stmt->bindParam(":supplier_email", $supplierEmailValue);
+        $stmt->bindParam(":supplier_id", $supplierIdValue, PDO::PARAM_INT);
         $stmt->bindParam(":image", $this->image);
 
         return $stmt->execute();

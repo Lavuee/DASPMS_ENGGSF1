@@ -1,4 +1,6 @@
 <?php
+// ADDED: Include the automated restock alert engine
+require_once __DIR__ . '/../controllers/RestockAlert.php';
 
 class JobOrder {
     private $conn;
@@ -359,6 +361,9 @@ class JobOrder {
             if ($stmtDeduct->rowCount() === 0) {
                 throw new Exception("Unable to deduct stock for " . $part['part_name'] . ".");
             }
+            
+            // ADDED: Trigger automated restock email check
+            RestockAlert::checkAndSend($this->conn, $partId);
 
             $this->recalculateFinalCost($jobOrderId);
 

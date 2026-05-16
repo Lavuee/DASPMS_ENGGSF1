@@ -14,6 +14,10 @@ require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
+// ADDED: Fetch the list of active suppliers for the dropdown menus
+$supplierStmt = $db->query("SELECT supplier_id, supplier_name FROM supplier WHERE is_active = 1 ORDER BY supplier_name ASC");
+$suppliersList = $supplierStmt->fetchAll(PDO::FETCH_ASSOC);
+
 $viewStatus = $_GET['status'] ?? 'active';
 $viewStatus = $viewStatus === 'archived' ? 'archived' : 'active';
 $isActiveView = $viewStatus === 'active';
@@ -51,11 +55,13 @@ if ($currentPage > $totalPages) {
 
 $offset = ($currentPage - 1) * $itemsPerPage;
 
+// MODIFIED: Updated SQL query to pull the dynamic Supplier Name and Email from the new table
 $stmt = $db->prepare("
-    SELECT *
-    FROM part
-    WHERE is_active = :is_active
-    ORDER BY category ASC, part_name ASC
+    SELECT p.*, s.supplier_name, s.email AS supplier_email 
+    FROM part p
+    LEFT JOIN supplier s ON p.supplier_id = s.supplier_id
+    WHERE p.is_active = :is_active
+    ORDER BY p.category ASC, p.part_name ASC
     LIMIT :limit OFFSET :offset
 ");
 $stmt->bindValue(':is_active', $isActiveValue, PDO::PARAM_INT);
@@ -883,7 +889,7 @@ function inventoryStatusUrl($status) {
                                 <td>
                                     <div class="supplier-cell">
                                         <div class="supplier-ref">
-                                            <?= cleanValue($p['supplier_reference'] ?? '', 'No supplier ref') ?>
+                                            <?= cleanValue($p['supplier_name'] ?? '', 'No Assigned Supplier') ?>
                                         </div>
 
                                         <?php if (!empty($p['supplier_email'])): ?>
@@ -896,12 +902,35 @@ function inventoryStatusUrl($status) {
                                                 <?= htmlspecialchars($p['supplier_email'], ENT_QUOTES, 'UTF-8') ?>
                                             </a>
                                         <?php else: ?>
-                                            <div class="part-brand">No supplier email</div>
+                                            <div class="part-brand">No email on file</div>
                                         <?php endif; ?>
                                     </div>
                                 </td>
 
                                 <td class="text-end">
+                                    <?php if ($isActiveView && !empty($p['supplier_email'])): ?>
+                                            <form
+                                                action="../controllers/PartController.php"
+                                                method="POST"
+                                                class="part-action-form"
+                                                onsubmit="return confirm('Force send a restock request email to <?= htmlspecialchars(addslashes($p['supplier_name'])) ?>?');"
+                                            >
+                                                <input type="hidden" name="action" value="send_restock_alert">
+                                                <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
+                                                <input type="hidden" name="redirect_status" value="<?= $viewStatus ?>">
+
+                                                <button
+                                                    type="submit"
+                                                    class="icon-action-btn"
+                                                    title="Send Manual Restock Alert"
+                                                    style="color: #047857; background-color: #ecfdf5; border-color: #a7f3d0;"
+                                                    onmouseover="this.style.backgroundColor='#10b981'; this.style.color='#fff';"
+                                                    onmouseout="this.style.backgroundColor='#ecfdf5'; this.style.color='#047857';"
+                                                >
+                                                    <i class="bi bi-envelope-paper-fill"></i>
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
                                     <div class="part-action-group">
                                         <?php if ($isActiveView): ?>
                                             <button
@@ -1096,26 +1125,16 @@ function inventoryStatusUrl($status) {
                                                                 >
                                                             </div>
 
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Supplier Reference</label>
-                                                                <input
-                                                                    type="text"
-                                                                    name="supplier_reference"
-                                                                    class="minimal-control"
-                                                                    value="<?= cleanValue($p['supplier_reference'] ?? '') ?>"
-                                                                    placeholder="Supplier name or contact person"
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Supplier Email</label>
-                                                                <input
-                                                                    type="email"
-                                                                    name="supplier_email"
-                                                                    class="minimal-control"
-                                                                    value="<?= htmlspecialchars($p['supplier_email'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                                                                    placeholder="supplier@email.com"
-                                                                >
+                                                            <div class="minimal-form-field full">
+                                                                <label class="minimal-label">Primary Supplier (For Auto-Restock Alerts)</label>
+                                                                <select name="supplier_id" class="minimal-control">
+                                                                    <option value="">-- Select Preferred Supplier --</option>
+                                                                    <?php foreach($suppliersList as $sup): ?>
+                                                                        <option value="<?= $sup['supplier_id'] ?>" <?= (isset($p['supplier_id']) && $p['supplier_id'] == $sup['supplier_id']) ? 'selected' : '' ?>>
+                                                                            <?= htmlspecialchars($sup['supplier_name']) ?>
+                                                                        </option>
+                                                                    <?php endforeach; ?>
+                                                                </select>
                                                             </div>
 
                                                             <div class="minimal-form-field full">
@@ -1336,24 +1355,14 @@ function inventoryStatusUrl($status) {
                                     >
                                 </div>
 
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Supplier Reference</label>
-                                    <input
-                                        type="text"
-                                        name="supplier_reference"
-                                        class="minimal-control"
-                                        placeholder="Supplier name or contact person"
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Supplier Email</label>
-                                    <input
-                                        type="email"
-                                        name="supplier_email"
-                                        class="minimal-control"
-                                        placeholder="supplier@email.com"
-                                    >
+                                <div class="minimal-form-field full">
+                                    <label class="minimal-label">Primary Supplier (For Auto-Restock Alerts)</label>
+                                    <select name="supplier_id" class="minimal-control">
+                                        <option value="">-- Select Preferred Supplier --</option>
+                                        <?php foreach($suppliersList as $sup): ?>
+                                            <option value="<?= $sup['supplier_id'] ?>"><?= htmlspecialchars($sup['supplier_name']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
                                 </div>
 
                                 <div class="minimal-form-field full">

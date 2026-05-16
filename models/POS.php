@@ -1,4 +1,6 @@
 <?php
+// ADDED: Include the automated restock alert engine
+require_once __DIR__ . '/../controllers/RestockAlert.php';
 
 class POS {
     private $conn;
@@ -203,6 +205,9 @@ class POS {
                 if ($stmtDeduct->rowCount() === 0) {
                     throw new Exception("Stock update failed for '{$item['part_name']}'.");
                 }
+                
+                // ADDED: Trigger automated restock email check
+                RestockAlert::checkAndSend($this->conn, $item['part_id']);
             }
 
             $this->conn->commit();

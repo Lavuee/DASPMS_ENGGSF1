@@ -95,12 +95,7 @@ function validatePartInputs() {
     if ($lowStockThreshold !== '' && intval($lowStockThreshold) < 0) {
         throw new Exception("Low stock threshold cannot be negative.");
     }
-
-    $supplierEmail = cleanPostValue('supplier_email');
-
-    if ($supplierEmail !== '' && !filter_var($supplierEmail, FILTER_VALIDATE_EMAIL)) {
-        throw new Exception("Supplier email is invalid.");
-    }
+    // REMOVED: supplier email text validation since we now use supplier_id dropdowns
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
@@ -109,6 +104,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
     $part = new Part($db);
 
     try {
+        // ADDED: Manual Restock Email Trigger
+        if ($_POST['action'] === 'send_restock_alert') {
+            require_once '../controllers/RestockAlert.php';
+            $part_id = intval($_POST['part_id']);
+            
+            $result = RestockAlert::manualSend($db, $part_id);
+            
+            if ($result['success']) {
+                $_SESSION['success_message'] = $result['message'];
+            } else {
+                $_SESSION['error_message'] = $result['message'];
+            }
+            
+            $redirectStatus = cleanPostValue('redirect_status', 'active');
+            redirectInventory($redirectStatus);
+        }
+        
         if ($_POST['action'] === 'add') {
             validatePartInputs();
 
@@ -127,8 +139,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             $part->unit_price = $unitPrice;
             $part->cost_price = $costPrice;
             $part->low_stock_threshold = $_POST['low_stock_threshold'] !== '' ? intval($_POST['low_stock_threshold']) : 5;
-            $part->supplier_reference = cleanPostValue('supplier_reference');
-            $part->supplier_email = cleanPostValue('supplier_email');
+            
+            // MODIFIED: Capture supplier_id instead of text fields
+            $part->supplier_id = !empty($_POST['supplier_id']) ? intval($_POST['supplier_id']) : null;
+            
             $part->image = uploadPartImage('image');
 
             if ($part->create()) {
@@ -159,8 +173,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             $part->unit_price = $unitPrice;
             $part->cost_price = $costPrice;
             $part->low_stock_threshold = $_POST['low_stock_threshold'] !== '' ? intval($_POST['low_stock_threshold']) : 5;
-            $part->supplier_reference = cleanPostValue('supplier_reference');
-            $part->supplier_email = cleanPostValue('supplier_email');
+            
+            // MODIFIED: Capture supplier_id instead of text fields
+            $part->supplier_id = !empty($_POST['supplier_id']) ? intval($_POST['supplier_id']) : null;
+            
             $part->image = uploadPartImage('image', $_POST['existing_image'] ?? '');
 
             if ($part->update()) {

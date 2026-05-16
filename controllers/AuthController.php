@@ -131,6 +131,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 throw new Exception("Invalid username/email or password.");
             }
 
+            // ADDED: Block login if the account is not verified
+            if (isset($user['is_verified']) && intval($user['is_verified']) === 0) {
+                throw new Exception("Your account is not verified yet. Please check your email for the verification link.");
+            }
+
             $customerId = null;
 
             if ($user['role'] === 'Customer') {
@@ -216,7 +221,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
             $db->beginTransaction();
 
             $password = password_hash($rawPassword, PASSWORD_DEFAULT);
+            
+            // ADDED: Generate secure verification token
+            $token = bin2hex(random_bytes(16)); 
 
+            // MODIFIED: Included is_verified (default 0) and verification_token
             $stmtUser = $db->prepare("
                 INSERT INTO user (
                     username,
@@ -225,7 +234,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                     last_name,
                     email,
                     role,
-                    is_active
+                    is_active,
+                    is_verified,
+                    verification_token
                 ) VALUES (
                     ?,
                     ?,
@@ -233,7 +244,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                     ?,
                     ?,
                     'Customer',
-                    1
+                    1,
+                    0,
+                    ?
                 )
             ");
             $stmtUser->execute([
@@ -241,7 +254,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
                 $password,
                 $first_name,
                 $last_name,
-                $email
+                $email,
+                $token
             ]);
 
             $user_id = $db->lastInsertId();
@@ -279,9 +293,153 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
 
             $db->commit();
 
-            $_SESSION['success_message'] = "Account created! You may now sign in using your email address.";
-            header("Location: ../views/login.php");
-            exit;
+            // ADDED: Dispatch Verification Email with Logging
+            $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
+            $host = $_SERVER['HTTP_HOST'];
+            $temporary = "0rxd3vkf-443.asse.devtunnels.ms";
+            
+            // Adjust the path below if your project folder is named differently
+            $verify_link = $protocol . "://" . $temporary . "/DASPMS_ENGGSF1-main/views/verify.php?token=" . $token; 
+            
+            $to = $email;
+            $subject = "Verify Your Account - Norily's Repair Shop";
+            
+            // Premium, minimal HTML Email Template using native inline CSS
+            $message = <<<HTML
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                        background-color: #f4f4f5;
+                        margin: 0;
+                        padding: 0;
+                        -webkit-font-smoothing: antialiased;
+                    }
+                    .wrapper {
+                        width: 100%;
+                        background-color: #f4f4f5;
+                        padding: 40px 0;
+                    }
+                    .container {
+                        max-width: 540px;
+                        margin: 0 auto;
+                        background-color: #ffffff;
+                        border-radius: 16px;
+                        overflow: hidden;
+                        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+                        border: 1px solid #e4e4e7;
+                    }
+                    .header {
+                        background-color: #ffffff;
+                        padding: 30px 40px 20px;
+                        text-align: center;
+                        border-bottom: 1px solid #f4f4f5;
+                    }
+                    .header h1 {
+                        margin: 0;
+                        color: #18181b;
+                        font-size: 22px;
+                        font-weight: 800;
+                        letter-spacing: -0.5px;
+                    }
+                    .body {
+                        padding: 40px;
+                        color: #3f3f46;
+                        font-size: 16px;
+                        line-height: 1.6;
+                    }
+                    .body p {
+                        margin: 0 0 20px 0;
+                    }
+                    .btn-wrapper {
+                        text-align: center;
+                        margin: 35px 0;
+                    }
+                    .btn {
+                        display: inline-block;
+                        padding: 14px 32px;
+                        background-color: #f5c518; /* Updated DASPMS Yellow */
+                        color: #111111 !important; /* Dark text for contrast */
+                        text-decoration: none;
+                        border-radius: 999px;
+                        font-weight: 900;
+                        font-size: 15px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                        box-shadow: 0 4px 12px rgba(245, 197, 24, 0.25);
+                    }
+                    .footer {
+                        background-color: #fafafa;
+                        padding: 24px 40px;
+                        text-align: center;
+                        font-size: 13px;
+                        color: #a1a1aa;
+                        border-top: 1px solid #e4e4e7;
+                    }
+                    .footer a {
+                        color: #71717a;
+                        text-decoration: underline;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="wrapper">
+                    <div class="container">
+                        <div class="header">
+                            <h1>Norily's Repair Shop</h1>
+                        </div>
+                        <div class="body">
+                            <p>Hi <strong>{$first_name}</strong>,</p>
+                            <p>Welcome to DASPMS! We are thrilled to have you on board. Before you can log in and start tracking your vehicle service records, we just need to verify your email address.</p>
+                            
+                            <div class="btn-wrapper">
+                                <a href="{$verify_link}" class="btn">Verify Email Address</a>
+                            </div>
+                            
+                            <p style="font-size: 14px; color: #71717a;">If the button above doesn't work, copy and paste this link into your web browser:</p>
+                            <p style="font-size: 13px; color: #3b82f6; word-break: break-all;"><a href="{$verify_link}" style="color: #3b82f6;">{$verify_link}</a></p>
+                        </div>
+                        <div class="footer">
+                            <p>If you did not create an account, you can safely ignore this email.</p>
+                            <p>&copy; 2026 Norily's Vehicle Repair Shop. All rights reserved.</p>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+            HTML;
+            
+            // ANTI-SPAM FIX: The 'From' address MUST match the authenticated sendmail.ini account
+            $headers = "MIME-Version: 1.0\r\n";
+            $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
+            $headers .= "From: Norily's Repair Shop <daspms1998@gmail.com>\r\n";
+            $headers .= "Reply-To: daspms1998@gmail.com\r\n";
+            $headers .= "X-Mailer: PHP/" . phpversion();
+            
+            // Trigger email without suppression (@) to allow catching errors
+            $mail_sent = mail($to, $subject, $message, $headers);
+
+            if (!$mail_sent) {
+                // Capture the exact PHP error
+                $error = error_get_last();
+                
+                // Write it to XAMPP's PHP error log
+                error_log("DASPMS MAIL FAILED: Could not send to $to. Error details: " . print_r($error, true));
+                
+                $_SESSION['error_message'] = "Account created, but the verification email failed to send. Check server logs.";
+                header("Location: ../views/login.php");
+                exit;
+            } else {
+                error_log("DASPMS MAIL SUCCESS: Verification email sent to $to");
+                
+                $_SESSION['success_message'] = "Account created! Please check your email to verify your account before logging in.";
+                header("Location: ../views/login.php");
+                exit;
+            }
 
         } catch (Exception $e) {
             if (isset($db) && $db->inTransaction()) {

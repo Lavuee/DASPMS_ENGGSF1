@@ -62,12 +62,10 @@ $jobPartsStmt = $db->prepare("
     SELECT
         jop.*,
         p.part_name,
-        p.unit,
-        CONCAT(u.first_name, ' ', u.last_name) AS used_by_name
+        p.unit
     FROM job_order_part jop
     JOIN part p ON jop.part_id = p.part_id
-    LEFT JOIN user u ON jop.used_by = u.user_id
-    ORDER BY jop.used_at DESC
+    ORDER BY jop.job_part_id DESC
 ");
 $jobPartsStmt->execute();
 $allJobParts = $jobPartsStmt->fetchAll(PDO::FETCH_ASSOC);

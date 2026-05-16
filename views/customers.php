@@ -857,9 +857,9 @@ $displayCount = count($customers);
                     </p>
                 </div>
 
-                <button type="button" class="customer-add-btn" data-bs-toggle="modal" data-bs-target="#addCustomerModal">
-                    <i class="bi bi-person-plus-fill"></i>
-                    Add Walk-in Customer
+                <button type="button" class="customer-add-btn" onclick="window.location.href='create_transaction.php'">
+                    <i class="bi bi-plus-lg"></i>
+                    Add New Transaction
                 </button>
             </div>
 
