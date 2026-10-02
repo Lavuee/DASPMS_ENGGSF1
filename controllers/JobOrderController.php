@@ -1,13 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/JobOrder.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requireAnyPermission(['job_orders.manage', 'job_orders.progress'], '../views/login.php');
 
 $db = (new Database())->getConnection();
 $jobOrder = new JobOrder($db);
@@ -15,9 +12,9 @@ $jobOrder = new JobOrder($db);
 $userRole = $_SESSION['role'] ?? '';
 $userId = intval($_SESSION['user_id'] ?? 0);
 
-$canCreateAndEditJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
-$canUpdateRepairProgress = in_array($userRole, ['Owner', 'Cashier', 'Head Mechanic'], true);
-$canCompleteAndCancelJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
+$canCreateAndEditJobOrders = can('job_orders.manage');
+$canUpdateRepairProgress = can('job_orders.progress');
+$canCompleteAndCancelJobOrders = can('job_orders.manage');
 
 function redirectJobOrders() {
     header("Location: ../views/job_orders.php");

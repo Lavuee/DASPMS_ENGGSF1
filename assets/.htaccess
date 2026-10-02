@@ -1,0 +1,6 @@
+# Static files and uploaded images only: never run scripts from here,
+# even if one is ever written into an upload folder.
+<FilesMatch "\.(php[0-9]*|phtml|pht|phar|phps|cgi|pl|py|sh)$">
+    Require all denied
+</FilesMatch>
+Options -ExecCGI

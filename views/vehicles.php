@@ -1,16 +1,13 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('vehicles.manage');
 
 require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-$isOwner = isset($_SESSION['role']) && $_SESSION['role'] === 'Owner';
+$isOwner = can('vehicles.archive');
 
 function getVehicleStatusBadgeClass($status) {
     switch ($status) {
@@ -1065,6 +1062,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                     class="action-form"
                                                     onsubmit="return confirm('Deactivate this vehicle record?');"
                                                 >
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="deactivate_vehicle">
                                                     <input type="hidden" name="vehicle_id" value="<?php echo $vehicleId; ?>">
                                                     <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1084,6 +1082,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                     class="action-form"
                                                     onsubmit="return confirm('Reactivate this vehicle record?');"
                                                 >
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="reactivate_vehicle">
                                                     <input type="hidden" name="vehicle_id" value="<?php echo $vehicleId; ?>">
                                                     <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1105,6 +1104,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                                     class="action-form"
                                                     onsubmit="return confirm('Archive this vehicle record? Historical records will be retained.');"
                                                 >
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="archive_vehicle">
                                                     <input type="hidden" name="vehicle_id" value="<?php echo $vehicleId; ?>">
                                                     <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1272,6 +1272,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
                                 <div class="modal-dialog modal-dialog-centered modal-lg">
                                     <div class="modal-content">
                                         <form method="POST" action="../controllers/VehicleController.php">
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="update_vehicle">
                                             <input type="hidden" name="vehicle_id" value="<?php echo $vehicleId; ?>">
                                             <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1432,6 +1433,7 @@ $customersList = $stmtCustomers->fetchAll(PDO::FETCH_ASSOC);
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <form method="POST" action="../controllers/VehicleController.php">
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="add_vehicle">
 
                 <div class="modal-header">

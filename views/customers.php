@@ -1,16 +1,13 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('customers.manage');
 
 require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-$isOwner = (isset($_SESSION['role']) && $_SESSION['role'] === 'Owner');
+$isOwner = can('customers.archive');
 
 function cleanInput($value) {
     return trim($value ?? '');
@@ -1029,6 +1026,7 @@ $displayCount = count($customers);
                                             <?php if ($isOwner): ?>
                                                 <?php if (($customer['status'] ?? 'Active') === 'Active'): ?>
                                                     <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Deactivate this customer profile?">
+                                                        <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="deactivate_customer">
                                                         <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
                                                         <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1038,6 +1036,7 @@ $displayCount = count($customers);
                                                     </form>
                                                 <?php elseif (($customer['status'] ?? '') === 'Inactive'): ?>
                                                     <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Reactivate this customer profile?">
+                                                        <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="reactivate_customer">
                                                         <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
                                                         <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1047,6 +1046,7 @@ $displayCount = count($customers);
                                                     </form>
 
                                                     <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Archive this customer profile? This keeps historical records but removes it from active use.">
+                                                        <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="archive_customer">
                                                         <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
                                                         <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1056,6 +1056,7 @@ $displayCount = count($customers);
                                                     </form>
                                                 <?php elseif (($customer['status'] ?? '') === 'Archived'): ?>
                                                     <form method="POST" class="m-0 action-confirm-form" data-confirm-message="Restore this archived customer profile?">
+                                                        <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="reactivate_customer">
                                                         <input type="hidden" name="customer_id" value="<?php echo intval($customer['customer_id']); ?>">
                                                         <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">
@@ -1094,6 +1095,7 @@ $displayCount = count($customers);
 <div class="modal fade customer-modal" id="addCustomerModal" tabindex="-1" aria-labelledby="addCustomerModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <form method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="add_customer">
 
             <div class="modal-header">
@@ -1180,6 +1182,7 @@ $displayCount = count($customers);
 <div class="modal fade customer-modal" id="editCustomerModal" tabindex="-1" aria-labelledby="editCustomerModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <form method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="update_customer">
             <input type="hidden" name="customer_id" id="edit_customer_id">
             <input type="hidden" name="current_filter" value="<?php echo htmlspecialchars($statusFilter); ?>">

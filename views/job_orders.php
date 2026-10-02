@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('job_orders.view');
 
 require_once '../config/Database.php';
 
@@ -12,11 +9,11 @@ $db = (new Database())->getConnection();
 
 $userRole = $_SESSION['role'] ?? '';
 
-$canCreateJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
-$canEditJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
-$canUpdateRepairProgress = in_array($userRole, ['Owner', 'Cashier', 'Head Mechanic'], true);
-$canCompleteJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
-$canCancelJobOrders = in_array($userRole, ['Owner', 'Cashier'], true);
+$canCreateJobOrders = can('job_orders.manage');
+$canEditJobOrders = can('job_orders.manage');
+$canUpdateRepairProgress = can('job_orders.progress');
+$canCompleteJobOrders = can('job_orders.manage');
+$canCancelJobOrders = can('job_orders.manage');
 $canAccessBilling = in_array($userRole, ['Owner', 'Cashier'], true);
 
 $query = "
@@ -1249,6 +1246,7 @@ $jobOrderModals = '';
 
                                             <?php if ($status === 'Pending' && $canUpdateRepairProgress): ?>
                                                 <form action="../controllers/JobOrderController.php" method="POST" class="jo-action-form">
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="In Progress">
@@ -1260,6 +1258,7 @@ $jobOrderModals = '';
 
                                             <?php if ($status === 'In Progress' && $canUpdateRepairProgress): ?>
                                                 <form action="../controllers/JobOrderController.php" method="POST" class="jo-action-form">
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="Ready for Pickup">
@@ -1271,6 +1270,7 @@ $jobOrderModals = '';
 
                                             <?php if (($status === 'Ready for Pickup' || $status === 'In Progress') && $canCompleteJobOrders): ?>
                                                 <form action="../controllers/JobOrderController.php" method="POST" class="jo-action-form">
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="Completed">
@@ -1286,6 +1286,7 @@ $jobOrderModals = '';
                                                     method="POST"
                                                     class="jo-action-form"
                                                     onsubmit="return confirm('Cancel this job order? This will mark the record as Cancelled.');">
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="update_status">
                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
                                                     <input type="hidden" name="status" value="Cancelled">
@@ -1481,6 +1482,7 @@ $jobOrderModals = '';
                                                                 <div class="parts-used-empty mb-0">No active parts are available in inventory.</div>
                                                             <?php else: ?>
                                                                 <form action="../controllers/JobOrderController.php" method="POST">
+                                                                    <?= csrfField() ?>
                                                                     <input type="hidden" name="action" value="add_part_used">
                                                                     <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
 
@@ -1543,6 +1545,7 @@ $jobOrderModals = '';
                                     <div class="modal-dialog modal-dialog-centered modal-lg">
                                         <div class="modal-content">
                                             <form action="../controllers/JobOrderController.php" method="POST">
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="update_details">
                                                 <input type="hidden" name="job_order_id" value="<?php echo $jobOrderId; ?>">
 
@@ -1635,6 +1638,7 @@ $jobOrderModals = '';
                     <div class="modal-dialog modal-dialog-centered modal-lg">
                         <div class="modal-content">
                             <form action="../controllers/JobOrderController.php" method="POST" class="minimal-job-form">
+                                <?= csrfField() ?>
                                 <input type="hidden" name="action" value="create">
 
                                 <div class="modal-header">

@@ -1,10 +1,11 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/paymongo.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('shop.purchase');
+
+$onlinePaymentAvailable = paymongoIsConfigured();
+$onlineMinimum = paymongoMinimumAmount();
 
 $cart = $_SESSION['cart'] ?? [];
 $grandTotal = 0;
@@ -751,6 +752,7 @@ function partImagePath($image)
                                     class="remove-mini-form"
                                     onsubmit="return confirm('Remove this item from your cart?');"
                                 >
+                                    <?= csrfField() ?>
                                     <input type="hidden" name="action" value="remove">
                                     <input type="hidden" name="part_id" value="<?php echo intval($part_id); ?>">
 
@@ -779,6 +781,7 @@ function partImagePath($image)
                                 </div>
 
                                 <form action="../controllers/CartController.php" method="POST" class="qty-form">
+                                    <?= csrfField() ?>
                                     <input type="hidden" name="action" value="update">
                                     <input type="hidden" name="part_id" value="<?php echo intval($part_id); ?>">
 
@@ -816,6 +819,7 @@ function partImagePath($image)
                     <h5 class="summary-title">Checkout Details</h5>
 
                     <form action="../controllers/CheckoutController.php" method="POST" class="mb-2" id="reserveForm">
+                        <?= csrfField() ?>
                         <div class="checkout-grid">
 
                             <div class="checkout-section">
@@ -896,20 +900,17 @@ function partImagePath($image)
                                         required
                                     >
                                         <option value="Cash on Pickup" selected>Cash on Pickup</option>
-                                        <option value="GCash Down Payment">GCash Down Payment</option>
-                                        <option value="GCash Full Payment">GCash Full Payment</option>
+                                        <?php if ($onlinePaymentAvailable): ?>
+                                        <option value="GCash Down Payment">GCash Down Payment (pay online)</option>
+                                        <option value="GCash Full Payment">GCash Full Payment (pay online)</option>
+                                        <?php endif; ?>
                                     </select>
 
                                     <div id="gcashFields" class="gcash-fields">
-                                        <label class="payment-label">GCash Reference Number</label>
-                                        <input
-                                            type="text"
-                                            name="gcash_reference"
-                                            id="gcashReference"
-                                            class="payment-control"
-                                            maxlength="100"
-                                            placeholder="Enter GCash reference number"
-                                        >
+                                        <div class="payment-helper">
+                                            After you reserve, you will be taken to PayMongo's secure checkout page to pay with GCash.
+                                            Your payment is confirmed automatically once PayMongo receives it.
+                                        </div>
 
                                         <div id="gcashDownpaymentBox" class="gcash-downpayment-box">
                                             <label class="payment-label mt-3">GCash Down Payment Amount</label>
@@ -918,13 +919,13 @@ function partImagePath($image)
                                                 name="gcash_payment_amount"
                                                 id="gcashPaymentAmount"
                                                 class="payment-control"
-                                                min="1"
+                                                min="<?= htmlspecialchars(number_format($onlineMinimum, 2, '.', '')) ?>"
                                                 step="0.01"
-                                                placeholder="Enter amount sent through GCash"
+                                                placeholder="Enter amount to pay now through GCash"
                                             >
 
                                             <div class="payment-mini-note">
-                                                Down payment must be less than the selected total. The remaining balance will be paid at the shop.
+                                                Minimum ₱<?= number_format($onlineMinimum, 2) ?>. Down payment must be less than the selected total. The remaining balance will be paid at the shop.
                                             </div>
                                         </div>
 
@@ -945,8 +946,12 @@ function partImagePath($image)
                                     ></textarea>
 
                                     <div class="payment-helper">
-                                        Cash on Pickup means you will pay at the shop. GCash Down Payment records a partial payment.
-                                        GCash Full Payment records the full selected total after admin verification.
+                                        Cash on Pickup means you will pay at the shop.
+                                        <?php if ($onlinePaymentAvailable): ?>
+                                        GCash options take you to PayMongo to pay part or all of the selected total online.
+                                        <?php else: ?>
+                                        Online GCash payment is currently unavailable.
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             </div>
@@ -955,7 +960,7 @@ function partImagePath($image)
 
                         <div class="reservation-note">
                             <strong>Note:</strong> Only checked items will be included in the reservation request.
-                            GCash payments are manually verified by the shop before approval.
+                            GCash payments are confirmed automatically by PayMongo.
                         </div>
                     </form>
 
@@ -977,6 +982,7 @@ function partImagePath($image)
                             class="clear-cart-form"
                             onsubmit="return confirm('Clear all items from your cart?');"
                         >
+                            <?= csrfField() ?>
                             <input type="hidden" name="action" value="clear">
 
                             <button type="submit" class="btn clear-btn">
@@ -1023,8 +1029,8 @@ const reserveBtn = document.getElementById('reserveBtn');
 const paymentMethod = document.getElementById('paymentMethod');
 const paymentSummaryDisplay = document.getElementById('paymentSummaryDisplay');
 
+const onlineMinimum = <?= json_encode((float) $onlineMinimum) ?>;
 const gcashFields = document.getElementById('gcashFields');
-const gcashReference = document.getElementById('gcashReference');
 const gcashDownpaymentBox = document.getElementById('gcashDownpaymentBox');
 const gcashPaymentAmount = document.getElementById('gcashPaymentAmount');
 const gcashFullNote = document.getElementById('gcashFullNote');
@@ -1098,14 +1104,6 @@ function togglePaymentFields() {
         gcashFields.style.display = isGcash ? 'block' : 'none';
     }
 
-    if (gcashReference) {
-        gcashReference.required = isGcash;
-
-        if (!isGcash) {
-            gcashReference.value = '';
-        }
-    }
-
     if (gcashDownpaymentBox) {
         gcashDownpaymentBox.style.display = method === 'GCash Down Payment' ? 'block' : 'none';
     }
@@ -1160,17 +1158,17 @@ if (reserveForm) {
         if (paymentMethod && paymentMethod.value === 'GCash Down Payment') {
             const amount = parseFloat(gcashPaymentAmount.value || 0);
 
-            if (amount <= 0 || amount >= selectedTotal) {
+            if (amount < onlineMinimum || amount >= selectedTotal) {
                 e.preventDefault();
-                alert('Down payment must be greater than zero and less than the selected total.');
+                alert('Down payment must be at least ' + formatCurrency(onlineMinimum) + ' and less than the selected total.');
                 return;
             }
         }
 
         if (paymentMethod && paymentMethod.value === 'GCash Full Payment') {
-            if (selectedTotal <= 0) {
+            if (selectedTotal < onlineMinimum) {
                 e.preventDefault();
-                alert('Please select valid items before using full payment.');
+                alert('Online GCash payments must be at least ' + formatCurrency(onlineMinimum) + '.');
                 return;
             }
         }

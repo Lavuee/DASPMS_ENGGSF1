@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || ($_SESSION['role'] !== 'Cashier' && $_SESSION['role'] !== 'Owner')) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('online_orders.manage');
 
 require_once '../config/Database.php';
 require_once '../models/PartOrder.php';
@@ -79,6 +76,7 @@ function getGcashVerificationBadgeClass($status) {
         case 'Rejected':
             return 'badge-soft-danger';
         case 'Pending Verification':
+        case 'Awaiting Payment':
             return 'badge-soft-warning';
         case 'Not Required':
             return 'badge-soft-secondary';
@@ -921,6 +919,12 @@ function cleanDisplay($value, $fallback = 'N/A') {
                                                     Reference No.: <?php echo $gcashReference !== '' ? htmlspecialchars($gcashReference, ENT_QUOTES, 'UTF-8') : 'N/A'; ?>
                                                 </div>
 
+                                                <?php if ($gcashVerificationStatus === 'Awaiting Payment'): ?>
+                                                    <span class="verification-note">Waiting for the customer to pay online through PayMongo. It is confirmed automatically.</span>
+                                                <?php elseif ($gcashVerificationStatus === 'Verified' && $gcashVerifierName === ''): ?>
+                                                    <span class="verification-note">Confirmed by PayMongo.</span>
+                                                <?php endif; ?>
+
                                                 <?php if (!empty($row['gcash_verified_at'])): ?>
                                                     <span class="verification-note">
                                                         Checked: <?php echo date('M d, Y h:i A', strtotime($row['gcash_verified_at'])); ?>
@@ -931,8 +935,9 @@ function cleanDisplay($value, $fallback = 'N/A') {
                                                 <?php endif; ?>
                                             </div>
 
-                                            <?php if (!in_array($status, ['Completed', 'Cancelled']) && $gcashVerificationStatus !== 'Verified'): ?>
+                                            <?php if (!in_array($status, ['Completed', 'Cancelled']) && !in_array($gcashVerificationStatus, ['Verified', 'Awaiting Payment'], true)): ?>
                                                 <form action="../controllers/ManageOrderController.php" method="POST" class="gcash-verification-form" onsubmit="return confirm('Update GCash verification status for this order?');">
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="update_gcash_verification">
                                                     <input type="hidden" name="order_id" value="<?php echo intval($row['order_id']); ?>">
 
@@ -957,6 +962,7 @@ function cleanDisplay($value, $fallback = 'N/A') {
                                 <td class="text-end">
                                     <?php if (!empty($allowedNextStatuses)): ?>
                                         <form action="../controllers/ManageOrderController.php" method="POST" class="order-action-form" onsubmit="return confirm('Update this web order status?');">
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="update_status">
                                             <input type="hidden" name="order_id" value="<?php echo intval($row['order_id']); ?>">
 
@@ -973,7 +979,7 @@ function cleanDisplay($value, $fallback = 'N/A') {
                                         </form>
 
                                         <?php if (isGcashOrder($paymentMethod) && $gcashVerificationStatus !== 'Verified' && $status === 'Pending'): ?>
-                                            <span class="order-note">Verify GCash before approval.</span>
+                                            <span class="order-note"><?php echo $gcashVerificationStatus === 'Awaiting Payment' ? 'Waiting for online GCash payment.' : 'Verify GCash before approval.'; ?></span>
                                         <?php elseif ($status === 'Ready for Pickup' && $paymentStatus !== 'Paid'): ?>
                                             <span class="order-note">Remaining payment is handled in Billing.</span>
                                         <?php endif; ?>
@@ -986,7 +992,7 @@ function cleanDisplay($value, $fallback = 'N/A') {
                                             <span class="order-no-action">No action</span>
 
                                             <?php if (isGcashOrder($paymentMethod) && $gcashVerificationStatus !== 'Verified' && $status === 'Pending'): ?>
-                                                <span class="order-note">Verify GCash before approval.</span>
+                                                <span class="order-note"><?php echo $gcashVerificationStatus === 'Awaiting Payment' ? 'Waiting for online GCash payment.' : 'Verify GCash before approval.'; ?></span>
                                             <?php elseif ($status === 'Ready for Pickup' && $paymentStatus === 'Partial'): ?>
                                                 <span class="order-note">Cannot cancel after partial payment.</span>
                                             <?php elseif ($status === 'Ready for Pickup' && $paymentStatus === 'Paid'): ?>

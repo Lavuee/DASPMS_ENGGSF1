@@ -1,16 +1,11 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/PartOrder.php';
+require_once '../includes/online_payment.php';
 
-if (
-    !isset($_SESSION['logged_in']) ||
-    ($_SESSION['role'] !== 'Cashier' && $_SESSION['role'] !== 'Owner')
-) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('online_orders.manage', '../views/login.php');
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
     $db = (new Database())->getConnection();
@@ -21,10 +16,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
         $order_id = intval($_POST['order_id'] ?? 0);
         $new_status = trim($_POST['status'] ?? '');
 
+        // Close any open PayMongo checkout first; if it was just paid, the order's
+        // verified payment then blocks the cancellation below.
+        if ($new_status === 'Cancelled') {
+            cancelPendingOnlinePayments($db, $order_id);
+        }
+
         if ($partOrder->updateStatus($order_id, $new_status, $user_id)) {
             $_SESSION['success_message'] = "Order #{$order_id} updated to '{$new_status}' successfully.";
         } else {
-            $_SESSION['error_message'] = "Failed to update order status. Please check stock, invoice, payment, or GCash verification status.";
+            $_SESSION['error_message'] = $partOrder->lastError !== ''
+                ? $partOrder->lastError
+                : "Failed to update order status. Please check stock, invoice, payment, or GCash verification status.";
         }
 
         header("Location: ../views/online_orders.php");
@@ -38,7 +41,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
         if ($partOrder->updateGcashVerification($order_id, $verification_status, $user_id)) {
             $_SESSION['success_message'] = "GCash verification for Order #{$order_id} updated to '{$verification_status}'.";
         } else {
-            $_SESSION['error_message'] = "Failed to update GCash verification. Make sure this is an active GCash payment order with a valid reference and amount.";
+            $_SESSION['error_message'] = $partOrder->lastError !== ''
+                ? $partOrder->lastError
+                : "Failed to update GCash verification. Make sure this is an active GCash payment order with a valid reference and amount.";
         }
 
         header("Location: ../views/online_orders.php");

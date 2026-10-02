@@ -1,13 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/POS.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('pos.use', '../views/login.php');
 
 $database = new Database();
 $db = $database->getConnection();

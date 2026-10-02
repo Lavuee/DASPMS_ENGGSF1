@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('dashboard.customer');
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
@@ -205,6 +202,7 @@ function getCustomerGcashBadge($status) {
         case 'Rejected':
             return 'customer-status status-cancelled';
         case 'Pending Verification':
+        case 'Awaiting Payment':
             return 'customer-status status-pending';
         case 'Not Required':
             return 'customer-status status-muted';
@@ -296,6 +294,13 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
             return [
                 'label' => 'DP Verified',
                 'badge' => 'customer-status status-completed'
+            ];
+        }
+
+        if ($gcashStatus === 'Awaiting Payment') {
+            return [
+                'label' => 'Awaiting GCash Payment',
+                'badge' => 'customer-status status-pending'
             ];
         }
 
@@ -1709,6 +1714,7 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
 
                                     <?php if (($request['status'] ?? '') === 'Pending'): ?>
                                         <form action="../controllers/ServiceRequestController.php" method="POST" class="m-0" onsubmit="return confirm('Cancel this pending service request?');">
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="cancel_customer_request">
                                             <input type="hidden" name="service_request_id" value="<?php echo intval($request['service_request_id']); ?>">
                                             <button type="submit" class="request-cancel-btn">
@@ -1832,8 +1838,8 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                             Customer Reminder
                         </h6>
                         <p>
-                            For parts reservations, the shop accepts manual GCash down payment or full payment.
-                            GCash payments must be verified by shop staff. If you only paid a down payment,
+                            For parts reservations, you can pay a GCash down payment or full payment online through PayMongo.
+                            Online payments are confirmed automatically. If you only paid a down payment,
                             please settle the remaining balance at the shop before claiming your item.
                         </p>
                     </div>
@@ -1971,6 +1977,18 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                                                     GCash verification:
                                                     <strong><?php echo htmlspecialchars($gcashStatus); ?></strong>
                                                 </div>
+
+                                                <?php if ($gcashStatus === 'Awaiting Payment' && ($order['status'] ?? '') === 'Pending'): ?>
+                                                    <form method="POST" action="../controllers/PaymentController.php" class="mt-2">
+                                                        <?= csrfField() ?>
+                                                        <input type="hidden" name="action" value="pay">
+                                                        <input type="hidden" name="order_id" value="<?php echo intval($order['order_id']); ?>">
+                                                        <button type="submit" class="btn btn-sm btn-primary">
+                                                            <i class="bi bi-wallet2"></i>
+                                                            Pay ₱<?php echo number_format($gcashAmount, 2); ?> with GCash
+                                                        </button>
+                                                    </form>
+                                                <?php endif; ?>
                                             <?php endif; ?>
 
                                             <div class="order-payment-summary">
@@ -2004,7 +2022,7 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                                                     </div>
                                                 <?php endif; ?>
 
-                                                <?php if ($gcashAmount > 0): ?>
+                                                <?php if ($gcashAmount > 0 && $gcashStatus === 'Verified'): ?>
                                                     <div class="payment-detail-line">
                                                         <strong>GCash Paid:</strong>
                                                         ₱<?php echo number_format($gcashAmount, 2); ?>
@@ -2048,7 +2066,9 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                                             <?php
                                                 switch ($order['status'] ?? '') {
                                                     case 'Pending':
-                                                        if (isCustomerGcashOrder($paymentMethod) && $gcashStatus !== 'Verified') {
+                                                        if ($gcashStatus === 'Awaiting Payment') {
+                                                            echo 'Please complete your GCash payment.';
+                                                        } elseif (isCustomerGcashOrder($paymentMethod) && $gcashStatus !== 'Verified') {
                                                             echo 'Waiting for GCash verification.';
                                                         } else {
                                                             echo 'Waiting for shop confirmation.';
@@ -2093,6 +2113,7 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
 <div class="modal fade customer-modal" id="requestServiceModal" tabindex="-1" aria-labelledby="requestServiceModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <form action="../controllers/ServiceRequestController.php" method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="submit_customer_request">
 
             <div class="modal-header">
@@ -2202,6 +2223,7 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
 <div class="modal fade customer-modal" id="addVehicleModal" tabindex="-1" aria-labelledby="addVehicleModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <form action="../controllers/VehicleController.php" method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="add_customer_vehicle">
 
             <div class="modal-header">
@@ -2266,6 +2288,7 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
 <div class="modal fade customer-modal" id="editVehicleModal" tabindex="-1" aria-labelledby="editVehicleModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <form action="../controllers/VehicleController.php" method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="update_customer_vehicle">
             <input type="hidden" name="vehicle_id" id="edit_vehicle_id">
 

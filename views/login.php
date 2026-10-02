@@ -1,14 +1,8 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
-    $dashboardMap = [
-        'Owner' => 'dashboard_owner.php',
-        'Cashier' => 'dashboard_cashier.php',
-        'Head Mechanic' => 'dashboard_mechanic.php',
-        'Customer' => 'dashboard_customer.php'
-    ];
-    header("Location: " . ($dashboardMap[$_SESSION['role']] ?? 'login.php'));
+if (isLoggedIn()) {
+    header("Location: " . dashboardForRole($_SESSION['role'] ?? ''));
     exit;
 }
 
@@ -480,14 +474,17 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
         <?php if(isset($_SESSION['error_message'])): ?>
             <div class="alert alert-danger top-alert">
                 <i class="bi bi-exclamation-circle-fill me-2"></i>
-                <?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?>
+                <?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?>
+                <?php if (!empty($_SESSION['show_resend_verification'])): unset($_SESSION['show_resend_verification']); ?>
+                    <a href="resend_verification.php" class="alert-link ms-1">Resend verification email</a>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
 
         <?php if(isset($_SESSION['success_message'])): ?>
             <div class="alert alert-success top-alert">
                 <i class="bi bi-check-circle-fill me-2"></i>
-                <?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?>
+                <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
             </div>
         <?php endif; ?>
 
@@ -496,6 +493,7 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
             <!-- LOGIN -->
             <div class="form-container sign-in-container <?php echo !$showRegister ? 'active-mobile' : ''; ?>" id="loginPanel">
                 <form action="../controllers/AuthController.php" method="POST" class="auth-form auth-submit-form">
+                    <?= csrfField() ?>
                     <input type="hidden" name="action" value="login">
 
                     <div class="auth-logo-wrap">
@@ -542,6 +540,7 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
             <!-- REGISTER -->
             <div class="form-container sign-up-container <?php echo $showRegister ? 'active-mobile' : ''; ?>" id="registerPanel">
                 <form action="../controllers/AuthController.php" method="POST" class="auth-form auth-submit-form">
+                    <?= csrfField() ?>
                     <input type="hidden" name="action" value="register">
 
                     <h1 class="auth-title">Create Account</h1>
@@ -592,7 +591,7 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
                         <label class="auth-label">Password</label>
                         <div class="custom-input-group">
                             <span class="custom-input-icon"><i class="bi bi-lock"></i></span>
-                            <input type="password" name="password" class="custom-input password-field" placeholder="Create a password" required>
+                            <input type="password" name="password" class="custom-input password-field" placeholder="8+ characters, letters and numbers" minlength="8" maxlength="72" pattern="(?=.*[A-Za-z])(?=.*\d).{8,72}" title="At least 8 characters with at least one letter and one number" autocomplete="new-password" required>
                             <button type="button" class="toggle-password" aria-label="Show password">
                                 <i class="bi bi-eye"></i>
                             </button>
@@ -638,7 +637,7 @@ if (isset($_SESSION['auth_panel']) && $_SESSION['auth_panel'] === 'register') {
         </div>
 
         <div class="auth-bottom-bar">
-            <a href="../index.php" class="back-home-btn">
+            <a href="../" class="back-home-btn">
                 <i class="bi bi-arrow-left"></i>
                 Back to Home
             </a>

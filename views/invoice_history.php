@@ -1,12 +1,7 @@
 <?php 
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-$allowedRoles = ['Owner', 'Cashier'];
-
-if (!isset($_SESSION['logged_in']) || !in_array($_SESSION['role'], $allowedRoles)) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('billing.manage');
 
 require_once '../config/Database.php';
 

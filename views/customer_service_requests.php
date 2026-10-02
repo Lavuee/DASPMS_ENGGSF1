@@ -1,10 +1,8 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/helpers.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('service_requests.submit');
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
@@ -65,17 +63,6 @@ try {
         'Rejected' => 0,
         'Cancelled' => 0
     ];
-}
-
-function displayText($value, $fallback = 'N/A')
-{
-    $value = trim(html_entity_decode((string)($value ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-
-    if ($value === '') {
-        return htmlspecialchars($fallback);
-    }
-
-    return htmlspecialchars($value);
 }
 
 function cleanSearchText($value)
@@ -744,6 +731,7 @@ function formatTimeValue($time)
                                 <td>
                                     <?php if ($status === 'Pending'): ?>
                                         <form action="../controllers/ServiceRequestController.php" method="POST" class="m-0" onsubmit="return confirm('Cancel this pending service request?');">
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="cancel_customer_request">
                                             <input type="hidden" name="service_request_id" value="<?php echo intval($request['service_request_id']); ?>">
                                             <button type="submit" class="cancel-request-btn">

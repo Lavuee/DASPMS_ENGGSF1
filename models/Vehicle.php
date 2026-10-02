@@ -17,38 +17,6 @@ class Vehicle {
         $this->conn = $db;
     }
 
-    public function readAllWithCustomer($status = 'Active') {
-        if ($status === 'All') {
-            $query = "SELECT 
-                        v.*, 
-                        c.first_name, 
-                        c.last_name,
-                        c.contact_number
-                      FROM " . $this->table_name . " v
-                      INNER JOIN customer c ON v.customer_id = c.customer_id
-                      ORDER BY FIELD(v.status, 'Active', 'Inactive', 'Archived'), v.vehicle_id DESC";
-
-            $stmt = $this->conn->prepare($query);
-            $stmt->execute();
-            return $stmt;
-        }
-
-        $query = "SELECT 
-                    v.*, 
-                    c.first_name, 
-                    c.last_name,
-                    c.contact_number
-                  FROM " . $this->table_name . " v
-                  INNER JOIN customer c ON v.customer_id = c.customer_id
-                  WHERE v.status = :status
-                  ORDER BY v.vehicle_id DESC";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":status", $status);
-        $stmt->execute();
-        return $stmt;
-    }
-
     public function readByCustomer($customer_id, $activeOnly = true) {
         $query = "SELECT *
                   FROM " . $this->table_name . "
@@ -63,23 +31,6 @@ class Vehicle {
         $stmt = $this->conn->prepare($query);
         $customerId = intval($customer_id);
         $stmt->bindParam(":customer_id", $customerId, PDO::PARAM_INT);
-        $stmt->execute();
-        return $stmt;
-    }
-
-    public function readOneWithCustomer() {
-        $query = "SELECT 
-                    v.*, 
-                    c.first_name, 
-                    c.last_name,
-                    c.contact_number
-                  FROM " . $this->table_name . " v
-                  INNER JOIN customer c ON v.customer_id = c.customer_id
-                  WHERE v.vehicle_id = :vehicle_id
-                  LIMIT 1";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":vehicle_id", $this->vehicle_id, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt;
     }

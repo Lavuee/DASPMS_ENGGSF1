@@ -1,20 +1,13 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (
-    !isset($_SESSION['logged_in']) ||
-    $_SESSION['role'] === 'Customer' ||
-    $_SESSION['role'] === 'Head Mechanic'
-) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('inventory.manage');
 
 require_once '../config/Database.php';
 
 $db = (new Database())->getConnection();
 
-// ADDED: Fetch the list of active suppliers for the dropdown menus
+// Active suppliers for the dropdown menus
 $supplierStmt = $db->query("SELECT supplier_id, supplier_name FROM supplier WHERE is_active = 1 ORDER BY supplier_name ASC");
 $suppliersList = $supplierStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -55,7 +48,7 @@ if ($currentPage > $totalPages) {
 
 $offset = ($currentPage - 1) * $itemsPerPage;
 
-// MODIFIED: Updated SQL query to pull the dynamic Supplier Name and Email from the new table
+// Parts with their linked supplier name and email
 $stmt = $db->prepare("
     SELECT p.*, s.supplier_name, s.email AS supplier_email 
     FROM part p
@@ -913,7 +906,8 @@ function inventoryStatusUrl($status) {
                                                 action="../controllers/PartController.php"
                                                 method="POST"
                                                 class="part-action-form"
-                                                onsubmit="return confirm('Force send a restock request email to <?= htmlspecialchars(addslashes($p['supplier_name'])) ?>?');"
+                                                onsubmit="return confirm('Force send a restock request email to <?= htmlspecialchars(addslashes($p['supplier_name'])) ?>
+                                                <?= csrfField() ?>?');"
                                             >
                                                 <input type="hidden" name="action" value="send_restock_alert">
                                                 <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
@@ -949,6 +943,7 @@ function inventoryStatusUrl($status) {
                                                 class="part-action-form"
                                                 onsubmit="return confirm('Archive this part? It will be removed from active inventory but kept in archived records.');"
                                             >
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="archive">
                                                 <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
                                                 <input type="hidden" name="redirect_status" value="active">
@@ -968,6 +963,7 @@ function inventoryStatusUrl($status) {
                                                 class="part-action-form"
                                                 onsubmit="return confirm('Restore this part to active inventory?');"
                                             >
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="restore">
                                                 <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
                                                 <input type="hidden" name="redirect_status" value="archived">
@@ -987,6 +983,7 @@ function inventoryStatusUrl($status) {
                                                 class="part-action-form"
                                                 onsubmit="return confirm('Permanently delete this archived part? This action cannot be undone. It will only work if the part has no transaction history.');"
                                             >
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="permanent_delete">
                                                 <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
                                                 <input type="hidden" name="redirect_status" value="archived">
@@ -1013,6 +1010,7 @@ function inventoryStatusUrl($status) {
                                                 method="POST"
                                                 enctype="multipart/form-data"
                                             >
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="edit">
                                                 <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
                                                 <input type="hidden" name="existing_image" value="<?= htmlspecialchars($p['image'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
@@ -1250,6 +1248,7 @@ function inventoryStatusUrl($status) {
                     method="POST"
                     enctype="multipart/form-data"
                 >
+                    <?= csrfField() ?>
                     <input type="hidden" name="action" value="add">
                     <input type="hidden" name="redirect_status" value="active">
 

@@ -1,10 +1,8 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/helpers.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('service_requests.submit');
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
@@ -77,17 +75,6 @@ function serviceImagePath($image)
     }
 
     return '../assets/images/services/' . htmlspecialchars($image);
-}
-
-function displayText($value, $fallback = 'N/A')
-{
-    $value = trim(html_entity_decode((string)($value ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-
-    if ($value === '') {
-        return htmlspecialchars($fallback);
-    }
-
-    return htmlspecialchars($value);
 }
 
 function shortText($value, $fallback = 'Service details will be confirmed by the shop after assessment.', $limit = 150)
@@ -545,6 +532,7 @@ function shortText($value, $fallback = 'Service details will be confirmed by the
                         </div>
                     <?php else: ?>
                         <form action="../controllers/ServiceRequestController.php" method="POST">
+                            <?= csrfField() ?>
                             <input type="hidden" name="action" value="submit_customer_request">
 
                             <div class="row g-3">

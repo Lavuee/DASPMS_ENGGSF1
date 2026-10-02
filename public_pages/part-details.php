@@ -1,5 +1,6 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/helpers.php';
 
 $basePath = '../';
 
@@ -12,18 +13,6 @@ $selectedId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 $selectedPart = null;
 $relatedParts = [];
 $dbError = '';
-
-function plainText($value, $fallback = '')
-{
-    $value = trim(html_entity_decode((string)($value ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-    return $value !== '' ? $value : $fallback;
-}
-
-function displayText($value, $fallback = 'N/A')
-{
-    $value = plainText($value, $fallback);
-    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
-}
 
 function displayMultiline($value, $fallback = 'No detailed description available.')
 {
@@ -882,9 +871,10 @@ function stockBadgeClass($quantity)
                                 Out of Stock
                             </button>
 
-                        <?php elseif (isset($_SESSION['logged_in']) && $_SESSION['role'] === 'Customer'): ?>
+                        <?php elseif (can('shop.purchase')): ?>
 
                             <form action="../controllers/CartController.php" method="POST" class="cart-form">
+                                <?= csrfField() ?>
                                 <input type="hidden" name="action" value="add">
                                 <input type="hidden" name="part_id" value="<?= (int) $selectedPart['part_id'] ?>">
 

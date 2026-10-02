@@ -1,0 +1,13 @@
+# Secrets: copy .env.example to .env on each machine instead.
+.env
+
+# Runtime logs (contain user emails and verification links).
+logs/*.log
+
+# Editor / OS leftovers.
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+*.bak
+*.swp

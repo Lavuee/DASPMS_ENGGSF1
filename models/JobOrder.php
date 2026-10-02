@@ -1,5 +1,4 @@
 <?php
-// ADDED: Include the automated restock alert engine
 require_once __DIR__ . '/../controllers/RestockAlert.php';
 
 class JobOrder {
@@ -361,13 +360,12 @@ class JobOrder {
             if ($stmtDeduct->rowCount() === 0) {
                 throw new Exception("Unable to deduct stock for " . $part['part_name'] . ".");
             }
-            
-            // ADDED: Trigger automated restock email check
-            RestockAlert::checkAndSend($this->conn, $partId);
 
             $this->recalculateFinalCost($jobOrderId);
 
             $this->conn->commit();
+
+            RestockAlert::checkAndSend($this->conn, $partId);
             return true;
 
         } catch (Exception $e) {
@@ -377,39 +375,6 @@ class JobOrder {
 
             throw $e;
         }
-    }
-
-    public function getPartsUsed($job_order_id) {
-        $query = "
-            SELECT
-                jop.*,
-                p.part_name,
-                p.unit,
-                CONCAT(u.first_name, ' ', u.last_name) AS used_by_name
-            FROM job_order_part jop
-            JOIN part p ON jop.part_id = p.part_id
-            LEFT JOIN user u ON jop.used_by = u.user_id
-            WHERE jop.job_order_id = ?
-            ORDER BY jop.used_at DESC
-        ";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute([intval($job_order_id)]);
-
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    public function getPartsUsedTotal($job_order_id) {
-        $query = "
-            SELECT COALESCE(SUM(subtotal), 0)
-            FROM job_order_part
-            WHERE job_order_id = ?
-        ";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute([intval($job_order_id)]);
-
-        return floatval($stmt->fetchColumn());
     }
 
     private function recalculateFinalCost($job_order_id) {

@@ -1,66 +1,40 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
+require_once '../includes/upload.php';
 require_once '../models/Service.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer' || $_SESSION['role'] === 'Head Mechanic') {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('services.manage', '../views/login.php');
 
-function uploadServiceImage($fileInputName, $existingImage = '') {
-    if (
-        !isset($_FILES[$fileInputName]) ||
-        $_FILES[$fileInputName]['error'] === UPLOAD_ERR_NO_FILE
-    ) {
-        return $existingImage;
+// Copies the submitted form fields onto the Service model.
+function fillServiceFromPost(Service $service) {
+    $service->service_name = trim($_POST['service_name'] ?? '');
+    $service->category = trim($_POST['category'] ?? '');
+    $service->base_price = floatval($_POST['base_price'] ?? 0);
+    $service->warranty_days = intval($_POST['warranty_days'] ?? 0);
+    $service->description = trim($_POST['description'] ?? '');
+    $service->full_description = trim($_POST['full_description'] ?? '');
+    $service->features = trim($_POST['features'] ?? '');
+    $service->requires_down_payment = isset($_POST['requires_down_payment']) ? 1 : 0;
+
+    if ($service->service_name === '' || $service->category === '') {
+        throw new Exception("Service name and category are required.");
     }
 
-    if ($_FILES[$fileInputName]['error'] !== UPLOAD_ERR_OK) {
-        throw new Exception("Image upload failed.");
+    if ($service->base_price < 0 || $service->warranty_days < 0) {
+        throw new Exception("Price and warranty days cannot be negative.");
     }
-
-    $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-    $originalName = $_FILES[$fileInputName]['name'];
-    $tmpName = $_FILES[$fileInputName]['tmp_name'];
-    $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-
-    if (!in_array($extension, $allowedExtensions)) {
-        throw new Exception("Invalid image type. Only JPG, PNG, and WEBP are allowed.");
-    }
-
-    $newFileName = 'service-' . time() . '-' . bin2hex(random_bytes(4)) . '.' . $extension;
-    $uploadDir = '../assets/images/services/';
-    $destination = $uploadDir . $newFileName;
-
-    if (!is_dir($uploadDir)) {
-        mkdir($uploadDir, 0755, true);
-    }
-
-    if (!move_uploaded_file($tmpName, $destination)) {
-        throw new Exception("Unable to save uploaded image.");
-    }
-
-    return $newFileName;
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = (new Database())->getConnection();
     $service = new Service($db);
 
     try {
         if ($_POST['action'] === 'add') {
-            $service->service_name = trim($_POST['service_name']);
-            $service->category = trim($_POST['category']);
-            $service->base_price = $_POST['base_price'];
-            $service->warranty_days = $_POST['warranty_days'] ?? 0;
-            $service->description = trim($_POST['description']);
-            $service->full_description = trim($_POST['full_description']);
-            $service->features = trim($_POST['features']);
-            $service->requires_down_payment = isset($_POST['requires_down_payment']) ? 1 : 0;
-            $service->image = uploadServiceImage('image');
+            fillServiceFromPost($service);
+            $service->image = uploadImage('image', '../assets/images/services/', 'service');
 
             if ($service->create()) {
                 $_SESSION['success_message'] = "Service added successfully.";
@@ -70,16 +44,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
         }
 
         if ($_POST['action'] === 'edit') {
-            $service->service_id = $_POST['service_id'];
-            $service->service_name = trim($_POST['service_name']);
-            $service->category = trim($_POST['category']);
-            $service->base_price = $_POST['base_price'];
-            $service->warranty_days = $_POST['warranty_days'] ?? 0;
-            $service->description = trim($_POST['description']);
-            $service->full_description = trim($_POST['full_description']);
-            $service->features = trim($_POST['features']);
-            $service->requires_down_payment = isset($_POST['requires_down_payment']) ? 1 : 0;
-            $service->image = uploadServiceImage('image', $_POST['existing_image'] ?? '');
+            $service->service_id = intval($_POST['service_id'] ?? 0);
+            fillServiceFromPost($service);
+            $service->image = uploadImage('image', '../assets/images/services/', 'service', basename($_POST['existing_image'] ?? ''));
 
             if ($service->update()) {
                 $_SESSION['success_message'] = "Service updated successfully.";
@@ -89,7 +56,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
         }
 
         if ($_POST['action'] === 'delete') {
-            $service->service_id = $_POST['service_id'];
+            $service->service_id = intval($_POST['service_id'] ?? 0);
 
             if ($service->deactivate()) {
                 $_SESSION['success_message'] = "Service deactivated successfully.";
@@ -100,11 +67,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
     } catch (Exception $e) {
         $_SESSION['error_message'] = $e->getMessage();
     }
-
-    header("Location: ../views/services.php");
-    exit;
 }
 
 header("Location: ../views/services.php");
 exit;
-?>

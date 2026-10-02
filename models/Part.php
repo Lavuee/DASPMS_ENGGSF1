@@ -16,7 +16,7 @@ class Part {
     public $cost_price;
     public $quantity_on_hand;
     public $low_stock_threshold;
-    public $supplier_id; // MODIFIED: Replaced text fields with strictly typed supplier_id
+    public $supplier_id;
     public $image;
 
     public function __construct($db) {
@@ -232,10 +232,6 @@ class Part {
         $stmt->bindParam(":part_id", $this->part_id, PDO::PARAM_INT);
 
         return $stmt->execute();
-    }
-
-    public function deactivate() {
-        return $this->archive();
     }
 
     public function restore() {

@@ -3,21 +3,14 @@ $currentPage = basename($_SERVER['PHP_SELF']);
 $userInitial = strtoupper(substr($_SESSION['first_name'], 0, 1));
 $userRole = $_SESSION['role'];
 
-$dashboardMap = [
-    'Owner' => 'dashboard_owner.php',
-    'Cashier' => 'dashboard_cashier.php',
-    'Head Mechanic' => 'dashboard_mechanic.php',
-    'Customer' => 'dashboard_customer.php'
-];
-
-$dashLink = $dashboardMap[$userRole] ?? 'login.php';
+$dashLink = dashboardForRole($userRole);
 
 /*
     Financial modules such as Billing, Payment, and Invoice History
     should only be accessible to roles assigned to payment/billing work.
     Head Mechanic should not see these modules.
 */
-$canAccessFinancialModules = ($userRole === 'Owner' || $userRole === 'Cashier');
+$canAccessFinancialModules = can('billing.manage');
 
 $cartCount = 0;
 if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
@@ -345,7 +338,7 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
             <i class="bi bi-grid-1x2"></i> <span class="sidebar-text">Dashboard</span>
         </a>
         
-        <?php if ($userRole === 'Customer'): ?>
+        <?php if (can('shop.purchase')): ?>
             <a href="customer_parts.php" class="nav-link <?php echo ($currentPage == 'customer_parts.php' || $currentPage == 'customer_part_details.php') ? 'active' : ''; ?>">
                 <i class="bi bi-box-seam"></i> <span class="sidebar-text">Browse Parts</span>
             </a>
@@ -369,18 +362,18 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
             </a>
         <?php endif; ?>
 
-        <?php if ($userRole === 'Owner' || $userRole === 'Cashier'): ?>
+        <?php if (can('pos.use')): ?>
             <a href="pos.php" class="nav-link <?php echo ($currentPage == 'pos.php') ? 'active' : ''; ?>">
                 <i class="bi bi-calculator"></i> <span class="sidebar-text">POS Terminal</span>
             </a>
-            <?php if ($userRole === 'Owner' || $userRole === 'Cashier'): ?>
+            <?php if (can('job_orders.manage')): ?>
                 <a href="create_transaction.php" class="nav-link <?php echo ($currentPage == 'create_transaction.php') ? 'active' : ''; ?>">
                     <i class="bi bi-plus-circle-fill"></i>
                     <span class="sidebar-text">Transaction Form</span>
                 </a>
             <?php endif; ?>
 
-            <?php if ($userRole === 'Owner'): ?>
+            <?php if (can('customers.manage')): ?>
                 <a href="customers.php" class="nav-link <?php echo ($currentPage == 'customers.php') ? 'active' : ''; ?>">
                     <i class="bi bi-people"></i> <span class="sidebar-text">Customers</span>
                 </a>
@@ -413,7 +406,7 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
             <?php endif; ?>
         <?php endif; ?>
 
-        <?php if ($userRole === 'Head Mechanic'): ?>
+        <?php if (can('inventory.view')): ?>
             <a href="job_orders.php" class="nav-link <?php echo ($currentPage == 'job_orders.php') ? 'active' : ''; ?>">
                 <i class="bi bi-tools"></i> <span class="sidebar-text">Active Jobs</span>
             </a>
@@ -423,7 +416,7 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
             </a>
         <?php endif; ?>
 
-        <?php if ($userRole === 'Owner' || $userRole === 'Cashier'): ?>
+        <?php if (can('inventory.manage')): ?>
             <a href="inventory.php" class="nav-link <?php echo ($currentPage == 'inventory.php') ? 'active' : ''; ?>">
                 <i class="bi bi-box-seam"></i> <span class="sidebar-text">Inventory</span>
             </a>
@@ -437,7 +430,7 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
             </a>
         <?php endif; ?>
 
-        <?php if ($userRole === 'Owner'): ?>
+        <?php if (can('reports.view')): ?>
             <a href="reports.php" class="nav-link <?php echo ($currentPage == 'reports.php') ? 'active' : ''; ?>">
                 <i class="bi bi-bar-chart"></i> <span class="sidebar-text">Reports</span>
             </a>
@@ -477,7 +470,11 @@ if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
                 <p class="text-muted mb-0" style="font-size: 0.95rem; line-height: 1.5;">Are you sure you want to log out of your account?</p>
                 <div class="d-flex justify-content-center gap-2 mt-4">
                     <button type="button" class="btn fw-bold w-50" onclick="hideLogoutModal()" style="background: #f8fafc; border: 1px solid #e5e7eb; color: var(--dashboard-text-main); border-radius: 10px; min-height: 42px;">Cancel</button>
-                    <a href="../controllers/AuthController.php?action=logout" class="btn fw-bold w-50" style="background: var(--dashboard-primary); border: 1px solid var(--dashboard-primary); color: var(--black); border-radius: 10px; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none;" onmouseover="this.style.background='var(--black)'; this.style.borderColor='var(--black)'; this.style.color='var(--white)'" onmouseout="this.style.background='var(--dashboard-primary)'; this.style.borderColor='var(--dashboard-primary)'; this.style.color='var(--black)'">Sign Out</a>
+                    <form action="../controllers/AuthController.php" method="POST" class="w-50 m-0">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="action" value="logout">
+                        <button type="submit" class="btn fw-bold w-100" style="background: var(--dashboard-primary); border: 1px solid var(--dashboard-primary); color: var(--black); border-radius: 10px; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none;" onmouseover="this.style.background='var(--black)'; this.style.borderColor='var(--black)'; this.style.color='var(--white)'" onmouseout="this.style.background='var(--dashboard-primary)'; this.style.borderColor='var(--dashboard-primary)'; this.style.color='var(--black)'">Sign Out</button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -544,3 +541,14 @@ function hideLogoutModal() {
     }
 }
 </script>
+<?php if (!empty($_SESSION['access_denied_message'])): ?>
+<div id="accessDeniedAlert" class="alert alert-danger alert-dismissible fade show shadow" role="alert"
+     style="position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 10000; max-width: calc(100% - 32px);">
+    <i class="bi bi-exclamation-circle-fill me-2"></i>
+    <?= htmlspecialchars($_SESSION['access_denied_message'], ENT_QUOTES, 'UTF-8') ?>
+    <button type="button" class="btn-close" aria-label="Close" onclick="this.parentElement.remove()"></button>
+</div>
+<script>
+setTimeout(() => document.getElementById('accessDeniedAlert')?.remove(), 5000);
+</script>
+<?php unset($_SESSION['access_denied_message']); endif; ?>

@@ -1,0 +1,12 @@
+# Block direct web access to secrets, dependency metadata, database dumps, logs and
+# editor/backup leftovers (e.g. a copied "config.php.bak" would otherwise be served as source).
+<FilesMatch "^\.|\.(sql|log|lock|bak|old|orig|swp|dist|ini|sh)$|~$|^composer\.json$">
+    Require all denied
+</FilesMatch>
+
+# Never list directory contents.
+Options -Indexes
+
+# Reject extra path segments after a script (e.g. /views/login.php/../../x), so a
+# request URL always maps to exactly one real file.
+AcceptPathInfo Off

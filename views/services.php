@@ -1,14 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (
-    !isset($_SESSION['logged_in']) ||
-    $_SESSION['role'] === 'Customer' ||
-    $_SESSION['role'] === 'Head Mechanic'
-) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('services.manage');
 
 require_once '../config/Database.php';
 
@@ -634,6 +627,7 @@ function serviceImagePath($image) {
                                             class="service-action-form"
                                             onsubmit="return confirm('Deactivate this service?');"
                                         >
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="delete">
                                             <input type="hidden" name="service_id" value="<?= (int) $s['service_id'] ?>">
 
@@ -657,6 +651,7 @@ function serviceImagePath($image) {
                                             method="POST"
                                             enctype="multipart/form-data"
                                         >
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="edit">
                                             <input type="hidden" name="service_id" value="<?= (int) $s['service_id'] ?>">
                                             <input type="hidden" name="existing_image" value="<?= htmlspecialchars($s['image'] ?? '') ?>">
@@ -810,6 +805,7 @@ function serviceImagePath($image) {
                 method="POST"
                 enctype="multipart/form-data"
             >
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="add">
 
                 <div class="modal-header">

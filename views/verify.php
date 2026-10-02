@@ -1,35 +1,32 @@
 <?php
-session_start();
-require_once '../config/Database.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/auth_page.php';
+require_once __DIR__ . '/../includes/email_verification.php';
 
-if (isset($_GET['token']) && !empty($_GET['token'])) {
-    $token = trim($_GET['token']);
-    
-    try {
-        $db = (new Database())->getConnection();
-        
-        // Find the user with this specific token who is not yet verified
-        $stmt = $db->prepare("SELECT user_id FROM user WHERE verification_token = ? AND is_verified = 0 LIMIT 1");
-        $stmt->execute([$token]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+/*
+    Opening the emailed link only shows a confirmation button; the account is
+    verified by the POST (AuthController action=confirm_email). This stops email
+    security scanners that prefetch links from verifying accounts by themselves.
+*/
+$token = trim($_GET['token'] ?? '');
+$user = findUserByVerificationToken((new Database())->getConnection(), $token);
 
-        if ($user) {
-            // Update the user to verified and clear the token
-            $update = $db->prepare("UPDATE user SET is_verified = 1, verification_token = NULL WHERE user_id = ?");
-            $update->execute([$user['user_id']]);
-            
-            $_SESSION['success_message'] = "Your email has been successfully verified! You can now log in.";
-        } else {
-            $_SESSION['error_message'] = "Invalid or expired verification link. Your account may already be verified.";
-        }
-    } catch (Exception $e) {
-        $_SESSION['error_message'] = "System error during verification. Please try again later.";
-    }
-} else {
-    $_SESSION['error_message'] = "No verification token provided.";
+if (!$user) {
+    renderAuthPageStart('Verify Email', 'Link expired', 'This verification link is invalid, already used, or has expired.');
+    ?>
+        <a href="resend_verification.php" class="btn btn-reset w-100 mb-3">Send a New Link</a>
+    <?php
+    renderAuthPageEnd();
+    exit;
 }
 
-// Redirect back to the login screen so the user can see the alert message
-header("Location: login.php");
-exit;
+$firstName = html_entity_decode((string)$user['first_name'], ENT_QUOTES, 'UTF-8');
+renderAuthPageStart('Verify Email', 'Confirm Your Email', 'Hi ' . $firstName . ', click below to verify ' . $user['email'] . '.');
 ?>
+        <form action="../controllers/AuthController.php" method="POST">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="confirm_email">
+            <input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES, 'UTF-8') ?>">
+            <button type="submit" class="btn btn-reset w-100 mb-3">Verify My Email</button>
+        </form>
+<?php renderAuthPageEnd(); ?>

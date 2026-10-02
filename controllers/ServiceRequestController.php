@@ -1,13 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requireAnyPermission(['service_requests.submit', 'service_requests.review'], '../views/login.php');
 
 $db = (new Database())->getConnection();
 $serviceRequest = new ServiceRequest($db);
@@ -15,8 +12,8 @@ $serviceRequest = new ServiceRequest($db);
 $userRole = $_SESSION['role'] ?? '';
 $userId = intval($_SESSION['user_id'] ?? 0);
 
-$isCustomer = $userRole === 'Customer';
-$canReviewRequests = in_array($userRole, ['Owner', 'Cashier'], true);
+$isCustomer = can('service_requests.submit');
+$canReviewRequests = can('service_requests.review');
 
 function redirectCustomerServiceRequests() {
     header("Location: ../views/customer_service_requests.php");

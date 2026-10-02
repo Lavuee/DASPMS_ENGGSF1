@@ -1,13 +1,11 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/User.php';
+require_once '../includes/passwords.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('users.manage', '../views/login.php');
 
 $database = new Database();
 $db = $database->getConnection();
@@ -33,8 +31,12 @@ function validateStaffFields($firstName, $lastName, $username, $role, $password 
         throw new Exception("Invalid staff role selected.");
     }
 
-    if ($password !== null && trim($password) === '') {
-        throw new Exception("Temporary password is required.");
+    if ($password !== null) {
+        $policyError = passwordPolicyError($password);
+
+        if ($policyError !== null) {
+            throw new Exception("Temporary password: " . $policyError);
+        }
     }
 }
 

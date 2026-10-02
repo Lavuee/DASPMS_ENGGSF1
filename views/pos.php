@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] == 'Head Mechanic' || $_SESSION['role'] == 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('pos.use');
 
 require_once '../config/Database.php';
 require_once '../models/Part.php';
@@ -518,6 +515,7 @@ $stmtHistory = (new POS($db))->readRecent();
 
                     <div class="pos-panel-body">
                         <form action="../controllers/POSController.php" method="POST" id="posForm">
+                            <?= csrfField() ?>
                             <input type="hidden" name="action" value="checkout">
 
                             <!-- TRANSACTION DETAILS -->

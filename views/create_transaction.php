@@ -1,15 +1,13 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('job_orders.manage');
 
 require_once '../config/Database.php';
+require_once '../controllers/RestockAlert.php';
 
 $db = (new Database())->getConnection();
-$userId = $_SESSION['user_id'] ?? 1;
+$userId = intval($_SESSION['user_id']);
 
 $error = '';
 $success = '';
@@ -66,7 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
         $jobOrderId = $db->lastInsertId();
 
-        $totalEstimatedCost = 0;
+        // Labour/services estimate; parts are billed separately via final_cost (see JobOrder::recalculateFinalCost).
+        $servicesTotal = 0;
+        $partsTotal = 0;
+        $usedPartIds = [];
 
         // 4. INSERT SERVICES
         if (!empty($_POST['services'])) {
@@ -81,19 +82,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $price = $stmtSvc->fetchColumn();
                 if ($price !== false) {
                     $stmtJoSvc->execute([$jobOrderId, $serviceId, $price, $price]);
-                    $totalEstimatedCost += $price;
+                    $servicesTotal += $price;
                 }
             }
         }
 
         // 5. INSERT PARTS & DEDUCT INVENTORY
         if (!empty($_POST['part_ids'])) {
-            $stmtPartInfo = $db->prepare("SELECT unit_price, quantity_on_hand FROM part WHERE part_id = ?");
+            $stmtPartInfo = $db->prepare("SELECT unit_price, quantity_on_hand FROM part WHERE part_id = ? AND is_active = 1 FOR UPDATE");
             $stmtJoPart = $db->prepare("
-                INSERT INTO job_order_part (job_order_id, part_id, quantity_used, unit_price_at_use, subtotal) 
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO job_order_part (job_order_id, part_id, quantity_used, unit_price_at_use, subtotal, used_by, used_at) 
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
             ");
-            $stmtUpdateStock = $db->prepare("UPDATE part SET quantity_on_hand = quantity_on_hand - ? WHERE part_id = ?");
+            $stmtUpdateStock = $db->prepare("UPDATE part SET quantity_on_hand = quantity_on_hand - ? WHERE part_id = ? AND quantity_on_hand >= ?");
 
             foreach ($_POST['part_ids'] as $index => $partId) {
                 $qty = intval($_POST['part_qtys'][$index]);
@@ -104,9 +105,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if ($part && $part['quantity_on_hand'] >= $qty) {
                     $subtotal = $part['unit_price'] * $qty;
-                    $stmtJoPart->execute([$jobOrderId, $partId, $qty, $part['unit_price'], $subtotal]);
-                    $stmtUpdateStock->execute([$qty, $partId]);
-                    $totalEstimatedCost += $subtotal;
+                    $stmtJoPart->execute([$jobOrderId, $partId, $qty, $part['unit_price'], $subtotal, $userId]);
+                    $stmtUpdateStock->execute([$qty, $partId, $qty]);
+
+                    if ($stmtUpdateStock->rowCount() === 0) {
+                        throw new Exception("Not enough stock for one of the selected parts.");
+                    }
+
+                    $partsTotal += $subtotal;
+                    $usedPartIds[] = intval($partId);
                 } else {
                     throw new Exception("Not enough stock for one of the selected parts.");
                 }
@@ -114,16 +121,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // 6. UPDATE TOTAL
-        $stmtUpdateJo = $db->prepare("UPDATE job_order SET estimated_cost = ? WHERE job_order_id = ?");
-        $stmtUpdateJo->execute([$totalEstimatedCost, $jobOrderId]);
+        $stmtUpdateJo = $db->prepare("UPDATE job_order SET estimated_cost = ?, final_cost = ? WHERE job_order_id = ?");
+        $stmtUpdateJo->execute([$servicesTotal, $servicesTotal + $partsTotal, $jobOrderId]);
 
         $db->commit();
+        RestockAlert::checkParts($db, $usedPartIds);
+
         $_SESSION['success_message'] = "Walk-in transaction created successfully! ($jobNumber)";
         header("Location: job_orders.php");
         exit;
 
     } catch (Exception $e) {
-        $db->rollBack();
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+
         $error = "Transaction failed: " . $e->getMessage();
     }
 }
@@ -379,6 +391,7 @@ $parts = $db->query("SELECT part_id, part_name, brand, unit_price, quantity_on_h
                 <?php endif; ?>
 
                 <form action="" method="POST" id="unifiedForm">
+                    <?= csrfField() ?>
                     
                     <div class="section-card">
                         <div class="step-badge">STEP 1</div>

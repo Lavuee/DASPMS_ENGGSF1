@@ -1,53 +1,12 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
+require_once '../includes/upload.php';
 require_once '../models/Part.php';
+require_once '../controllers/RestockAlert.php';
 
-if (
-    !isset($_SESSION['logged_in']) ||
-    $_SESSION['role'] === 'Customer' ||
-    $_SESSION['role'] === 'Head Mechanic'
-) {
-    header("Location: ../views/login.php");
-    exit;
-}
-
-function uploadPartImage($fileInputName, $existingImage = '') {
-    if (
-        !isset($_FILES[$fileInputName]) ||
-        $_FILES[$fileInputName]['error'] === UPLOAD_ERR_NO_FILE
-    ) {
-        return $existingImage;
-    }
-
-    if ($_FILES[$fileInputName]['error'] !== UPLOAD_ERR_OK) {
-        throw new Exception("Image upload failed.");
-    }
-
-    $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-    $originalName = $_FILES[$fileInputName]['name'];
-    $tmpName = $_FILES[$fileInputName]['tmp_name'];
-    $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-
-    if (!in_array($extension, $allowedExtensions)) {
-        throw new Exception("Invalid image type. Only JPG, PNG, and WEBP are allowed.");
-    }
-
-    $newFileName = 'part-' . time() . '-' . bin2hex(random_bytes(4)) . '.' . $extension;
-    $uploadDir = '../assets/images/parts/';
-    $destination = $uploadDir . $newFileName;
-
-    if (!is_dir($uploadDir)) {
-        mkdir($uploadDir, 0755, true);
-    }
-
-    if (!move_uploaded_file($tmpName, $destination)) {
-        throw new Exception("Unable to save uploaded image.");
-    }
-
-    return $newFileName;
-}
+requirePermission('inventory.manage', '../views/login.php');
 
 function cleanPostValue($key, $default = '') {
     return trim($_POST[$key] ?? $default);
@@ -95,7 +54,28 @@ function validatePartInputs() {
     if ($lowStockThreshold !== '' && intval($lowStockThreshold) < 0) {
         throw new Exception("Low stock threshold cannot be negative.");
     }
-    // REMOVED: supplier email text validation since we now use supplier_id dropdowns
+}
+
+// Validates the submitted form and copies it onto the Part model.
+function fillPartFromPost(Part $part) {
+    validatePartInputs();
+
+    $unitPrice = floatval($_POST['unit_price']);
+
+    $part->part_name = cleanPostValue('part_name');
+    $part->category = cleanPostValue('category');
+    $part->brand = cleanPostValue('brand');
+    $part->description = cleanPostValue('description');
+    $part->specification = cleanPostValue('specification');
+    $part->compatibility = cleanPostValue('compatibility');
+    $part->unit = cleanPostValue('unit', 'piece');
+    $part->full_description = cleanPostValue('full_description');
+    $part->quantity_on_hand = intval($_POST['quantity_on_hand']);
+    $part->unit_price = $unitPrice;
+    // Cost defaults to 70% of the selling price when left blank.
+    $part->cost_price = ($_POST['cost_price'] ?? '') !== '' ? floatval($_POST['cost_price']) : ($unitPrice * 0.7);
+    $part->low_stock_threshold = ($_POST['low_stock_threshold'] ?? '') !== '' ? intval($_POST['low_stock_threshold']) : 5;
+    $part->supplier_id = !empty($_POST['supplier_id']) ? intval($_POST['supplier_id']) : null;
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
@@ -104,9 +84,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
     $part = new Part($db);
 
     try {
-        // ADDED: Manual Restock Email Trigger
         if ($_POST['action'] === 'send_restock_alert') {
-            require_once '../controllers/RestockAlert.php';
             $part_id = intval($_POST['part_id']);
             
             $result = RestockAlert::manualSend($db, $part_id);
@@ -122,28 +100,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
         }
         
         if ($_POST['action'] === 'add') {
-            validatePartInputs();
-
-            $unitPrice = floatval($_POST['unit_price']);
-            $costPrice = $_POST['cost_price'] !== '' ? floatval($_POST['cost_price']) : ($unitPrice * 0.7);
-
-            $part->part_name = cleanPostValue('part_name');
-            $part->category = cleanPostValue('category');
-            $part->brand = cleanPostValue('brand');
-            $part->description = cleanPostValue('description');
-            $part->specification = cleanPostValue('specification');
-            $part->compatibility = cleanPostValue('compatibility');
-            $part->unit = cleanPostValue('unit', 'piece');
-            $part->full_description = cleanPostValue('full_description');
-            $part->quantity_on_hand = intval($_POST['quantity_on_hand']);
-            $part->unit_price = $unitPrice;
-            $part->cost_price = $costPrice;
-            $part->low_stock_threshold = $_POST['low_stock_threshold'] !== '' ? intval($_POST['low_stock_threshold']) : 5;
-            
-            // MODIFIED: Capture supplier_id instead of text fields
-            $part->supplier_id = !empty($_POST['supplier_id']) ? intval($_POST['supplier_id']) : null;
-            
-            $part->image = uploadPartImage('image');
+            fillPartFromPost($part);
+            $part->image = uploadImage('image', '../assets/images/parts/', 'part');
 
             if ($part->create()) {
                 $_SESSION['success_message'] = "Part added successfully.";
@@ -155,29 +113,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
         }
 
         if ($_POST['action'] === 'edit') {
-            validatePartInputs();
-
-            $unitPrice = floatval($_POST['unit_price']);
-            $costPrice = $_POST['cost_price'] !== '' ? floatval($_POST['cost_price']) : ($unitPrice * 0.7);
-
             $part->part_id = intval($_POST['part_id']);
-            $part->part_name = cleanPostValue('part_name');
-            $part->category = cleanPostValue('category');
-            $part->brand = cleanPostValue('brand');
-            $part->description = cleanPostValue('description');
-            $part->specification = cleanPostValue('specification');
-            $part->compatibility = cleanPostValue('compatibility');
-            $part->unit = cleanPostValue('unit', 'piece');
-            $part->full_description = cleanPostValue('full_description');
-            $part->quantity_on_hand = intval($_POST['quantity_on_hand']);
-            $part->unit_price = $unitPrice;
-            $part->cost_price = $costPrice;
-            $part->low_stock_threshold = $_POST['low_stock_threshold'] !== '' ? intval($_POST['low_stock_threshold']) : 5;
-            
-            // MODIFIED: Capture supplier_id instead of text fields
-            $part->supplier_id = !empty($_POST['supplier_id']) ? intval($_POST['supplier_id']) : null;
-            
-            $part->image = uploadPartImage('image', $_POST['existing_image'] ?? '');
+            fillPartFromPost($part);
+            $part->image = uploadImage('image', '../assets/images/parts/', 'part', basename($_POST['existing_image'] ?? ''));
 
             if ($part->update()) {
                 $_SESSION['success_message'] = "Part updated successfully.";

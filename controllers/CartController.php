@@ -1,12 +1,9 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('shop.purchase', '../views/login.php');
 
 $db = (new Database())->getConnection();
 

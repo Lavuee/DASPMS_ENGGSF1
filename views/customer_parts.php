@@ -1,10 +1,8 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/helpers.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('shop.purchase');
 
 require_once '../config/Database.php';
 
@@ -58,16 +56,6 @@ function partImagePath($image)
     return '../assets/images/parts/' . htmlspecialchars($image);
 }
 
-function displayText($value, $fallback = 'N/A')
-{
-    $value = trim(html_entity_decode((string)($value ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-
-    if ($value === '') {
-        return htmlspecialchars($fallback);
-    }
-
-    return htmlspecialchars($value);
-}
 ?>
 
 <!DOCTYPE html>

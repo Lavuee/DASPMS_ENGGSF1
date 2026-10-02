@@ -1,9 +1,13 @@
 <?php
-// ADDED: Include the automated restock alert engine
 require_once __DIR__ . '/../controllers/RestockAlert.php';
+require_once __DIR__ . '/Billing.php';
+require_once __DIR__ . '/PaymentTransaction.php';
 
 class PartOrder {
     private $conn;
+
+    // Reason the last updateStatus()/updateGcashVerification() call failed, safe to show staff.
+    public $lastError = '';
 
     public function __construct($db) {
         $this->conn = $db;
@@ -93,107 +97,6 @@ class PartOrder {
         return $stmt;
     }
 
-    public function createOrder(
-        $customer_id,
-        $part_id,
-        $quantity,
-        $pickup_date = null,
-        $pickup_time = null,
-        $pickup_notes = null,
-        $payment_method = 'Cash on Pickup',
-        $gcash_reference = null,
-        $payment_notes = null,
-        $gcash_payment_amount = null
-    ) {
-        try {
-            $customer_id = intval($customer_id);
-            $part_id = intval($part_id);
-            $quantity = intval($quantity);
-
-            if ($customer_id <= 0 || $part_id <= 0 || $quantity <= 0) {
-                throw new Exception("Invalid order details.");
-            }
-
-            $gcashVerificationStatus = $this->isGcashPaymentMethod($payment_method)
-                ? 'Pending Verification'
-                : 'Not Required';
-
-            $this->conn->beginTransaction();
-
-            $stmtPart = $this->conn->prepare("SELECT unit_price, quantity_on_hand, is_active FROM part WHERE part_id = ? LIMIT 1");
-            $stmtPart->execute([$part_id]);
-            $part = $stmtPart->fetch(PDO::FETCH_ASSOC);
-
-            if (!$part || intval($part['is_active']) !== 1) {
-                throw new Exception("Part is unavailable.");
-            }
-
-            if (intval($part['quantity_on_hand']) < $quantity) {
-                throw new Exception("Insufficient stock.");
-            }
-
-            $unit_price = floatval($part['unit_price']);
-            $total_amount = $unit_price * $quantity;
-            $gcashPaymentAmount = $gcash_payment_amount !== null ? floatval($gcash_payment_amount) : null;
-
-            $stmtOrder = $this->conn->prepare("
-                INSERT INTO part_order (
-                    customer_id,
-                    total_amount,
-                    status,
-                    order_date,
-                    preferred_pickup_date,
-                    preferred_pickup_time,
-                    pickup_notes,
-                    payment_method,
-                    gcash_reference,
-                    gcash_payment_amount,
-                    gcash_verification_status,
-                    payment_notes
-                ) VALUES (
-                    ?,
-                    ?,
-                    'Pending',
-                    NOW(),
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?
-                )
-            ");
-
-            $stmtOrder->execute([
-                $customer_id,
-                $total_amount,
-                $pickup_date,
-                $pickup_time,
-                $pickup_notes,
-                $payment_method,
-                $gcash_reference,
-                $gcashPaymentAmount,
-                $gcashVerificationStatus,
-                $payment_notes
-            ]);
-
-            $order_id = $this->conn->lastInsertId();
-
-            $stmtItem = $this->conn->prepare("INSERT INTO part_order_item (order_id, part_id, quantity, unit_price) VALUES (?, ?, ?, ?)");
-            $stmtItem->execute([$order_id, $part_id, $quantity, $unit_price]);
-
-            $this->conn->commit();
-            return true;
-        } catch (Exception $e) {
-            if ($this->conn->inTransaction()) {
-                $this->conn->rollBack();
-            }
-            return false;
-        }
-    }
-
     public function updateStatus($order_id, $new_status, $user_id) {
         try {
             $order_id = intval($order_id);
@@ -257,30 +160,27 @@ class PartOrder {
 
             if (
                 ($new_status === 'Approved' || $new_status === 'Ready for Pickup') &&
-                $this->isGcashPaymentMethod($paymentMethod) &&
+                Billing::isGcashPaymentMethod($paymentMethod) &&
                 $gcashVerificationStatus !== 'Verified'
             ) {
                 throw new Exception("GCash payment must be verified before approving or preparing the order.");
             }
 
             if ($new_status === 'Cancelled') {
-                if ($this->isGcashPaymentMethod($paymentMethod) && $gcashVerificationStatus === 'Verified' && $gcashPaymentAmount > 0) {
+                if (Billing::isGcashPaymentMethod($paymentMethod) && $gcashVerificationStatus === 'Verified' && $gcashPaymentAmount > 0) {
                     throw new Exception("Orders with verified GCash payment cannot be cancelled through the normal flow. Process refund/void manually first.");
                 }
 
                 $this->restoreStockIfAlreadyReserved($order_id);
             }
 
+            $deductedPartIds = [];
+
             if ($new_status === 'Ready for Pickup') {
                 if (!$invoice) {
-                    $this->validateAndDeductStock($order_id);
+                    $deductedPartIds = $this->validateAndDeductStock($order_id);
 
-                    $this->createInvoiceForPartOrder(
-                        $order_id,
-                        intval($order['customer_id']),
-                        floatval($order['total_amount']),
-                        $user_id
-                    );
+                    (new Billing($this->conn))->createPartInvoiceInTransaction($order_id, $user_id);
                 }
             }
 
@@ -298,10 +198,18 @@ class PartOrder {
             $stmtUpdate->execute([$new_status, $order_id]);
 
             $this->conn->commit();
+
+            RestockAlert::checkParts($this->conn, $deductedPartIds);
             return true;
         } catch (Exception $e) {
             if ($this->conn->inTransaction()) {
                 $this->conn->rollBack();
+            }
+            // Database errors are logged, not shown.
+            if ($e instanceof PDOException) {
+                error_log("DASPMS PART ORDER ERROR: " . $e->getMessage());
+            } else {
+                $this->lastError = $e->getMessage();
             }
             return false;
         }
@@ -330,6 +238,7 @@ class PartOrder {
                     payment_method,
                     gcash_reference,
                     gcash_payment_amount,
+                    gcash_verification_status,
                     status
                 FROM part_order
                 WHERE order_id = ?
@@ -343,8 +252,13 @@ class PartOrder {
                 throw new Exception("Order not found.");
             }
 
-            if (!$this->isGcashPaymentMethod($order['payment_method'] ?? '')) {
+            if (!Billing::isGcashPaymentMethod($order['payment_method'] ?? '')) {
                 throw new Exception("GCash verification is only available for GCash payments.");
+            }
+
+            // Online (PayMongo) payments are verified by the gateway, never by hand.
+            if ($order['gcash_verification_status'] === 'Awaiting Payment' || (new PaymentTransaction($this->conn))->hasAnyForOrder($order_id)) {
+                throw new Exception("Online GCash payments are confirmed automatically by PayMongo.");
             }
 
             if (in_array($order['status'], ['Completed', 'Cancelled'])) {
@@ -386,6 +300,12 @@ class PartOrder {
         } catch (Exception $e) {
             if ($this->conn->inTransaction()) {
                 $this->conn->rollBack();
+            }
+            // Database errors are logged, not shown.
+            if ($e instanceof PDOException) {
+                error_log("DASPMS PART ORDER ERROR: " . $e->getMessage());
+            } else {
+                $this->lastError = $e->getMessage();
             }
             return false;
         }
@@ -446,10 +366,9 @@ class PartOrder {
             if ($stmtDeduct->rowCount() === 0) {
                 throw new Exception("Unable to deduct stock for " . $item['part_name'] . ".");
             }
-            
-            // ADDED: Trigger automated restock email check
-            RestockAlert::checkAndSend($this->conn, $part_id);
         }
+
+        return array_column($items, 'part_id');
     }
 
     private function restoreStockIfAlreadyReserved($order_id) {
@@ -471,122 +390,6 @@ class PartOrder {
             $stmtRestore = $this->conn->prepare("UPDATE part SET quantity_on_hand = quantity_on_hand + ? WHERE part_id = ?");
             $stmtRestore->execute([intval($item['quantity']), intval($item['part_id'])]);
         }
-    }
-
-    private function createInvoiceForPartOrder($order_id, $customer_id, $total_amount, $created_by) {
-        $stmtCheck = $this->conn->prepare("SELECT invoice_id FROM invoice WHERE part_order_id = ? LIMIT 1");
-        $stmtCheck->execute([$order_id]);
-
-        if ($stmtCheck->rowCount() > 0) {
-            return;
-        }
-
-        $stmtOrder = $this->conn->prepare("
-            SELECT payment_method, gcash_reference, gcash_payment_amount, gcash_verification_status
-            FROM part_order
-            WHERE order_id = ?
-            LIMIT 1
-        ");
-        $stmtOrder->execute([$order_id]);
-        $orderPayment = $stmtOrder->fetch(PDO::FETCH_ASSOC);
-
-        $paymentMethod = $orderPayment['payment_method'] ?? 'Cash on Pickup';
-        $gcashReference = trim($orderPayment['gcash_reference'] ?? '');
-        $gcashAmount = floatval($orderPayment['gcash_payment_amount'] ?? 0);
-        $gcashStatus = $orderPayment['gcash_verification_status'] ?? 'Not Required';
-
-        $initialPaid = 0;
-
-        if ($this->isGcashPaymentMethod($paymentMethod) && $gcashStatus === 'Verified') {
-            $initialPaid = min($gcashAmount, $total_amount);
-        }
-
-        $balanceDue = max($total_amount - $initialPaid, 0);
-
-        if ($initialPaid >= $total_amount) {
-            $paymentStatus = 'Paid';
-        } elseif ($initialPaid > 0) {
-            $paymentStatus = 'Partial';
-        } else {
-            $paymentStatus = 'Not Paid';
-        }
-
-        $invoice_number = 'INV-PART-' . date('Ymd-His') . '-' . $order_id;
-
-        $stmtInvoice = $this->conn->prepare("
-            INSERT INTO invoice (
-                customer_id,
-                job_order_id,
-                part_order_id,
-                created_by,
-                invoice_number,
-                invoice_type,
-                subtotal_services,
-                subtotal_parts,
-                total_amount,
-                amount_paid,
-                balance_due,
-                payment_status
-            ) VALUES (
-                ?,
-                NULL,
-                ?,
-                ?,
-                ?,
-                'Part',
-                0,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?
-            )
-        ");
-
-        $stmtInvoice->execute([
-            $customer_id,
-            $order_id,
-            $created_by,
-            $invoice_number,
-            $total_amount,
-            $total_amount,
-            $initialPaid,
-            $balanceDue,
-            $paymentStatus
-        ]);
-
-        $invoice_id = $this->conn->lastInsertId();
-
-        if ($initialPaid > 0) {
-            $stmtPay = $this->conn->prepare("
-                INSERT INTO payment (
-                    invoice_id,
-                    received_by,
-                    amount,
-                    payment_method,
-                    reference_number,
-                    payment_date
-                ) VALUES (
-                    ?,
-                    ?,
-                    ?,
-                    'GCash',
-                    ?,
-                    NOW()
-                )
-            ");
-
-            $stmtPay->execute([
-                $invoice_id,
-                $created_by,
-                $initialPaid,
-                htmlspecialchars(strip_tags($gcashReference))
-            ]);
-        }
-    }
-
-    private function isGcashPaymentMethod($paymentMethod) {
-        return in_array($paymentMethod, ['GCash Down Payment', 'GCash Full Payment', 'GCash Reservation']);
     }
 }
 ?>

@@ -1,12 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
+require_once '../includes/online_payment.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Customer') {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('shop.purchase', '../views/login.php');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header("Location: ../views/customer_cart.php");
@@ -39,7 +37,6 @@ try {
     $pickupNotes = trim($_POST['pickup_notes'] ?? '');
 
     $paymentMethod = trim($_POST['payment_method'] ?? '');
-    $gcashReference = trim($_POST['gcash_reference'] ?? '');
     $gcashPaymentAmountInput = trim($_POST['gcash_payment_amount'] ?? '');
     $paymentNotes = trim($_POST['payment_notes'] ?? '');
 
@@ -84,14 +81,9 @@ try {
         throw new Exception("Payment notes must not exceed 500 characters.");
     }
 
-    if ($paymentMethod !== 'Cash on Pickup') {
-        if ($gcashReference === '') {
-            throw new Exception("GCash reference number is required for GCash payments.");
-        }
-
-        if (strlen($gcashReference) > 100) {
-            throw new Exception("GCash reference number must not exceed 100 characters.");
-        }
+    // GCash is paid online through PayMongo; the customer never types payment details here.
+    if (isOnlinePaymentMethod($paymentMethod) && !paymongoIsConfigured()) {
+        throw new Exception("Online GCash payment is currently unavailable. Please choose Cash on Pickup.");
     }
 
     $preferredPickupTimeForDb = $preferredPickupTime . ':00';
@@ -156,7 +148,6 @@ try {
     $gcashVerificationStatus = 'Not Required';
 
     if ($paymentMethod === 'Cash on Pickup') {
-        $gcashReference = '';
         $gcashPaymentAmount = 0;
         $gcashVerificationStatus = 'Not Required';
     } elseif ($paymentMethod === 'GCash Down Payment') {
@@ -170,11 +161,20 @@ try {
             throw new Exception("Down payment must be less than the selected total. Choose GCash Full Payment if paying the full amount.");
         }
 
-        $gcashVerificationStatus = 'Pending Verification';
+        $gcashVerificationStatus = 'Awaiting Payment';
     } elseif ($paymentMethod === 'GCash Full Payment') {
         $gcashPaymentAmount = $total_amount;
-        $gcashVerificationStatus = 'Pending Verification';
+        $gcashVerificationStatus = 'Awaiting Payment';
     }
+
+    // Amount to be paid online (confirmed later by the gateway before it counts as paid).
+    $gcashPaymentAmount = round($gcashPaymentAmount, 2);
+
+    if (isOnlinePaymentMethod($paymentMethod) && $gcashPaymentAmount < paymongoMinimumAmount()) {
+        throw new Exception("The online GCash amount must be at least PHP " . number_format(paymongoMinimumAmount(), 2) . ".");
+    }
+
+    $gcashReference = '';
 
     $stmtOrder = $db->prepare("
         INSERT INTO part_order (
@@ -240,7 +240,18 @@ try {
 
     $db->commit();
 
-    $_SESSION['success_message'] = "Your selected parts have been reserved. Please wait for shop confirmation and GCash verification if applicable.";
+    if (isOnlinePaymentMethod($paymentMethod)) {
+        try {
+            header("Location: " . startOnlinePayment($db, $order_id, $customer_id));
+            exit;
+        } catch (Exception $e) {
+            $_SESSION['error_message'] = "Your reservation was saved, but we could not open the GCash payment page: " . $e->getMessage() . " Use the Pay with GCash button on your order to try again.";
+            header("Location: ../views/dashboard_customer.php#myOrdersSection");
+            exit;
+        }
+    }
+
+    $_SESSION['success_message'] = "Your selected parts have been reserved. Please wait for shop confirmation.";
     header("Location: ../views/dashboard_customer.php");
     exit;
 

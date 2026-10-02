@@ -8,43 +8,10 @@ class User {
     public $middle_name;
     public $last_name;
     public $username;
-    public $password_hash;
     public $role;
-    public $is_active;
-    public $is_verified;
-    public $verification_token;
 
     public function __construct($db) {
         $this->conn = $db;
-    }
-
-    public function login($username, $password) {
-        $query = "SELECT user_id, username, password_hash, role, first_name, is_active, is_verified 
-                  FROM " . $this->table_name . " 
-                  WHERE username = :username AND is_active = 1 LIMIT 0,1";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(':username', $username);
-        $stmt->execute();
-
-        if ($stmt->rowCount() > 0) {
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (password_verify($password, $row['password_hash'])) {
-                // Check verification
-                if ($row['is_verified'] == 0) {
-                    return 'unverified';
-                }
-
-                $this->user_id = $row['user_id'];
-                $this->role = $row['role'];
-                $this->username = $row['username'];
-                $this->first_name = $row['first_name'];
-                return true;
-            }
-        }
-
-        return false;
     }
 
     public function readAll() {
@@ -59,17 +26,19 @@ class User {
         return $stmt;
     }
 
+    /*
+        Creates a staff account. Staff log in with a username (no email), so the
+        account is created already verified; email verification applies to customers only.
+    */
     public function create($raw_password) {
         if ($this->usernameExists($this->username)) {
             return false;
         }
 
-        $this->verification_token = bin2hex(random_bytes(16));
-
         $query = "INSERT INTO " . $this->table_name . " 
                   (first_name, middle_name, last_name, username, password_hash, role, is_active, is_verified, verification_token) 
                   VALUES 
-                  (:first_name, :middle_name, :last_name, :username, :password_hash, :role, 1, 0, :verification_token)";
+                  (:first_name, :middle_name, :last_name, :username, :password_hash, :role, 1, 1, NULL)";
 
         $stmt = $this->conn->prepare($query);
 
@@ -79,7 +48,7 @@ class User {
         $this->username = htmlspecialchars(strip_tags(trim($this->username)));
         $this->role = htmlspecialchars(strip_tags(trim($this->role)));
 
-        $hashed_password = password_hash($raw_password, PASSWORD_BCRYPT);
+        $hashed_password = password_hash($raw_password, PASSWORD_DEFAULT);
 
         $stmt->bindParam(":first_name", $this->first_name);
         $stmt->bindParam(":middle_name", $this->middle_name);
@@ -87,7 +56,6 @@ class User {
         $stmt->bindParam(":username", $this->username);
         $stmt->bindParam(":password_hash", $hashed_password);
         $stmt->bindParam(":role", $this->role);
-        $stmt->bindParam(":verification_token", $this->verification_token);
 
         return $stmt->execute();
     }
@@ -105,7 +73,7 @@ class User {
                     username = :username,
                     role = :role
                   WHERE user_id = :user_id
-                    AND role != 'Owner'";
+                    AND role IN ('Cashier', 'Head Mechanic')";
 
         $stmt = $this->conn->prepare($query);
 
@@ -130,7 +98,7 @@ class User {
         $query = "UPDATE " . $this->table_name . "
                   SET is_active = 0
                   WHERE user_id = :user_id
-                    AND role != 'Owner'";
+                    AND role IN ('Cashier', 'Head Mechanic')";
 
         $stmt = $this->conn->prepare($query);
         $this->user_id = intval($this->user_id);
@@ -144,7 +112,7 @@ class User {
         $query = "UPDATE " . $this->table_name . "
                   SET is_active = 1
                   WHERE user_id = :user_id
-                    AND role != 'Owner'";
+                    AND role IN ('Cashier', 'Head Mechanic')";
 
         $stmt = $this->conn->prepare($query);
         $this->user_id = intval($this->user_id);

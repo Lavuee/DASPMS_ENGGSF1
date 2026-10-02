@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || !in_array($_SESSION['role'], ['Owner', 'Cashier'], true)) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('service_requests.review');
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
@@ -938,6 +935,7 @@ function cleanModalText($value) {
 <div class="modal fade request-modal" id="approveRequestModal" tabindex="-1" aria-labelledby="approveRequestModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <form action="../controllers/ServiceRequestController.php" method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="approve_convert">
             <input type="hidden" name="service_request_id" id="approve_service_request_id">
 
@@ -1043,6 +1041,7 @@ function cleanModalText($value) {
 <div class="modal fade request-modal" id="rejectRequestModal" tabindex="-1" aria-labelledby="rejectRequestModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <form action="../controllers/ServiceRequestController.php" method="POST" class="modal-content">
+            <?= csrfField() ?>
             <input type="hidden" name="action" value="reject_request">
             <input type="hidden" name="service_request_id" id="reject_service_request_id">
 

@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer' || $_SESSION['role'] === 'Head Mechanic') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('suppliers.manage');
 
 require_once '../config/Database.php';
 $db = (new Database())->getConnection();
@@ -64,7 +61,11 @@ $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success border-0 rounded-4"><i class="bi bi-check-circle-fill me-2"></i><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+            <div class="alert alert-success border-0 rounded-4"><i class="bi bi-check-circle-fill me-2"></i><?= htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?></div>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['error_message'])): ?>
+            <div class="alert alert-danger border-0 rounded-4"><i class="bi bi-exclamation-triangle-fill me-2"></i><?= htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?></div>
         <?php endif; ?>
 
         <div style="background: #fff; border-radius: 16px; border: 1px solid #e5e7eb; overflow: hidden;">
@@ -92,6 +93,7 @@ $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td class="text-end">
                                 <button class="icon-btn" data-bs-toggle="modal" data-bs-target="#editSupplierModal<?= $s['supplier_id'] ?>"><i class="bi bi-pencil-square"></i></button>
                                 <form action="../controllers/SupplierController.php" method="POST" style="display:inline;" onsubmit="return confirm('Archive this supplier?');">
+                                    <?= csrfField() ?>
                                     <input type="hidden" name="action" value="archive">
                                     <input type="hidden" name="supplier_id" value="<?= $s['supplier_id'] ?>">
                                     <button class="icon-btn archive-btn"><i class="bi bi-archive"></i></button>
@@ -103,6 +105,7 @@ $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <div class="modal-dialog modal-dialog-centered">
                                 <div class="modal-content p-2">
                                     <form action="../controllers/SupplierController.php" method="POST">
+                                        <?= csrfField() ?>
                                         <input type="hidden" name="action" value="edit">
                                         <input type="hidden" name="supplier_id" value="<?= $s['supplier_id'] ?>">
                                         <div class="modal-header border-0">
@@ -151,6 +154,7 @@ $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content p-2">
             <form action="../controllers/SupplierController.php" method="POST">
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="add">
                 <div class="modal-header border-0">
                     <h5 class="fw-bold mb-0">New Supplier</h5>

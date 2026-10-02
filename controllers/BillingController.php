@@ -1,16 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/Billing.php';
 
-if (
-    !isset($_SESSION['logged_in']) ||
-    ($_SESSION['role'] !== 'Cashier' && $_SESSION['role'] !== 'Owner')
-) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requirePermission('billing.manage', '../views/login.php');
 
 if ($_SERVER["REQUEST_METHOD"] !== "POST" || !isset($_POST['action'])) {
     header("Location: ../views/billing.php");

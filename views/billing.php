@@ -1,15 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/Billing.php';
 
-$allowedRoles = ['Owner', 'Cashier'];
-
-if (!isset($_SESSION['logged_in']) || !in_array($_SESSION['role'], $allowedRoles)) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('billing.manage');
 
 $db = (new Database())->getConnection();
 $billing = new Billing($db);
@@ -711,6 +706,7 @@ $bills = $billing->getPendingBills();
                                         <?php if (empty($row['invoice_id'])): ?>
 
                                             <form action="../controllers/BillingController.php" method="POST" class="m-0">
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="create_invoice">
                                                 <input type="hidden" name="source" value="<?php echo htmlspecialchars($row['source']); ?>">
                                                 <input type="hidden" name="ref_id" value="<?php echo intval($row['ref_id']); ?>">
@@ -737,6 +733,7 @@ $bills = $billing->getPendingBills();
                                         <?php if (!empty($row['invoice_id']) && $status !== 'Paid'): ?>
 
                                             <form action="../controllers/BillingController.php" method="POST" class="payment-form">
+                                                <?= csrfField() ?>
                                                 <input type="hidden" name="action" value="pay">
                                                 <input type="hidden" name="invoice_id" value="<?php echo intval($row['invoice_id']); ?>">
 

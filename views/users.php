@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('users.manage');
 
 require_once '../config/Database.php';
 
@@ -572,6 +569,7 @@ function getStaffStatusBadgeClass($isActive) {
                                                         class="staff-action-form"
                                                         onsubmit="return confirm('Deactivate this staff account? This user will no longer be able to log in.');"
                                                     >
+                                                        <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="deactivate">
                                                         <input type="hidden" name="user_id" value="<?php echo $userId; ?>">
 
@@ -590,6 +588,7 @@ function getStaffStatusBadgeClass($isActive) {
                                                         class="staff-action-form"
                                                         onsubmit="return confirm('Reactivate this staff account?');"
                                                     >
+                                                        <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="reactivate">
                                                         <input type="hidden" name="user_id" value="<?php echo $userId; ?>">
 
@@ -612,6 +611,7 @@ function getStaffStatusBadgeClass($isActive) {
                                         <div class="modal-dialog modal-dialog-centered">
                                             <div class="modal-content">
                                                 <form action="../controllers/UserController.php" method="POST">
+                                                    <?= csrfField() ?>
                                                     <input type="hidden" name="action" value="update">
                                                     <input type="hidden" name="user_id" value="<?php echo $userId; ?>">
 
@@ -733,6 +733,7 @@ function getStaffStatusBadgeClass($isActive) {
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <form action="../controllers/UserController.php" method="POST">
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="add">
 
                 <div class="modal-header">
@@ -809,6 +810,11 @@ function getStaffStatusBadgeClass($isActive) {
                                     type="password"
                                     name="password"
                                     class="minimal-control"
+                                    minlength="8"
+                                    maxlength="72"
+                                    pattern="(?=.*[A-Za-z])(?=.*\d).{8,72}"
+                                    title="At least 8 characters with at least one letter and one number"
+                                    autocomplete="new-password"
                                     required
                                 >
                             </div>

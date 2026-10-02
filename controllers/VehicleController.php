@@ -1,21 +1,18 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/Vehicle.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: ../views/login.php");
-    exit;
-}
+requireAnyPermission(['vehicles.manage', 'vehicles.own'], '../views/login.php');
 
 $db = (new Database())->getConnection();
 $vehicle = new Vehicle($db);
 
 $userRole = $_SESSION['role'] ?? '';
-$isOwner = $userRole === 'Owner';
-$isStaff = in_array($userRole, ['Owner', 'Cashier'], true);
-$isCustomer = $userRole === 'Customer';
+$isOwner = can('vehicles.archive');
+$isStaff = can('vehicles.manage');
+$isCustomer = can('vehicles.own');
 
 function cleanInput($value) {
     return trim($value ?? '');

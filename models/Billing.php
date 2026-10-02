@@ -240,7 +240,7 @@ class Billing {
         try {
             $this->conn->beginTransaction();
 
-            $created = $this->createPartInvoiceInsideTransaction($order_id, $created_by);
+            $created = $this->createPartInvoiceInTransaction($order_id, $created_by);
 
             if (!$created) {
                 $this->conn->rollBack();
@@ -258,7 +258,11 @@ class Billing {
         }
     }
 
-    private function createPartInvoiceInsideTransaction($order_id, $created_by) {
+    /*
+        Creates the invoice for a part order (and records a verified GCash payment, if any).
+        Must be called inside an open transaction. Returns false if the invoice already exists.
+    */
+    public function createPartInvoiceInTransaction($order_id, $created_by) {
         $check = $this->conn->prepare("
             SELECT invoice_id 
             FROM invoice 
@@ -303,7 +307,7 @@ class Billing {
 
         $initialPaid = 0;
 
-        if ($this->isGcashPaymentMethod($paymentMethod) && $gcashStatus === 'Verified') {
+        if (self::isGcashPaymentMethod($paymentMethod) && $gcashStatus === 'Verified') {
             $initialPaid = min($gcashAmount, $total);
         }
 
@@ -327,6 +331,7 @@ class Billing {
                 created_by,
                 invoice_number,
                 invoice_type,
+                subtotal_parts,
                 total_amount,
                 amount_paid,
                 balance_due,
@@ -338,6 +343,7 @@ class Billing {
                 :created_by,
                 :invoice_number,
                 'Part',
+                :subtotal_parts,
                 :total_amount,
                 :amount_paid,
                 :balance_due,
@@ -350,6 +356,7 @@ class Billing {
             ':customer_id' => $customer_id,
             ':created_by' => $created_by,
             ':invoice_number' => $invoice_number,
+            ':subtotal_parts' => $total,
             ':total_amount' => $total,
             ':amount_paid' => $initialPaid,
             ':balance_due' => $balance,
@@ -505,7 +512,7 @@ class Billing {
         }
     }
 
-    private function isGcashPaymentMethod($paymentMethod) {
+    public static function isGcashPaymentMethod($paymentMethod) {
         return in_array($paymentMethod, ['GCash Down Payment', 'GCash Full Payment', 'GCash Reservation']);
     }
 }

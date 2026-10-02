@@ -1,0 +1,4 @@
+# Helper class included by other controllers; it is not a request endpoint.
+<Files "RestockAlert.php">
+    Require all denied
+</Files>

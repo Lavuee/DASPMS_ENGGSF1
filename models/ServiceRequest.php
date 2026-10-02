@@ -59,21 +59,6 @@ class ServiceRequest {
         return $stmt->rowCount() > 0;
     }
 
-    public function readCustomerVehicles($customer_id) {
-        $query = "
-            SELECT *
-            FROM vehicle
-            WHERE customer_id = ?
-              AND status = 'Active'
-            ORDER BY created_at DESC, vehicle_id DESC
-        ";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute([intval($customer_id)]);
-
-        return $stmt;
-    }
-
     public function readActiveServices() {
         $query = "
             SELECT *
@@ -232,35 +217,6 @@ class ServiceRequest {
         $stmt->execute($params);
 
         return $stmt;
-    }
-
-    public function readOneDetailed($service_request_id) {
-        $query = "
-            SELECT
-                sr.*,
-                c.first_name,
-                c.last_name,
-                c.contact_number,
-                c.email,
-                s.service_name,
-                s.category AS service_category,
-                s.base_price,
-                s.requires_down_payment,
-                v.plate_number,
-                v.make,
-                v.model
-            FROM " . $this->table_name . " sr
-            INNER JOIN customer c ON sr.customer_id = c.customer_id
-            INNER JOIN service s ON sr.service_id = s.service_id
-            INNER JOIN vehicle v ON sr.vehicle_id = v.vehicle_id
-            WHERE sr.service_request_id = ?
-            LIMIT 1
-        ";
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute([intval($service_request_id)]);
-
-        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
     public function mechanicIsValid($mechanic_id) {

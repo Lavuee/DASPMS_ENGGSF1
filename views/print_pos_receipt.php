@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in'])) {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('pos.use');
 
 require_once '../config/Database.php';
 

@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Owner') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('dashboard.owner');
 
 require_once '../config/Database.php';
 
@@ -13,24 +10,35 @@ $db = (new Database())->getConnection();
 $activeJobs = $db->query("
     SELECT COUNT(*)
     FROM job_order
-    WHERE status != 'Completed'
+    WHERE status NOT IN ('Completed', 'Cancelled')
 ")->fetchColumn() ?: 0;
 
 $completedToday = $db->query("
     SELECT COUNT(*)
     FROM job_order
     WHERE status = 'Completed'
-    AND DATE(date_created) = CURDATE()
+    AND DATE(date_completed) = CURDATE()
 ")->fetchColumn() ?: 0;
 
 $revPay = $db->query("SELECT SUM(amount) FROM payment")->fetchColumn() ?: 0;
 $revPOS = $db->query("SELECT SUM(total_amount) FROM pos_transaction WHERE status = 'Completed'")->fetchColumn() ?: 0;
-$revWeb = $db->query("SELECT SUM(total_amount) FROM part_order WHERE status = 'Completed'")->fetchColumn() ?: 0;
-$totalRevenue = $revPay + $revPOS + $revWeb;
+// Online part orders are paid through invoices, so they are already included in $revPay.
+$totalRevenue = $revPay + $revPOS;
 
 $pendingQuery = "
-    SELECT SUM(jo.estimated_cost - COALESCE(i.amount_paid, 0))
+    SELECT SUM(GREATEST(
+        CASE
+            WHEN COALESCE(jo.final_cost, 0) > 0 THEN jo.final_cost
+            ELSE COALESCE(jo.estimated_cost, 0) + COALESCE(parts.parts_total, 0)
+        END - COALESCE(i.amount_paid, 0),
+        0
+    ))
     FROM job_order jo
+    LEFT JOIN (
+        SELECT job_order_id, SUM(subtotal) AS parts_total
+        FROM job_order_part
+        GROUP BY job_order_id
+    ) parts ON jo.job_order_id = parts.job_order_id
     LEFT JOIN invoice i ON jo.job_order_id = i.job_order_id
     WHERE jo.status IN ('Completed', 'Ready for Pickup')
     AND (i.payment_status IS NULL OR i.payment_status != 'Paid')

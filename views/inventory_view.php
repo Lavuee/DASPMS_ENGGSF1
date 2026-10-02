@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Head Mechanic') { 
-    header("Location: login.php"); 
-    exit; 
-}
+requirePermission('inventory.view');
 
 require_once '../config/Database.php';
 

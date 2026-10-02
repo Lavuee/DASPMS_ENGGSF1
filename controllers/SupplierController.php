@@ -1,14 +1,33 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 require_once '../config/Database.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Customer' || $_SESSION['role'] === 'Head Mechanic') {
-    header("Location: ../views/login.php");
-    exit;
+requirePermission('suppliers.manage', '../views/login.php');
+
+// Values are stored as plain text and escaped when displayed.
+function cleanInput($value) {
+    return strip_tags(trim((string)($value ?? '')));
 }
 
-function cleanInput($value) {
-    return htmlspecialchars(strip_tags(trim((string)($value ?? ''))), ENT_QUOTES, 'UTF-8');
+// Reads and validates the supplier form fields.
+function readSupplierForm() {
+    $supplier = [
+        'name' => cleanInput($_POST['supplier_name'] ?? ''),
+        'contact' => cleanInput($_POST['contact_person'] ?? ''),
+        'email' => cleanInput($_POST['email'] ?? ''),
+        'phone' => cleanInput($_POST['phone'] ?? ''),
+        'address' => cleanInput($_POST['address'] ?? '')
+    ];
+
+    if ($supplier['name'] === '' || $supplier['email'] === '') {
+        throw new Exception("Supplier Name and Email are required.");
+    }
+
+    if (!filter_var($supplier['email'], FILTER_VALIDATE_EMAIL)) {
+        throw new Exception("Please enter a valid supplier email address.");
+    }
+
+    return $supplier;
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
@@ -16,38 +35,26 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
 
     try {
         if ($_POST['action'] === 'add') {
-            $name = cleanInput($_POST['supplier_name']);
-            $contact = cleanInput($_POST['contact_person']);
-            $email = cleanInput($_POST['email']);
-            $phone = cleanInput($_POST['phone']);
-            $address = cleanInput($_POST['address']);
-
-            if (empty($name) || empty($email)) {
-                throw new Exception("Supplier Name and Email are required.");
-            }
+            $s = readSupplierForm();
 
             $stmt = $db->prepare("INSERT INTO supplier (supplier_name, contact_person, email, phone, address, is_active) VALUES (?, ?, ?, ?, ?, 1)");
-            $stmt->execute([$name, $contact, $email, $phone, $address]);
+            $stmt->execute([$s['name'], $s['contact'], $s['email'], $s['phone'], $s['address']]);
 
             $_SESSION['success_message'] = "Supplier added successfully.";
-        } 
-        
+        }
+
         elseif ($_POST['action'] === 'edit') {
-            $id = intval($_POST['supplier_id']);
-            $name = cleanInput($_POST['supplier_name']);
-            $contact = cleanInput($_POST['contact_person']);
-            $email = cleanInput($_POST['email']);
-            $phone = cleanInput($_POST['phone']);
-            $address = cleanInput($_POST['address']);
+            $id = intval($_POST['supplier_id'] ?? 0);
+            $s = readSupplierForm();
 
             $stmt = $db->prepare("UPDATE supplier SET supplier_name = ?, contact_person = ?, email = ?, phone = ?, address = ? WHERE supplier_id = ?");
-            $stmt->execute([$name, $contact, $email, $phone, $address, $id]);
+            $stmt->execute([$s['name'], $s['contact'], $s['email'], $s['phone'], $s['address'], $id]);
 
             $_SESSION['success_message'] = "Supplier updated successfully.";
         }
 
         elseif ($_POST['action'] === 'archive') {
-            $id = intval($_POST['supplier_id']);
+            $id = intval($_POST['supplier_id'] ?? 0);
             $stmt = $db->prepare("UPDATE supplier SET is_active = 0 WHERE supplier_id = ?");
             $stmt->execute([$id]);
             $_SESSION['success_message'] = "Supplier archived.";
@@ -60,4 +67,3 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
 
 header("Location: ../views/suppliers.php");
 exit;
-?>

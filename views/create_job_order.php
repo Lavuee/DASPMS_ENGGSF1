@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] === 'Head Mechanic' || $_SESSION['role'] === 'Customer') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('job_orders.manage');
 
 require_once '../config/Database.php';
 
@@ -254,6 +251,7 @@ $vehicles = $stmtV->fetchAll(PDO::FETCH_ASSOC);
             </div>
 
             <form action="../controllers/JobOrderController.php" method="POST" class="job-form-area">
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="create">
 
                 <div class="form-section-title">Basic Job Details</div>

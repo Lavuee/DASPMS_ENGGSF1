@@ -1,10 +1,7 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/auth.php';
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Head Mechanic') {
-    header("Location: login.php");
-    exit;
-}
+requirePermission('dashboard.mechanic');
 
 require_once '../config/Database.php';
 
@@ -35,7 +32,7 @@ $completedToday = $db->query("
     SELECT COUNT(*)
     FROM job_order
     WHERE status = 'Completed'
-    AND DATE(date_created) = CURDATE()
+    AND DATE(date_completed) = CURDATE()
 ")->fetchColumn() ?: 0;
 
 $activeJobs = $pendingJobs + $inProgressJobs + $readyForPickupJobs;

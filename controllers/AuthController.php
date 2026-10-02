@@ -1,9 +1,51 @@
 <?php
-session_start();
-require_once '../config/Database.php';
+require_once '../includes/auth.php';
+require_once '../includes/passwords.php';
+require_once '../includes/rate_limit.php';
+require_once '../includes/email_verification.php';
+require_once '../includes/password_reset.php';
+
+// Login throttling: per account+IP, and a looser per-IP limit.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_IP_MAX_ATTEMPTS = 30;
+const LOGIN_WINDOW_SECONDS = 900;
+const LOGIN_LOCK_SECONDS = 900;
+
+// Email-sending actions (reset/resend/register) per IP and per address.
+const EMAIL_ACTION_MAX_ATTEMPTS = 5;
+const EMAIL_ACTION_WINDOW_SECONDS = 3600;
 
 function cleanInput($value) {
     return trim((string)($value ?? ''));
+}
+
+function redirectTo($path, $messageKey = null, $message = null) {
+    if ($messageKey !== null) {
+        $_SESSION[$messageKey] = $message;
+    }
+
+    header("Location: " . $path);
+    exit;
+}
+
+/*
+    Applies the per-IP and per-address limits for actions that send email.
+    Returns false when the caller should stop (limit reached).
+*/
+function allowEmailAction(PDO $db, $scope, $email) {
+    $keys = [rateLimitKey($scope . '_ip', clientIp()), rateLimitKey($scope . '_email', $email)];
+
+    foreach ($keys as $key) {
+        if (isRateLimited($db, $key, EMAIL_ACTION_MAX_ATTEMPTS, EMAIL_ACTION_WINDOW_SECONDS)) {
+            return false;
+        }
+    }
+
+    foreach ($keys as $key) {
+        recordRateLimitAttempt($db, $key, EMAIL_ACTION_MAX_ATTEMPTS, EMAIL_ACTION_WINDOW_SECONDS, EMAIL_ACTION_WINDOW_SECONDS);
+    }
+
+    return true;
 }
 
 function ensureCustomerProfile($db, $user) {
@@ -70,26 +112,9 @@ function ensureCustomerProfile($db, $user) {
     */
     $stmtCreateCustomer = $db->prepare("
         INSERT INTO customer (
-            user_id,
-            first_name,
-            middle_name,
-            last_name,
-            email,
-            contact_number,
-            address,
-            status,
-            created_at
-        ) VALUES (
-            ?,
-            ?,
-            NULL,
-            ?,
-            ?,
-            '',
-            'no address provided',
-            'Active',
-            NOW()
-        )
+            user_id, first_name, middle_name, last_name, email,
+            contact_number, address, status, created_at
+        ) VALUES (?, ?, NULL, ?, ?, '', 'no address provided', 'Active', NOW())
     ");
 
     $stmtCreateCustomer->execute([
@@ -102,360 +127,268 @@ function ensureCustomerProfile($db, $user) {
     return intval($db->lastInsertId());
 }
 
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
+/* =========================
+   ACTIONS
+========================= */
+
+function handleLogin(PDO $db) {
+    $login_id = cleanInput($_POST['login_id'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
+
+    if ($login_id === '' || $password === '') {
+        throw new Exception("Please enter your username/email and password.");
+    }
+
+    $accountKey = rateLimitKey('login', $login_id . '|' . clientIp());
+    $ipKey = rateLimitKey('login_ip', clientIp());
+
+    if (
+        isRateLimited($db, $accountKey, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS) ||
+        isRateLimited($db, $ipKey, LOGIN_IP_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS)
+    ) {
+        throw new Exception("Too many failed login attempts. Please wait 15 minutes and try again.");
+    }
+
+    $stmt = $db->prepare("
+        SELECT *
+        FROM user
+        WHERE username = :id OR email = :id
+        LIMIT 1
+    ");
+    $stmt->execute([':id' => $login_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($user) {
+        $passwordOk = verifyAndUpgradePassword($db, $user, $password);
+    } else {
+        simulatePasswordCheck($password);
+        $passwordOk = false;
+    }
+
+    if (!$user || intval($user['is_active']) !== 1 || !$passwordOk) {
+        recordRateLimitAttempt($db, $accountKey, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS, LOGIN_LOCK_SECONDS);
+        recordRateLimitAttempt($db, $ipKey, LOGIN_IP_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS, LOGIN_LOCK_SECONDS);
+        throw new Exception("Invalid username/email or password.");
+    }
+
+    clearRateLimit($db, $accountKey);
+
+    if (requiresEmailVerification($user)) {
+        $_SESSION['show_resend_verification'] = true;
+        throw new Exception("Your email is not verified yet. Please use the link we emailed you, or request a new one.");
+    }
+
+    $customerId = null;
+
+    if ($user['role'] === 'Customer') {
+        $customerId = ensureCustomerProfile($db, $user);
+
+        if (!$customerId) {
+            throw new Exception("Unable to prepare customer profile. Please contact the shop.");
+        }
+    }
+
+    $db->prepare("UPDATE user SET last_login_at = NOW() WHERE user_id = ?")->execute([intval($user['user_id'])]);
+
+    loginUser($user, $customerId);
+
+    redirectTo("../views/" . dashboardForRole($user['role']));
+}
+
+function handleRegister(PDO $db) {
+    $first_name = cleanInput($_POST['first_name'] ?? '');
+    $last_name = cleanInput($_POST['last_name'] ?? '');
+    $email = strtolower(cleanInput($_POST['email'] ?? ''));
+    $phone = cleanInput($_POST['phone'] ?? '');
+    $rawPassword = (string)($_POST['password'] ?? '');
+
+    if ($first_name === '' || $last_name === '' || $email === '' || $phone === '' || $rawPassword === '') {
+        throw new Exception("Please complete all required fields.");
+    }
+
+    if (mb_strlen($first_name) > 20 || mb_strlen($last_name) > 20) {
+        throw new Exception("First and last name must be 20 characters or fewer.");
+    }
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 255) {
+        throw new Exception("Please enter a valid email address.");
+    }
+
+    if (!preg_match('/^\d{11}$/', $phone)) {
+        throw new Exception("Phone number must be exactly 11 digits.");
+    }
+
+    $policyError = passwordPolicyError($rawPassword);
+
+    if ($policyError !== null) {
+        throw new Exception($policyError);
+    }
+
+    if (!allowEmailAction($db, 'register', $email)) {
+        throw new Exception("Too many registration attempts. Please try again later.");
+    }
+
+    $checkUser = $db->prepare("SELECT user_id FROM user WHERE username = ? OR email = ? LIMIT 1");
+    $checkUser->execute([$email, $email]);
+
+    if ($checkUser->fetch()) {
+        throw new Exception("An account with this email already exists.");
+    }
+
+    $checkCustomer = $db->prepare("SELECT customer_id FROM customer WHERE contact_number = ? LIMIT 1");
+    $checkCustomer->execute([$phone]);
+
+    if ($checkCustomer->fetch()) {
+        throw new Exception("A customer record with this phone number already exists. Please contact the shop for account linking.");
+    }
+
+    $db->beginTransaction();
+
+    $stmtUser = $db->prepare("
+        INSERT INTO user (
+            username, password_hash, first_name, last_name, email,
+            role, is_active, is_verified
+        ) VALUES (?, ?, ?, ?, ?, 'Customer', 1, 0)
+    ");
+    $stmtUser->execute([$email, hashPassword($rawPassword), $first_name, $last_name, $email]);
+
+    $user_id = $db->lastInsertId();
+
+    $stmtCust = $db->prepare("
+        INSERT INTO customer (
+            user_id, first_name, middle_name, last_name, email,
+            contact_number, address, status, created_at
+        ) VALUES (?, ?, NULL, ?, ?, ?, 'no address provided', 'Active', NOW())
+    ");
+    $stmtCust->execute([$user_id, $first_name, $last_name, $email, $phone]);
+
+    $token = issueVerificationToken($db, $user_id);
+
+    $db->commit();
+
+    if (sendVerificationEmail($email, $first_name, $token)) {
+        redirectTo("../views/login.php", 'success_message', "Account created! Please check your email and verify your address before logging in.");
+    }
+
+    $_SESSION['show_resend_verification'] = true;
+    redirectTo("../views/login.php", 'error_message', "Account created, but we could not send the verification email. Please request a new link below.");
+}
+
+function handleResendVerification(PDO $db) {
+    $email = strtolower(cleanInput($_POST['email'] ?? ''));
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        redirectTo("../views/resend_verification.php", 'error_message', "Please enter a valid email address.");
+    }
+
+    if (allowEmailAction($db, 'resend', $email)) {
+        resendVerificationEmail($db, $email);
+    }
+
+    redirectTo("../views/login.php", 'success_message', "If that email belongs to an unverified account, a new verification link has been sent.");
+}
+
+function handleConfirmEmail(PDO $db) {
+    $token = cleanInput($_POST['token'] ?? '');
+
+    if (verifyEmailToken($db, $token)) {
+        redirectTo("../views/login.php", 'success_message', "Your email has been verified! You can now log in.");
+    }
+
+    $_SESSION['show_resend_verification'] = true;
+    redirectTo("../views/login.php", 'error_message', "This verification link is invalid or has expired. Please request a new one.");
+}
+
+function handleRequestPasswordReset(PDO $db) {
+    $email = strtolower(cleanInput($_POST['email'] ?? ''));
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        redirectTo("../views/forgot_password.php", 'error_message', "Please enter a valid email address.");
+    }
+
+    if (allowEmailAction($db, 'reset', $email)) {
+        requestPasswordReset($db, $email);
+    }
+
+    redirectTo("../views/login.php", 'success_message', "If an account exists for that email, a password reset link has been sent. The link expires in " . PASSWORD_RESET_TTL_MINUTES . " minutes.");
+}
+
+function handleResetPassword(PDO $db) {
+    $token = cleanInput($_POST['token'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
+    $confirm = (string)($_POST['password_confirm'] ?? '');
+
+    try {
+        if (!hash_equals($password, $confirm)) {
+            throw new Exception("The passwords do not match.");
+        }
+
+        completePasswordReset($db, $token, $password);
+    } catch (Exception $e) {
+        redirectTo("../views/reset_password.php?token=" . urlencode($token), 'error_message', $e->getMessage());
+    }
+
+    // Any session in this browser belongs to the old credentials.
+    if (isLoggedIn()) {
+        endSessionWithMessage('');
+        unset($_SESSION['error_message']);
+    }
+
+    redirectTo("../views/login.php", 'success_message', "Your password has been reset. Please log in with your new password.");
+}
+
+/* =========================
+   ROUTING
+========================= */
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
     $db = (new Database())->getConnection();
+    $action = $_POST['action'];
 
-    if ($_POST['action'] == 'login') {
-        try {
-            $login_id = cleanInput($_POST['login_id'] ?? '');
-            $password = $_POST['password'] ?? '';
-
-            if ($login_id === '' || $password === '') {
-                throw new Exception("Please enter your username/email and password.");
-            }
-
-            $stmt = $db->prepare("
-                SELECT *
-                FROM user
-                WHERE username = :id OR email = :id
-                LIMIT 1
-            ");
-            $stmt->execute([':id' => $login_id]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (
-                !$user ||
-                intval($user['is_active']) !== 1 ||
-                !(password_verify($password, $user['password_hash']) || $password === $user['password_hash'])
-            ) {
-                throw new Exception("Invalid username/email or password.");
-            }
-
-            // ADDED: Block login if the account is not verified
-            if (isset($user['is_verified']) && intval($user['is_verified']) === 0) {
-                throw new Exception("Your account is not verified yet. Please check your email for the verification link.");
-            }
-
-            $customerId = null;
-
-            if ($user['role'] === 'Customer') {
-                $customerId = ensureCustomerProfile($db, $user);
-
-                if (!$customerId) {
-                    throw new Exception("Unable to prepare customer profile. Please contact the shop.");
-                }
-            }
-
-            $_SESSION['logged_in'] = true;
-            $_SESSION['user_id'] = intval($user['user_id']);
-            $_SESSION['first_name'] = $user['first_name'];
-            $_SESSION['role'] = $user['role'];
-
-            if ($customerId) {
-                $_SESSION['customer_id'] = $customerId;
-            }
-
-            $dashboardMap = [
-                'Owner' => 'dashboard_owner.php',
-                'Cashier' => 'dashboard_cashier.php',
-                'Head Mechanic' => 'dashboard_mechanic.php',
-                'Customer' => 'dashboard_customer.php'
-            ];
-
-            header("Location: ../views/" . ($dashboardMap[$user['role']] ?? 'login.php'));
-            exit;
-
-        } catch (Exception $e) {
-            $_SESSION['error_message'] = $e->getMessage();
-            header("Location: ../views/login.php");
-            exit;
+    try {
+        switch ($action) {
+            case 'login':
+                handleLogin($db);
+                break;
+            case 'register':
+                handleRegister($db);
+                break;
+            case 'logout':
+                logoutUser();
+                session_start();
+                redirectTo("../views/login.php", 'success_message', "You have been logged out.");
+                break;
+            case 'resend_verification':
+                handleResendVerification($db);
+                break;
+            case 'confirm_email':
+                handleConfirmEmail($db);
+                break;
+            case 'request_password_reset':
+                handleRequestPasswordReset($db);
+                break;
+            case 'reset_password':
+                handleResetPassword($db);
+                break;
         }
-    }
-
-    elseif ($_POST['action'] == 'register') {
-        try {
-            $first_name = cleanInput($_POST['first_name'] ?? '');
-            $last_name = cleanInput($_POST['last_name'] ?? '');
-            $email = cleanInput($_POST['email'] ?? '');
-            $phone = cleanInput($_POST['phone'] ?? '');
-            $rawPassword = $_POST['password'] ?? '';
-
-            if ($first_name === '' || $last_name === '' || $email === '' || $phone === '' || $rawPassword === '') {
-                throw new Exception("Please complete all required fields.");
-            }
-
-            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                throw new Exception("Please enter a valid email address.");
-            }
-
-            if (!preg_match('/^\d{11}$/', $phone)) {
-                throw new Exception("Phone number must be exactly 11 digits.");
-            }
-
-            $username = strtolower($email);
-
-            $checkUser = $db->prepare("
-                SELECT user_id
-                FROM user
-                WHERE username = ? OR email = ?
-                LIMIT 1
-            ");
-            $checkUser->execute([$username, $email]);
-
-            if ($checkUser->fetch()) {
-                throw new Exception("An account with this email already exists.");
-            }
-
-            $checkCustomer = $db->prepare("
-                SELECT customer_id
-                FROM customer
-                WHERE contact_number = ?
-                LIMIT 1
-            ");
-            $checkCustomer->execute([$phone]);
-
-            if ($checkCustomer->fetch()) {
-                throw new Exception("A customer record with this phone number already exists. Please contact the shop for account linking.");
-            }
-
-            $db->beginTransaction();
-
-            $password = password_hash($rawPassword, PASSWORD_DEFAULT);
-            
-            // ADDED: Generate secure verification token
-            $token = bin2hex(random_bytes(16)); 
-
-            // MODIFIED: Included is_verified (default 0) and verification_token
-            $stmtUser = $db->prepare("
-                INSERT INTO user (
-                    username,
-                    password_hash,
-                    first_name,
-                    last_name,
-                    email,
-                    role,
-                    is_active,
-                    is_verified,
-                    verification_token
-                ) VALUES (
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    'Customer',
-                    1,
-                    0,
-                    ?
-                )
-            ");
-            $stmtUser->execute([
-                $username,
-                $password,
-                $first_name,
-                $last_name,
-                $email,
-                $token
-            ]);
-
-            $user_id = $db->lastInsertId();
-
-            $stmtCust = $db->prepare("
-                INSERT INTO customer (
-                    user_id,
-                    first_name,
-                    middle_name,
-                    last_name,
-                    email,
-                    contact_number,
-                    address,
-                    status,
-                    created_at
-                ) VALUES (
-                    ?,
-                    ?,
-                    NULL,
-                    ?,
-                    ?,
-                    ?,
-                    'no address provided',
-                    'Active',
-                    NOW()
-                )
-            ");
-            $stmtCust->execute([
-                $user_id,
-                $first_name,
-                $last_name,
-                $email,
-                $phone
-            ]);
-
-            $db->commit();
-
-            // ADDED: Dispatch Verification Email with Logging
-            $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
-            $host = $_SERVER['HTTP_HOST'];
-            $temporary = "0rxd3vkf-443.asse.devtunnels.ms";
-            
-            // Adjust the path below if your project folder is named differently
-            $verify_link = $protocol . "://" . $temporary . "/DASPMS_ENGGSF1-main/views/verify.php?token=" . $token; 
-            
-            $to = $email;
-            $subject = "Verify Your Account - Norily's Repair Shop";
-            
-            // Premium, minimal HTML Email Template using native inline CSS
-            $message = <<<HTML
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    body {
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                        background-color: #f4f4f5;
-                        margin: 0;
-                        padding: 0;
-                        -webkit-font-smoothing: antialiased;
-                    }
-                    .wrapper {
-                        width: 100%;
-                        background-color: #f4f4f5;
-                        padding: 40px 0;
-                    }
-                    .container {
-                        max-width: 540px;
-                        margin: 0 auto;
-                        background-color: #ffffff;
-                        border-radius: 16px;
-                        overflow: hidden;
-                        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-                        border: 1px solid #e4e4e7;
-                    }
-                    .header {
-                        background-color: #ffffff;
-                        padding: 30px 40px 20px;
-                        text-align: center;
-                        border-bottom: 1px solid #f4f4f5;
-                    }
-                    .header h1 {
-                        margin: 0;
-                        color: #18181b;
-                        font-size: 22px;
-                        font-weight: 800;
-                        letter-spacing: -0.5px;
-                    }
-                    .body {
-                        padding: 40px;
-                        color: #3f3f46;
-                        font-size: 16px;
-                        line-height: 1.6;
-                    }
-                    .body p {
-                        margin: 0 0 20px 0;
-                    }
-                    .btn-wrapper {
-                        text-align: center;
-                        margin: 35px 0;
-                    }
-                    .btn {
-                        display: inline-block;
-                        padding: 14px 32px;
-                        background-color: #f5c518; /* Updated DASPMS Yellow */
-                        color: #111111 !important; /* Dark text for contrast */
-                        text-decoration: none;
-                        border-radius: 999px;
-                        font-weight: 900;
-                        font-size: 15px;
-                        text-transform: uppercase;
-                        letter-spacing: 0.5px;
-                        box-shadow: 0 4px 12px rgba(245, 197, 24, 0.25);
-                    }
-                    .footer {
-                        background-color: #fafafa;
-                        padding: 24px 40px;
-                        text-align: center;
-                        font-size: 13px;
-                        color: #a1a1aa;
-                        border-top: 1px solid #e4e4e7;
-                    }
-                    .footer a {
-                        color: #71717a;
-                        text-decoration: underline;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="wrapper">
-                    <div class="container">
-                        <div class="header">
-                            <h1>Norily's Repair Shop</h1>
-                        </div>
-                        <div class="body">
-                            <p>Hi <strong>{$first_name}</strong>,</p>
-                            <p>Welcome to DASPMS! We are thrilled to have you on board. Before you can log in and start tracking your vehicle service records, we just need to verify your email address.</p>
-                            
-                            <div class="btn-wrapper">
-                                <a href="{$verify_link}" class="btn">Verify Email Address</a>
-                            </div>
-                            
-                            <p style="font-size: 14px; color: #71717a;">If the button above doesn't work, copy and paste this link into your web browser:</p>
-                            <p style="font-size: 13px; color: #3b82f6; word-break: break-all;"><a href="{$verify_link}" style="color: #3b82f6;">{$verify_link}</a></p>
-                        </div>
-                        <div class="footer">
-                            <p>If you did not create an account, you can safely ignore this email.</p>
-                            <p>&copy; 2026 Norily's Vehicle Repair Shop. All rights reserved.</p>
-                        </div>
-                    </div>
-                </div>
-            </body>
-            </html>
-            HTML;
-            
-            // ANTI-SPAM FIX: The 'From' address MUST match the authenticated sendmail.ini account
-            $headers = "MIME-Version: 1.0\r\n";
-            $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-            $headers .= "From: Norily's Repair Shop <daspms1998@gmail.com>\r\n";
-            $headers .= "Reply-To: daspms1998@gmail.com\r\n";
-            $headers .= "X-Mailer: PHP/" . phpversion();
-            
-            // Trigger email without suppression (@) to allow catching errors
-            $mail_sent = mail($to, $subject, $message, $headers);
-
-            if (!$mail_sent) {
-                // Capture the exact PHP error
-                $error = error_get_last();
-                
-                // Write it to XAMPP's PHP error log
-                error_log("DASPMS MAIL FAILED: Could not send to $to. Error details: " . print_r($error, true));
-                
-                $_SESSION['error_message'] = "Account created, but the verification email failed to send. Check server logs.";
-                header("Location: ../views/login.php");
-                exit;
-            } else {
-                error_log("DASPMS MAIL SUCCESS: Verification email sent to $to");
-                
-                $_SESSION['success_message'] = "Account created! Please check your email to verify your account before logging in.";
-                header("Location: ../views/login.php");
-                exit;
-            }
-
-        } catch (Exception $e) {
-            if (isset($db) && $db->inTransaction()) {
-                $db->rollBack();
-            }
-
-            $_SESSION['error_message'] = "Registration failed: " . $e->getMessage();
-            header("Location: ../views/register.php");
-            exit;
+    } catch (Exception $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
         }
+
+        if ($action === 'register') {
+            $message = $e instanceof PDOException ? "Registration failed. Please try again." : "Registration failed: " . $e->getMessage();
+            redirectTo("../views/register.php", 'error_message', $message);
+        }
+
+        if ($e instanceof PDOException) {
+            error_log("DASPMS AUTH ERROR: " . $e->getMessage());
+            redirectTo("../views/login.php", 'error_message', "Something went wrong. Please try again.");
+        }
+
+        redirectTo("../views/login.php", 'error_message', $e->getMessage());
     }
 }
 
-if (isset($_GET['action']) && $_GET['action'] == 'logout') {
-    session_destroy();
-    header("Location: ../views/login.php");
-    exit;
-}
-?>
+header("Location: ../views/login.php");
+exit;
