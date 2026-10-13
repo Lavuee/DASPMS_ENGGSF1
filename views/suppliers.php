@@ -4,191 +4,189 @@ require_once __DIR__ . '/../includes/auth.php';
 requirePermission('suppliers.manage');
 
 require_once '../config/Database.php';
+require_once '../includes/staff_ui.php';
 $db = (new Database())->getConnection();
 
 // Fetch active suppliers
 $stmt = $db->query("SELECT * FROM supplier WHERE is_active = 1 ORDER BY supplier_name ASC");
 $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
-?>
 
+// Fields shared by the New supplier and Edit supplier popups
+function supplierFormFields($s, $id) {
+    $v = function ($key) use ($s) {
+        return cpEscape($s[$key] ?? '');
+    };
+    ob_start();
+    ?>
+    <div class="sp-fgrid">
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Name">Company name <span class="sp-req">*</span></label>
+            <input type="text" name="supplier_name" id="<?= $id ?>Name" class="cp-input" value="<?= $v('supplier_name') ?>" required>
+        </div>
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Email">Email address for restock alerts <span class="sp-req">*</span></label>
+            <input type="email" name="email" id="<?= $id ?>Email" class="cp-input" value="<?= $v('email') ?>" required>
+            <p class="cp-hint">Low stock emails are sent here automatically.</p>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Contact">Contact person</label>
+            <input type="text" name="contact_person" id="<?= $id ?>Contact" class="cp-input" value="<?= $v('contact_person') ?>">
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Phone">Phone</label>
+            <input type="text" name="phone" id="<?= $id ?>Phone" class="cp-input" value="<?= $v('phone') ?>" inputmode="tel">
+        </div>
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Address">Address</label>
+            <input type="text" name="address" id="<?= $id ?>Address" class="cp-input" value="<?= $v('address') ?>">
+        </div>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+$supplierDialogs = '';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Suppliers - Norily's Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="../assets/css/style.css">
-    <style>
-        .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; }
-        .page-header h2 { font-size: 2rem; font-weight: 900; color: var(--dashboard-text-main); margin-bottom: 0.25rem; }
-        .count-text { color: var(--dashboard-text-muted); font-size: 0.95rem; font-weight: 500; }
-        
-        .action-btn { background: var(--dashboard-primary); border: none; color: var(--black); font-weight: 800; padding: 0.6rem 1.2rem; border-radius: 999px; display: inline-flex; align-items: center; gap: 0.5rem; transition: 0.2s ease; }
-        .action-btn:hover { background: var(--black); color: var(--white); }
-
-        .minimal-table { width: 100%; border-collapse: collapse; }
-        .minimal-table th { color: var(--dashboard-text-muted); font-size: 0.82rem; font-weight: 900; text-transform: uppercase; padding: 1rem; border-bottom: 1px solid #dcdfe4; }
-        .minimal-table td { padding: 1.2rem 1rem; border-bottom: 1px solid #e8ebef; color: var(--dashboard-text-main); font-size: 0.95rem; vertical-align: middle; }
-        .minimal-table tr:hover td { background: rgba(245, 197, 24, 0.035); }
-
-        .icon-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid #e5e7eb; background: #fff; color: var(--dashboard-text-muted); display: inline-flex; align-items: center; justify-content: center; transition: 0.2s ease; }
-        .icon-btn:hover { background: var(--dashboard-primary); border-color: var(--dashboard-primary); color: var(--black); }
-        .icon-btn.archive-btn:hover { background: #fff1f2; border-color: #fecdd3; color: #be123c; }
-
-        /* Minimal Modal Styling */
-        .modal-content { border-radius: 20px; border: none; }
-        .minimal-control { width: 100%; border: none; border-bottom: 1px solid #cfd6df; padding: 0.5rem 0; font-size: 0.95rem; background: transparent; }
-        .minimal-control:focus { border-color: var(--dashboard-primary); outline: none; }
-        .minimal-label { font-size: 0.76rem; font-weight: 800; color: var(--dashboard-text-muted); text-transform: uppercase; }
-    </style>
+    <link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
 <body>
 
 <div class="app-wrapper">
     <?php include '../includes/sidebar.php'; ?>
 
-    <main class="main-content">
-        <div class="page-header">
-            <div>
-                <h2>Supplier Directory</h2>
-                <p class="count-text">Manage your parts distributors and automated restock contacts.</p>
+    <main class="main-content sp-page" id="spMain">
+
+        <?php
+        $pageActions = '<button type="button" class="cp-btn cp-btn-dark" data-sp-open="#addSupplierDialog">+ Add supplier</button>';
+        spPageHead(
+            spPortalLabel() . ' · Stock',
+            'Suppliers',
+            "Restock alert emails go to the supplier's email address."
+        );
+        cpFlash();
+        ?>
+
+        <div data-sp-filter="#supplierRows">
+            <div class="sp-toolbar">
+                <div class="sp-search-field-inline">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                    <input type="search" class="cp-input" data-sp-search placeholder="Search company or contact person" aria-label="Search company or contact person" autocomplete="off">
+                </div>
+                <div class="sp-toolbar-actions"><?= $pageActions ?></div>
             </div>
-            <button class="action-btn" data-bs-toggle="modal" data-bs-target="#addSupplierModal">
-                <i class="bi bi-plus-lg"></i> Add Supplier
-            </button>
+            <p class="sp-showing" data-sp-showing aria-live="polite" style="margin-top: 16px">Showing <?= count($suppliers) ?> of <?= count($suppliers) ?></p>
         </div>
 
-        <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success border-0 rounded-4"><i class="bi bi-check-circle-fill me-2"></i><?= htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?></div>
-        <?php endif; ?>
-
-        <?php if (isset($_SESSION['error_message'])): ?>
-            <div class="alert alert-danger border-0 rounded-4"><i class="bi bi-exclamation-triangle-fill me-2"></i><?= htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?></div>
-        <?php endif; ?>
-
-        <div style="background: #fff; border-radius: 16px; border: 1px solid #e5e7eb; overflow: hidden;">
-            <table class="minimal-table">
-                <thead>
-                    <tr>
-                        <th>Company Name</th>
-                        <th>Contact Person</th>
-                        <th>Email (Restock Alerts)</th>
-                        <th>Phone</th>
-                        <th class="text-end">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($suppliers as $s): ?>
-                        <tr>
-                            <td class="fw-bold"><?= htmlspecialchars($s['supplier_name']) ?></td>
-                            <td><?= htmlspecialchars($s['contact_person'] ?: 'N/A') ?></td>
-                            <td>
-                                <a href="mailto:<?= htmlspecialchars($s['email']) ?>" style="color: #1d4ed8; text-decoration: none; font-weight: 600;">
-                                    <i class="bi bi-envelope me-1"></i><?= htmlspecialchars($s['email']) ?>
-                                </a>
-                            </td>
-                            <td><?= htmlspecialchars($s['phone'] ?: 'N/A') ?></td>
-                            <td class="text-end">
-                                <button class="icon-btn" data-bs-toggle="modal" data-bs-target="#editSupplierModal<?= $s['supplier_id'] ?>"><i class="bi bi-pencil-square"></i></button>
-                                <form action="../controllers/SupplierController.php" method="POST" style="display:inline;" onsubmit="return confirm('Archive this supplier?');">
-                                    <?= csrfField() ?>
-                                    <input type="hidden" name="action" value="archive">
-                                    <input type="hidden" name="supplier_id" value="<?= $s['supplier_id'] ?>">
-                                    <button class="icon-btn archive-btn"><i class="bi bi-archive"></i></button>
-                                </form>
-                            </td>
-                        </tr>
-
-                        <div class="modal fade" id="editSupplierModal<?= $s['supplier_id'] ?>" tabindex="-1">
-                            <div class="modal-dialog modal-dialog-centered">
-                                <div class="modal-content p-2">
-                                    <form action="../controllers/SupplierController.php" method="POST">
-                                        <?= csrfField() ?>
-                                        <input type="hidden" name="action" value="edit">
-                                        <input type="hidden" name="supplier_id" value="<?= $s['supplier_id'] ?>">
-                                        <div class="modal-header border-0">
-                                            <h5 class="fw-bold mb-0">Edit Supplier</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            <div class="mb-4">
-                                                <label class="minimal-label">Company Name *</label>
-                                                <input type="text" name="supplier_name" class="minimal-control" value="<?= htmlspecialchars($s['supplier_name']) ?>" required>
-                                            </div>
-                                            <div class="mb-4">
-                                                <label class="minimal-label">Email Address (For Automated Restock) *</label>
-                                                <input type="email" name="email" class="minimal-control" value="<?= htmlspecialchars($s['email']) ?>" required>
-                                            </div>
-                                            <div class="row g-3 mb-4">
-                                                <div class="col-6">
-                                                    <label class="minimal-label">Contact Person</label>
-                                                    <input type="text" name="contact_person" class="minimal-control" value="<?= htmlspecialchars($s['contact_person']) ?>">
-                                                </div>
-                                                <div class="col-6">
-                                                    <label class="minimal-label">Phone</label>
-                                                    <input type="text" name="phone" class="minimal-control" value="<?= htmlspecialchars($s['phone']) ?>">
-                                                </div>
-                                            </div>
-                                            <div class="mb-2">
-                                                <label class="minimal-label">Address</label>
-                                                <input type="text" name="address" class="minimal-control" value="<?= htmlspecialchars($s['address']) ?>">
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer border-0">
-                                            <button type="submit" class="action-btn w-100 justify-content-center">Save Changes</button>
-                                        </div>
-                                    </form>
-                                </div>
+        <table class="cp-table sp-table">
+            <thead>
+                <tr>
+                    <th scope="col">Company</th>
+                    <th scope="col">Contact person</th>
+                    <th scope="col">Email for restock alerts</th>
+                    <th scope="col">Phone</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
+                </tr>
+            </thead>
+            <tbody id="supplierRows" data-cp-paginate="10" data-cp-noun="supplier">
+                <?php foreach ($suppliers as $s): ?>
+                    <?php $supplierId = intval($s['supplier_id']); ?>
+                    <tr data-search="<?= cpEscape(strtolower($s['supplier_name'] . ' ' . $s['contact_person'] . ' ' . $s['email'] . ' ' . $s['phone'] . ' ' . $s['address'])) ?>">
+                        <td data-label="Company">
+                            <div>
+                                <span class="sp-ref sp-wrap"><?= cpEscape($s['supplier_name']) ?></span>
+                                <?php if (!empty($s['address'])): ?><span class="cp-cell-sub"><?= cpEscape($s['address']) ?></span><?php endif; ?>
                             </div>
+                        </td>
+                        <td data-label="Contact person"><?= cpEscape($s['contact_person'] ?: '—') ?></td>
+                        <td data-label="Email"><a href="mailto:<?= cpEscape($s['email']) ?>" class="sp-mono sp-mail"><?= cpEscape($s['email']) ?></a></td>
+                        <td data-label="Phone" class="sp-nowrap"><?= cpEscape($s['phone'] ?: '—') ?></td>
+                        <td class="cp-num">
+                            <button type="button" class="cp-btn cp-btn-line cp-btn-sm" data-sp-open="#supplierEdit<?= $supplierId ?>">Edit</button>
+                        </td>
+                    </tr>
+
+                    <?php ob_start(); ?>
+                    <div class="sp-dialog" id="supplierEdit<?= $supplierId ?>" role="dialog" aria-modal="true" aria-labelledby="supplierEditTitle<?= $supplierId ?>" hidden>
+                        <div class="sp-dialog-box">
+                            <form action="../controllers/SupplierController.php" method="POST">
+                                <?= csrfField() ?>
+                                <input type="hidden" name="action" value="edit">
+                                <input type="hidden" name="supplier_id" value="<?= $supplierId ?>">
+
+                                <div class="cp-modal-head">
+                                    <div>
+                                        <p class="cp-label"><?= cpEscape($s['supplier_name']) ?></p>
+                                        <h2 class="cp-modal-title" id="supplierEditTitle<?= $supplierId ?>">Edit supplier</h2>
+                                    </div>
+                                    <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+                                </div>
+
+                                <div class="sp-dialog-body"><?= supplierFormFields($s, 'edit' . $supplierId) ?></div>
+
+                                <div class="cp-modal-foot sp-foot-split">
+                                    <div class="sp-foot-left">
+                                        <button type="submit" form="supplierArchive<?= $supplierId ?>" class="cp-btn cp-btn-line sp-btn-cancel">Archive</button>
+                                    </div>
+                                    <button type="button" class="cp-btn cp-btn-line" data-sp-close>Cancel</button>
+                                    <button type="submit" class="cp-btn cp-btn-dark">Save changes</button>
+                                </div>
+                            </form>
                         </div>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
+                    </div>
+                    <form action="../controllers/SupplierController.php" method="POST" id="supplierArchive<?= $supplierId ?>" hidden
+                          data-cp-confirm="The supplier is removed from the list and from the supplier dropdowns. Past records keep their name."
+                          data-cp-confirm-title="Archive this supplier?" data-cp-confirm-yes="Archive" data-cp-confirm-no="Go back">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="action" value="archive">
+                        <input type="hidden" name="supplier_id" value="<?= $supplierId ?>">
+                    </form>
+                    <?php $supplierDialogs .= ob_get_clean(); ?>
+                <?php endforeach; ?>
+
+                <tr class="sp-empty-row" data-sp-empty hidden>
+                    <td colspan="5">No suppliers match your search.</td>
+                </tr>
+                <?php if (empty($suppliers)): ?>
+                    <tr class="sp-empty-row"><td colspan="5">No suppliers yet. Add one so low-stock emails have somewhere to go.</td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </main>
 </div>
 
-<div class="modal fade" id="addSupplierModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content p-2">
-            <form action="../controllers/SupplierController.php" method="POST">
-                <?= csrfField() ?>
-                <input type="hidden" name="action" value="add">
-                <div class="modal-header border-0">
-                    <h5 class="fw-bold mb-0">New Supplier</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<?= $supplierDialogs ?>
+
+<!-- New supplier -->
+<div class="sp-dialog" id="addSupplierDialog" role="dialog" aria-modal="true" aria-labelledby="addSupplierTitle" hidden>
+    <div class="sp-dialog-box">
+        <form action="../controllers/SupplierController.php" method="POST">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="add">
+
+            <div class="cp-modal-head">
+                <div>
+                    <p class="cp-label">Suppliers</p>
+                    <h2 class="cp-modal-title" id="addSupplierTitle">New supplier</h2>
                 </div>
-                <div class="modal-body">
-                    <div class="mb-4">
-                        <label class="minimal-label">Company Name *</label>
-                        <input type="text" name="supplier_name" class="minimal-control" required>
-                    </div>
-                    <div class="mb-4">
-                        <label class="minimal-label">Email Address (For Automated Restock) *</label>
-                        <input type="email" name="email" class="minimal-control" required>
-                    </div>
-                    <div class="row g-3 mb-4">
-                        <div class="col-6">
-                            <label class="minimal-label">Contact Person</label>
-                            <input type="text" name="contact_person" class="minimal-control">
-                        </div>
-                        <div class="col-6">
-                            <label class="minimal-label">Phone</label>
-                            <input type="text" name="phone" class="minimal-control">
-                        </div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="minimal-label">Address</label>
-                        <input type="text" name="address" class="minimal-control">
-                    </div>
-                </div>
-                <div class="modal-footer border-0">
-                    <button type="submit" class="action-btn w-100 justify-content-center">Add Supplier</button>
-                </div>
-            </form>
-        </div>
+                <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+            </div>
+
+            <div class="sp-dialog-body"><?= supplierFormFields(null, 'add') ?></div>
+
+            <div class="cp-modal-foot">
+                <button type="button" class="cp-btn cp-btn-line" data-sp-close>Cancel</button>
+                <button type="submit" class="cp-btn cp-btn-dark">Add supplier</button>
+            </div>
+        </form>
     </div>
 </div>
 

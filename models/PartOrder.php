@@ -2,6 +2,8 @@
 require_once __DIR__ . '/../controllers/RestockAlert.php';
 require_once __DIR__ . '/Billing.php';
 require_once __DIR__ . '/PaymentTransaction.php';
+require_once __DIR__ . '/../includes/business_rules.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 
 class PartOrder {
     private $conn;
@@ -97,11 +99,12 @@ class PartOrder {
         return $stmt;
     }
 
-    public function updateStatus($order_id, $new_status, $user_id) {
+    public function updateStatus($order_id, $new_status, $user_id, $cancellation_reason = '') {
         try {
             $order_id = intval($order_id);
             $user_id = intval($user_id);
             $new_status = trim($new_status);
+            $cancellation_reason = trim((string) $cancellation_reason);
 
             $allowed_statuses = ['Pending', 'Approved', 'Ready for Pickup', 'Completed', 'Cancelled'];
 
@@ -167,6 +170,15 @@ class PartOrder {
             }
 
             if ($new_status === 'Cancelled') {
+                // SRS UC16: a cancellation reason is mandatory.
+                if ($cancellation_reason === '') {
+                    throw new Exception("Please enter the reason for cancelling this order.");
+                }
+
+                if (mb_strlen($cancellation_reason) > 500) {
+                    throw new Exception("Cancellation reason must be 500 characters or fewer.");
+                }
+
                 if (Billing::isGcashPaymentMethod($paymentMethod) && $gcashVerificationStatus === 'Verified' && $gcashPaymentAmount > 0) {
                     throw new Exception("Orders with verified GCash payment cannot be cancelled through the normal flow. Process refund/void manually first.");
                 }
@@ -194,8 +206,20 @@ class PartOrder {
                 }
             }
 
-            $stmtUpdate = $this->conn->prepare("UPDATE part_order SET status = ? WHERE order_id = ?");
-            $stmtUpdate->execute([$new_status, $order_id]);
+            if ($new_status === 'Cancelled') {
+                $stmtUpdate = $this->conn->prepare("
+                    UPDATE part_order
+                    SET status = 'Cancelled',
+                        cancellation_reason = ?,
+                        cancelled_at = NOW(),
+                        cancelled_by = ?
+                    WHERE order_id = ?
+                ");
+                $stmtUpdate->execute([htmlspecialchars(strip_tags($cancellation_reason)), $user_id, $order_id]);
+            } else {
+                $stmtUpdate = $this->conn->prepare("UPDATE part_order SET status = ? WHERE order_id = ?");
+                $stmtUpdate->execute([$new_status, $order_id]);
+            }
 
             $this->conn->commit();
 
@@ -309,6 +333,102 @@ class PartOrder {
             }
             return false;
         }
+    }
+
+    /*
+        Reservation expiry (SRS). A web order holds its parts from "Ready for Pickup" (when its
+        invoice is made). If nothing has been paid RESERVATION_HOLD_DAYS days later, the order is
+        cancelled, its parts go back into stock and its unpaid invoice is voided.
+        Orders with any recorded payment (including verified GCash) never expire.
+        Runs when staff open the dashboards, Web Orders or Billing. Returns the number expired.
+    */
+    public function expireStaleReservations() {
+        $expired = 0;
+
+        try {
+            $stmt = $this->conn->prepare("
+                SELECT po.order_id, i.invoice_id, i.date_issued
+                FROM part_order po
+                JOIN invoice i ON i.part_order_id = po.order_id AND i.is_voided = 0
+                WHERE po.status = 'Ready for Pickup'
+                  AND COALESCE(i.amount_paid, 0) = 0
+                  AND i.date_issued < (NOW() - INTERVAL " . intval(RESERVATION_HOLD_DAYS) . " DAY)
+            ");
+            $stmt->execute();
+            $candidates = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            error_log('Reservation expiry lookup: ' . $e->getMessage());
+            return 0;
+        }
+
+        foreach ($candidates as $row) {
+            $orderId = intval($row['order_id']);
+
+            try {
+                $this->conn->beginTransaction();
+
+                // Re-check inside the transaction so a payment made a moment ago wins.
+                $stmtCheck = $this->conn->prepare("
+                    SELECT po.status, COALESCE(i.amount_paid, 0) AS amount_paid
+                    FROM part_order po
+                    JOIN invoice i ON i.invoice_id = ?
+                    WHERE po.order_id = ?
+                    FOR UPDATE
+                ");
+                $stmtCheck->execute([intval($row['invoice_id']), $orderId]);
+                $current = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+
+                if (!$current || $current['status'] !== 'Ready for Pickup' || floatval($current['amount_paid']) > 0) {
+                    $this->conn->rollBack();
+                    continue;
+                }
+
+                $stmtItems = $this->conn->prepare("SELECT part_id, quantity FROM part_order_item WHERE order_id = ?");
+                $stmtItems->execute([$orderId]);
+                $stmtRestore = $this->conn->prepare("UPDATE part SET quantity_on_hand = quantity_on_hand + ? WHERE part_id = ?");
+                foreach ($stmtItems->fetchAll(PDO::FETCH_ASSOC) as $item) {
+                    $stmtRestore->execute([intval($item['quantity']), intval($item['part_id'])]);
+                }
+
+                $reason = 'Reservation expired: not picked up or paid within ' . RESERVATION_HOLD_DAYS . ' days.';
+                $this->conn->prepare("
+                    UPDATE part_order
+                    SET status = 'Cancelled', cancellation_reason = ?, cancelled_at = NOW(), cancelled_by = NULL
+                    WHERE order_id = ?
+                ")->execute([$reason, $orderId]);
+
+                $this->conn->prepare("UPDATE invoice SET is_voided = 1 WHERE invoice_id = ?")->execute([intval($row['invoice_id'])]);
+
+                $this->conn->commit();
+                $expired++;
+
+                logActivity($this->conn, 'Reservation expired', 'Web order', $orderId, 'PO-' . $orderId, $reason . ' Parts returned to stock; unpaid invoice voided.', null);
+            } catch (Exception $e) {
+                if ($this->conn->inTransaction()) {
+                    $this->conn->rollBack();
+                }
+                error_log('Reservation expiry PO-' . $orderId . ': ' . $e->getMessage());
+            }
+        }
+
+        return $expired;
+    }
+
+    // Unpaid ready orders that expire within the next $hours hours, soonest first (for the Owner dashboard).
+    public function listExpiringSoon($hours = 24) {
+        $stmt = $this->conn->prepare("
+            SELECT po.order_id, c.first_name, c.last_name, po.total_amount,
+                   (i.date_issued + INTERVAL " . intval(RESERVATION_HOLD_DAYS) . " DAY) AS expires_at
+            FROM part_order po
+            JOIN customer c ON c.customer_id = po.customer_id
+            JOIN invoice i ON i.part_order_id = po.order_id AND i.is_voided = 0
+            WHERE po.status = 'Ready for Pickup'
+              AND COALESCE(i.amount_paid, 0) = 0
+              AND (i.date_issued + INTERVAL " . intval(RESERVATION_HOLD_DAYS) . " DAY) <= (NOW() + INTERVAL ? HOUR)
+            ORDER BY expires_at ASC
+        ");
+        $stmt->execute([intval($hours)]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     private function isAllowedStatusTransition($current_status, $new_status) {

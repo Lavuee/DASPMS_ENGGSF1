@@ -222,6 +222,51 @@ class Part {
         return $stmt->execute();
     }
 
+    public function currentQuantity($partId) {
+        $stmt = $this->conn->prepare("SELECT quantity_on_hand FROM " . $this->table_name . " WHERE part_id = ? LIMIT 1");
+        $stmt->execute([intval($partId)]);
+        $quantity = $stmt->fetchColumn();
+
+        return $quantity === false ? null : intval($quantity);
+    }
+
+    /*
+        Stock-In log (SRS 5.2.8, UC17): one row each time stock is added to a part.
+        The supplier name comes from the part's supplier record when one is set.
+    */
+    public function logStockIn($partId, $quantityAdded, $costPerUnit, $supplierId, $userId, $documentRef = '', $notes = '') {
+        $quantityAdded = intval($quantityAdded);
+
+        if ($quantityAdded <= 0) {
+            return true;
+        }
+
+        $supplierName = 'Not specified';
+
+        if (!empty($supplierId)) {
+            $stmtSupplier = $this->conn->prepare("SELECT supplier_name FROM supplier WHERE supplier_id = ? LIMIT 1");
+            $stmtSupplier->execute([intval($supplierId)]);
+            $supplierName = $stmtSupplier->fetchColumn() ?: 'Not specified';
+        }
+
+        $stmt = $this->conn->prepare("
+            INSERT INTO stock_in (
+                part_id, recorded_by, quantity_added, cost_per_unit,
+                supplier_name, supplier_document_ref, date_received, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, CURDATE(), ?)
+        ");
+
+        return $stmt->execute([
+            intval($partId),
+            intval($userId),
+            $quantityAdded,
+            round(floatval($costPerUnit), 2),
+            mb_substr($this->cleanForStorage($supplierName), 0, 100),
+            mb_substr($this->cleanForStorage($documentRef), 0, 50),
+            $this->cleanForStorage($notes) !== '' ? $this->cleanForStorage($notes) : null
+        ]);
+    }
+
     public function archive() {
         $query = "UPDATE " . $this->table_name . "
                   SET is_active = 0

@@ -51,7 +51,7 @@ function requestPasswordReset(PDO $db, $email) {
             "We received a request to reset the password for your DASPMS account.",
             "This link expires in " . PASSWORD_RESET_TTL_MINUTES . " minutes and can be used once."
         ],
-        'Reset Password',
+        'Reset your password',
         buildPasswordResetLink($token),
         "If you did not request a password reset, you can ignore this email. Your password will not change."
     );

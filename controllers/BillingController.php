@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 
 require_once '../config/Database.php';
 require_once '../models/Billing.php';
@@ -65,6 +66,8 @@ try {
         }
 
         if ($billing->receivePayment($invoice_id, $user_id, $amount, $method, $reference_number)) {
+            logActivity($db, 'Recorded payment', 'Invoice', $invoice_id, activityRef($db, 'Invoice', $invoice_id),
+                '₱' . number_format($amount, 2) . ' by ' . $method . ($reference_number !== '' ? ' (ref ' . $reference_number . ')' : ''));
             $_SESSION['success_message'] = "Payment of ₱" . number_format($amount, 2) . " recorded successfully.";
         } else {
             $_SESSION['error_message'] = "Unable to record payment. Please check the invoice balance.";

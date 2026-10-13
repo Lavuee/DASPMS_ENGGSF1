@@ -4,6 +4,8 @@ require_once __DIR__ . '/../includes/auth.php';
 requirePermission('services.manage');
 
 require_once '../config/Database.php';
+require_once '../includes/business_rules.php';
+require_once '../includes/staff_ui.php';
 
 $db = (new Database())->getConnection();
 
@@ -17,6 +19,10 @@ $stmt->execute();
 
 $services = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Extra gallery photos for each service, keyed by service_id
+require_once '../models/ServiceImage.php';
+$extraImagesByService = (new ServiceImage($db))->listForItems(array_column($services, 'service_id'));
+
 function serviceImagePath($image) {
     if (!$image) {
         return '../assets/images/services/default.png';
@@ -24,1001 +30,276 @@ function serviceImagePath($image) {
 
     return '../assets/images/services/' . htmlspecialchars($image);
 }
-?>
 
+$categoryOptions = array_values(array_unique(array_filter(array_column($services, 'category'))));
+sort($categoryOptions);
+
+function serviceWarrantyText($days) {
+    $days = intval($days);
+    return $days > 0 ? $days . '-day warranty' : 'No warranty';
+}
+
+// Fields shared by the Add service and Edit service popups
+function serviceFormFields($s, $id) {
+    $v = function ($key, $default = '') use ($s) {
+        return cpEscape($s !== null ? ($s[$key] ?? $default) : $default);
+    };
+    ob_start();
+    ?>
+    <div class="sp-fgrid">
+        <div class="sp-field">
+            <label for="<?= $id ?>Name">Service name <span class="sp-req">*</span></label>
+            <input type="text" name="service_name" id="<?= $id ?>Name" class="cp-input" value="<?= $v('service_name') ?>" required>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Category">Category <span class="sp-req">*</span></label>
+            <input type="text" name="category" id="<?= $id ?>Category" class="cp-input" list="serviceCategoryList" value="<?= $v('category') ?>" placeholder="e.g. Rewinding Services" required>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Price">Base price <span class="sp-req">*</span></label>
+            <?php $priceLocked = $s !== null && !can('pricing.manage'); // SRS UC09: only the Owner changes prices ?>
+            <input type="number" name="base_price" id="<?= $id ?>Price" class="cp-input" step="0.01" min="0" value="<?= $v('base_price') ?>" required<?= $priceLocked ? ' readonly' : '' ?>>
+            <p class="cp-hint"><?= $priceLocked ? 'Only the Owner can change prices.' : 'Minimum service fee is ' . cpMoney(MIN_SERVICE_FEE) . '. Only the Owner can go lower.' ?></p>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Warranty">Warranty days</label>
+            <input type="number" name="warranty_days" id="<?= $id ?>Warranty" class="cp-input" min="0" value="<?= $v('warranty_days', '30') ?>">
+            <p class="cp-hint">0 means no warranty.</p>
+        </div>
+        <label class="sp-check sp-span" for="<?= $id ?>Down">
+            <input type="checkbox" name="requires_down_payment" id="<?= $id ?>Down" <?= $s !== null && intval($s['requires_down_payment']) === 1 ? 'checked' : '' ?>>
+            <span>Requires a <?= intval(DOWN_PAYMENT_RATE * 100) ?>% down payment</span>
+        </label>
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Desc">Short description <span class="sp-req">*</span></label>
+            <input type="text" name="description" id="<?= $id ?>Desc" class="cp-input" value="<?= $v('description') ?>" required>
+        </div>
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Full">Full description</label>
+            <textarea name="full_description" id="<?= $id ?>Full" class="cp-input" rows="4"><?= $v('full_description') ?></textarea>
+        </div>
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Features">Features</label>
+            <textarea name="features" id="<?= $id ?>Features" class="cp-input" rows="4" placeholder="One per line"><?= $v('features') ?></textarea>
+        </div>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+$serviceDialogs = '';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Services - Norily's Repair Shop</title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
-
-<style>
-    .main-content {
-        overflow-x: hidden;
-    }
-
-    .services-page {
-        width: 100%;
-        max-width: 100%;
-    }
-
-    .services-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-bottom: 1.5rem;
-    }
-
-    .services-header h2 {
-        font-size: 2rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
-    }
-
-    .services-count-text {
-        color: var(--dashboard-text-muted);
-        font-size: 0.95rem;
-        font-weight: 500;
-        margin-bottom: 0;
-    }
-
-    .service-add-btn {
-        min-height: 44px;
-        background: var(--dashboard-primary);
-        border: 1px solid var(--dashboard-primary);
-        color: var(--black);
-        font-size: 0.9rem;
-        font-weight: 800;
-        padding: 0.55rem 1rem;
-        border-radius: 999px;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.45rem;
-        transition: 0.2s ease;
-        white-space: nowrap;
-    }
-
-    .service-add-btn i {
-        font-size: 0.95rem;
-    }
-
-    .service-add-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
-    }
-
-    .services-alert {
-        border-radius: 16px;
-        font-size: 0.92rem;
-        margin-bottom: 1.5rem;
-    }
-
-    .services-table-wrap {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-
-    .services-table {
-        width: 100%;
-        min-width: 1080px;
-        border-collapse: collapse;
-        background: transparent;
-        margin-bottom: 0;
-    }
-
-    .services-table thead th {
-        color: var(--dashboard-text-muted);
-        font-size: 0.82rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        padding: 0.9rem 0.85rem;
-        border-bottom: 1px solid #dcdfe4;
-        background: transparent;
-        white-space: nowrap;
-    }
-
-    .services-table tbody td {
-        padding: 1rem 0.85rem;
-        border-bottom: 1px solid #e8ebef;
-        vertical-align: middle;
-        color: var(--dashboard-text-main);
-        background: transparent;
-        font-size: 0.95rem;
-    }
-
-    .services-table tbody tr:hover td {
-        background: rgba(245, 197, 24, 0.035);
-    }
-
-    .services-table th:last-child,
-    .services-table td:last-child {
-        min-width: 150px;
-    }
-
-    .service-thumb {
-        width: 64px;
-        height: 48px;
-        object-fit: cover;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-    }
-
-    .service-name {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        white-space: nowrap;
-    }
-
-    .service-category-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 999px;
-        padding: 0.42rem 0.72rem;
-        font-size: 0.78rem;
-        font-weight: 900;
-        white-space: nowrap;
-        background: #fff4cc;
-        color: var(--black);
-    }
-
-    .service-description-cell {
-        max-width: 380px;
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        line-height: 1.45;
-    }
-
-    .service-price {
-        color: #047857;
-        font-size: 0.95rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .service-action-group {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.45rem;
-        flex-wrap: nowrap;
-    }
-
-    .service-action-form {
-        margin: 0;
-        display: inline-flex;
-    }
-
-    .icon-action-btn {
-        width: 38px;
-        height: 38px;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-        color: var(--dashboard-text-muted);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        text-decoration: none;
-        font-size: 0.95rem;
-        transition: all 0.2s ease;
-    }
-
-    .icon-action-btn:hover {
-        transform: translateY(-1px);
-    }
-
-    .icon-action-btn.edit-btn:hover {
-        background: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-        color: var(--black);
-    }
-
-    .icon-action-btn.delete-btn:hover {
-        background: #fff1f2;
-        border-color: #fecdd3;
-        color: #be123c;
-    }
-
-    .services-empty-state {
-        padding: 3rem 1rem;
-        text-align: center;
-        color: var(--dashboard-text-muted);
-        font-size: 0.95rem;
-    }
-
-    .services-empty-state i {
-        display: block;
-        color: var(--dashboard-primary);
-        font-size: 2.25rem;
-        margin-bottom: 0.75rem;
-    }
-
-    .services-empty-state .fw-bold {
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        font-weight: 900 !important;
-    }
-
-    .services-pagination-wrap {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.35rem;
-        margin-top: 1rem;
-        flex-wrap: wrap;
-    }
-
-    .service-page-btn {
-        min-width: 38px;
-        min-height: 38px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-        color: var(--dashboard-text-muted);
-        border-radius: 999px;
-        font-size: 0.82rem;
-        font-weight: 900;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.45rem 0.75rem;
-        transition: 0.2s ease;
-    }
-
-    .service-page-btn:hover:not(:disabled) {
-        border-color: var(--dashboard-primary);
-        background: #fffaf0;
-        color: var(--black);
-    }
-
-    .service-page-btn.active {
-        background: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-        color: var(--black);
-    }
-
-    .service-page-btn:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-    }
-
-    .modal-content {
-        border-radius: 20px;
-        border: 1px solid var(--border-light);
-        overflow: hidden;
-    }
-
-    .modal-header {
-        border-bottom: 1px solid var(--border-light);
-        background: #fffdf5;
-    }
-
-    .modal-footer {
-        border-top: none;
-        padding-top: 0.75rem;
-    }
-
-    .modal-title {
-        font-size: 1rem;
-        font-weight: 900;
-    }
-
-    .modal-header small {
-        font-size: 0.78rem;
-    }
-
-    .minimal-service-form {
-        padding: 0.25rem 0;
-    }
-
-    .minimal-section-title {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-primary);
-        margin-bottom: 1.35rem;
-        padding-bottom: 0.85rem;
-        border-bottom: 1px solid #dfe3e8;
-    }
-
-    .minimal-form-grid {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        column-gap: 1.2rem;
-        row-gap: 1.4rem;
-    }
-
-    .minimal-form-field {
-        min-width: 0;
-        grid-column: span 2;
-    }
-
-    .minimal-form-field.half {
-        grid-column: span 3;
-    }
-
-    .minimal-form-field.full {
-        grid-column: 1 / -1;
-    }
-
-    .minimal-label {
-        display: block;
-        font-size: 0.76rem;
-        font-weight: 800;
-        color: var(--dashboard-text-muted);
-        margin-bottom: 0.35rem;
-    }
-
-    .minimal-control {
-        width: 100%;
-        border: none;
-        border-bottom: 1px solid #cfd6df;
-        border-radius: 0;
-        padding: 0.45rem 0 0.55rem 0;
-        font-size: 0.95rem;
-        color: var(--dashboard-text-main);
-        background: transparent;
-        box-shadow: none;
-    }
-
-    .minimal-control:focus {
-        border-color: var(--dashboard-primary);
-        outline: none;
-        box-shadow: none;
-        background: transparent;
-    }
-
-    textarea.minimal-control {
-        min-height: 95px;
-        resize: vertical;
-        line-height: 1.5;
-    }
-
-    input[type="file"].minimal-control {
-        cursor: pointer;
-    }
-
-    .minimal-helper,
-    .features-help {
-        color: var(--dashboard-text-muted);
-        font-size: 0.76rem;
-        margin-top: 0.35rem;
-    }
-
-    .minimal-check-field {
-        grid-column: 1 / -1;
-        display: flex;
-        align-items: center;
-        gap: 0.65rem;
-        padding-top: 0.1rem;
-    }
-
-    .minimal-check-field .form-check-input {
-        width: 18px;
-        height: 18px;
-        margin: 0;
-        border: 1px solid #d1d5db;
-        cursor: pointer;
-    }
-
-    .minimal-check-field .form-check-input:checked {
-        background-color: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-    }
-
-    .minimal-check-field label {
-        margin: 0;
-        color: var(--dashboard-text-main);
-        font-size: 0.92rem;
-        font-weight: 800;
-        cursor: pointer;
-    }
-
-    .minimal-cancel-btn {
-        border: 1px solid #e5e7eb;
-        background: transparent;
-        color: var(--dashboard-text-main);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        transition: 0.2s ease;
-    }
-
-    .minimal-cancel-btn:hover {
-        background: #f8fafc;
-        color: var(--black);
-    }
-
-    .minimal-save-btn {
-        border: 1px solid var(--dashboard-primary);
-        background: var(--dashboard-primary);
-        color: var(--black);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 900;
-        transition: 0.2s ease;
-    }
-
-    .minimal-save-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
-    }
-
-    @media (max-width: 767.98px) {
-        .services-header {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .service-add-btn {
-            width: 100%;
-            justify-content: center;
-        }
-
-        .services-header h2 {
-            font-size: 1.75rem;
-        }
-
-        .services-pagination-wrap {
-            justify-content: center;
-        }
-
-        .minimal-form-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .minimal-form-field,
-        .minimal-form-field.half,
-        .minimal-form-field.full,
-        .minimal-check-field {
-            grid-column: 1 / -1;
-        }
-
-        .modal-footer {
-            flex-direction: column-reverse;
-            align-items: stretch;
-        }
-
-        .minimal-cancel-btn,
-        .minimal-save-btn {
-            width: 100%;
-        }
-    }
-</style>
+<link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
-
 <body>
 
 <div class="app-wrapper">
     <?php include '../includes/sidebar.php'; ?>
 
-    <main class="main-content">
-        <div class="services-page">
+    <main class="main-content sp-page" id="spMain">
 
-            <div class="services-header">
-                <div>
-                    <h2>Services Offered</h2>
-                    <p class="services-count-text">
-                        Manage repair services, public details, images, and base pricing
-                    </p>
+        <?php
+        $pageActions = '<button type="button" class="cp-btn cp-btn-dark" data-sp-open="#addServiceDialog">+ Add service</button>';
+        spPageHead(
+            spPortalLabel() . ' · Stock',
+            'Services',
+            'What customers see on the website and in the transaction form.'
+        );
+        cpFlash();
+        ?>
+
+        <div data-sp-filter="#serviceRows">
+            <div class="sp-toolbar">
+                <div class="sp-search-field-inline">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                    <input type="search" class="cp-input" data-sp-search placeholder="Search service or category" aria-label="Search service or category" autocomplete="off">
                 </div>
-
-                <button
-                    class="btn service-add-btn"
-                    data-bs-toggle="modal"
-                    data-bs-target="#addServiceModal"
-                >
-                    <i class="bi bi-plus-lg"></i>
-                    Add Service
-                </button>
+                <select class="cp-input" data-sp-type aria-label="Category">
+                    <option value="all">All categories</option>
+                    <?php foreach ($categoryOptions as $category): ?>
+                        <option value="<?= cpEscape($category) ?>"><?= cpEscape($category) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="sp-toolbar-actions"><?= $pageActions ?></div>
             </div>
-
-            <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success alert-dismissible fade show services-alert">
-                    <i class="bi bi-check-circle-fill me-2"></i>
-                    <?= htmlspecialchars($_SESSION['success_message']) ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                <?php unset($_SESSION['success_message']); ?>
-            <?php endif; ?>
-
-            <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-danger alert-dismissible fade show services-alert">
-                    <i class="bi bi-exclamation-circle-fill me-2"></i>
-                    <?= htmlspecialchars($_SESSION['error_message']) ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                <?php unset($_SESSION['error_message']); ?>
-            <?php endif; ?>
-
-            <div class="services-table-wrap">
-                <table class="services-table" id="servicesTable">
-                    <thead>
-                        <tr>
-                            <th>Image</th>
-                            <th>Service Name</th>
-                            <th>Category</th>
-                            <th>Description</th>
-                            <th>Base Price</th>
-                            <th class="text-end">Actions</th>
-                        </tr>
-                    </thead>
-
-                    <tbody>
-                        <?php if (empty($services)): ?>
-                            <tr>
-                                <td colspan="6">
-                                    <div class="services-empty-state">
-                                        <i class="bi bi-tools"></i>
-                                        <div class="fw-bold mb-1">No services found</div>
-                                        <div>Add a service to start managing repair service records.</div>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endif; ?>
-
-                        <?php foreach ($services as $s): ?>
-                            <tr class="service-row">
-                                <td>
-                                    <img
-                                        src="<?= serviceImagePath($s['image'] ?? '') ?>"
-                                        alt="<?= htmlspecialchars($s['service_name']) ?>"
-                                        class="service-thumb"
-                                    >
-                                </td>
-
-                                <td>
-                                    <div class="service-name">
-                                        <?= htmlspecialchars($s['service_name']) ?>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <span class="service-category-badge">
-                                        <?= htmlspecialchars($s['category']) ?>
-                                    </span>
-                                </td>
-
-                                <td>
-                                    <div class="service-description-cell">
-                                        <?= htmlspecialchars($s['description']) ?>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <span class="service-price">
-                                        ₱<?= number_format((float) $s['base_price'], 2) ?>
-                                    </span>
-                                </td>
-
-                                <td class="text-end">
-                                    <div class="service-action-group">
-                                        <button
-                                            type="button"
-                                            class="icon-action-btn edit-btn"
-                                            title="Edit Service"
-                                            data-bs-toggle="modal"
-                                            data-bs-target="#editServiceModal<?= (int) $s['service_id'] ?>"
-                                        >
-                                            <i class="bi bi-pencil-square"></i>
-                                        </button>
-
-                                        <form
-                                            action="../controllers/ServiceController.php"
-                                            method="POST"
-                                            class="service-action-form"
-                                            onsubmit="return confirm('Deactivate this service?');"
-                                        >
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="delete">
-                                            <input type="hidden" name="service_id" value="<?= (int) $s['service_id'] ?>">
-
-                                            <button
-                                                type="submit"
-                                                class="icon-action-btn delete-btn"
-                                                title="Deactivate Service"
-                                            >
-                                                <i class="bi bi-trash"></i>
-                                            </button>
-                                        </form>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <div class="modal fade" id="editServiceModal<?= (int) $s['service_id'] ?>" tabindex="-1">
-                                <div class="modal-dialog modal-lg modal-dialog-centered">
-                                    <div class="modal-content">
-                                        <form
-                                            action="../controllers/ServiceController.php"
-                                            method="POST"
-                                            enctype="multipart/form-data"
-                                        >
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="edit">
-                                            <input type="hidden" name="service_id" value="<?= (int) $s['service_id'] ?>">
-                                            <input type="hidden" name="existing_image" value="<?= htmlspecialchars($s['image'] ?? '') ?>">
-
-                                            <div class="modal-header">
-                                                <div>
-                                                    <h5 class="modal-title">Edit Service</h5>
-                                                    <small class="text-muted">
-                                                        Update repair service details and public information.
-                                                    </small>
-                                                </div>
-                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                            </div>
-
-                                            <div class="modal-body">
-                                                <div class="minimal-service-form">
-                                                    <div class="minimal-section-title">Basic Service Details</div>
-
-                                                    <div class="minimal-form-grid">
-                                                        <div class="minimal-form-field half">
-                                                            <label class="minimal-label">Service Name</label>
-                                                            <input
-                                                                type="text"
-                                                                name="service_name"
-                                                                class="minimal-control"
-                                                                value="<?= htmlspecialchars($s['service_name']) ?>"
-                                                                required
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-form-field half">
-                                                            <label class="minimal-label">Category</label>
-                                                            <input
-                                                                type="text"
-                                                                name="category"
-                                                                class="minimal-control"
-                                                                value="<?= htmlspecialchars($s['category']) ?>"
-                                                                required
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-form-field half">
-                                                            <label class="minimal-label">Base Price</label>
-                                                            <input
-                                                                type="number"
-                                                                name="base_price"
-                                                                class="minimal-control"
-                                                                step="0.01"
-                                                                min="0"
-                                                                value="<?= htmlspecialchars($s['base_price']) ?>"
-                                                                required
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-form-field half">
-                                                            <label class="minimal-label">Warranty Days</label>
-                                                            <input
-                                                                type="number"
-                                                                name="warranty_days"
-                                                                class="minimal-control"
-                                                                min="0"
-                                                                value="<?= htmlspecialchars($s['warranty_days']) ?>"
-                                                            >
-                                                        </div>
-
-                                                        <div class="minimal-check-field">
-                                                            <input
-                                                                class="form-check-input"
-                                                                type="checkbox"
-                                                                name="requires_down_payment"
-                                                                id="editDownPayment<?= (int) $s['service_id'] ?>"
-                                                                <?= ((int) $s['requires_down_payment'] === 1) ? 'checked' : '' ?>
-                                                            >
-                                                            <label for="editDownPayment<?= (int) $s['service_id'] ?>">
-                                                                Requires down payment
-                                                            </label>
-                                                        </div>
-
-                                                        <div class="minimal-form-field full">
-                                                            <label class="minimal-label">Short Description</label>
-                                                            <textarea
-                                                                name="description"
-                                                                class="minimal-control"
-                                                                required
-                                                            ><?= htmlspecialchars($s['description']) ?></textarea>
-                                                        </div>
-
-                                                        <div class="minimal-form-field full">
-                                                            <label class="minimal-label">Full Description</label>
-                                                            <textarea
-                                                                name="full_description"
-                                                                class="minimal-control"
-                                                            ><?= htmlspecialchars($s['full_description'] ?? '') ?></textarea>
-                                                        </div>
-
-                                                        <div class="minimal-form-field full">
-                                                            <label class="minimal-label">Features</label>
-                                                            <textarea
-                                                                name="features"
-                                                                class="minimal-control"
-                                                            ><?= htmlspecialchars($s['features'] ?? '') ?></textarea>
-                                                            <div class="minimal-helper">
-                                                                Enter one feature per line.
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="minimal-form-field full">
-                                                            <label class="minimal-label">Service Image</label>
-                                                            <input
-                                                                type="file"
-                                                                name="image"
-                                                                class="minimal-control"
-                                                                accept=".jpg,.jpeg,.png,.webp"
-                                                            >
-                                                            <div class="minimal-helper">
-                                                                Leave empty to keep current image.
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div class="modal-footer">
-                                                <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                                                    Cancel
-                                                </button>
-                                                <button type="submit" class="minimal-save-btn">
-                                                    Save Changes
-                                                </button>
-                                            </div>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="services-pagination-wrap" id="servicesPagination"></div>
-
+            <p class="sp-showing" data-sp-showing aria-live="polite" style="margin-top: 16px">Showing <?= count($services) ?> of <?= count($services) ?></p>
         </div>
+
+        <table class="cp-table sp-table" id="servicesTable">
+            <thead>
+                <tr>
+                    <th scope="col">Image</th>
+                    <th scope="col">Service</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Description</th>
+                    <th scope="col">Base price</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
+                </tr>
+            </thead>
+            <tbody id="serviceRows" data-cp-paginate="10" data-cp-noun="service">
+                <?php foreach ($services as $s): ?>
+                    <?php
+                    $serviceId = intval($s['service_id']);
+                    $extraImages = $extraImagesByService[$s['service_id']] ?? [];
+                    ?>
+                    <tr data-type="<?= cpEscape($s['category']) ?>" data-search="<?= cpEscape(strtolower($s['service_name'] . ' ' . $s['category'] . ' ' . $s['description'])) ?>">
+                        <td data-label="Image"><span class="sp-thumb"><?= cpThumb(!empty($s['image']) ? serviceImagePath($s['image']) : '', $s['service_name']) ?></span></td>
+                        <td data-label="Service">
+                            <div>
+                                <span class="sp-ref sp-wrap"><?= cpEscape($s['service_name']) ?></span>
+                                <span class="cp-cell-sub"><?= serviceWarrantyText($s['warranty_days']) ?></span>
+                            </div>
+                        </td>
+                        <td data-label="Category"><?= cpEscape($s['category']) ?></td>
+                        <td data-label="Description" class="sp-desc"><?= cpEscape($s['description']) ?></td>
+                        <td data-label="Base price" class="sp-nowrap">
+                            <div>
+                                <span class="sp-mono sp-price"><?= cpMoney($s['base_price']) ?></span>
+                                <?php if ((int) $s['requires_down_payment'] === 1): ?>
+                                    <div class="sp-badge-gap"><span class="st pend"><?= intval(DOWN_PAYMENT_RATE * 100) ?>% down</span></div>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td class="cp-num">
+                            <button type="button" class="cp-btn cp-btn-line cp-btn-sm" data-sp-open="#serviceEdit<?= $serviceId ?>">Edit</button>
+                        </td>
+                    </tr>
+
+                    <?php ob_start(); ?>
+                    <div class="sp-dialog" id="serviceEdit<?= $serviceId ?>" role="dialog" aria-modal="true" aria-labelledby="serviceEditTitle<?= $serviceId ?>" hidden>
+                        <div class="sp-dialog-box is-wide">
+                            <form action="../controllers/ServiceController.php" method="POST" enctype="multipart/form-data">
+                                <?= csrfField() ?>
+                                <input type="hidden" name="action" value="edit">
+                                <input type="hidden" name="service_id" value="<?= $serviceId ?>">
+                                <input type="hidden" name="existing_image" value="<?= cpEscape($s['image'] ?? '') ?>">
+
+                                <div class="cp-modal-head">
+                                    <div>
+                                        <p class="cp-label"><?= cpEscape($s['service_name']) ?></p>
+                                        <h2 class="cp-modal-title" id="serviceEditTitle<?= $serviceId ?>">Edit service</h2>
+                                    </div>
+                                    <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+                                </div>
+
+                                <div class="sp-dialog-body">
+                                    <?= serviceFormFields($s, 'edit' . $serviceId) ?>
+
+                                    <p class="sp-dialog-section">Photos</p>
+                                    <div class="sp-fgrid" style="margin-top: 12px">
+                                        <div class="sp-field">
+                                            <label for="editSvcImage<?= $serviceId ?>">Main image</label>
+                                            <div class="sp-photo-current">
+                                                <span class="sp-thumb"><?= cpThumb(!empty($s['image']) ? serviceImagePath($s['image']) : '', $s['service_name']) ?></span>
+                                                <input type="file" name="image" id="editSvcImage<?= $serviceId ?>" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp">
+                                            </div>
+                                            <p class="cp-hint">Leave empty to keep the current image.</p>
+                                        </div>
+                                        <div class="sp-field">
+                                            <label for="editSvcExtra<?= $serviceId ?>">More photos</label>
+                                            <input type="file" name="extra_images[]" id="editSvcExtra<?= $serviceId ?>" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp" multiple>
+                                            <p class="cp-hint">Up to <?= ServiceImage::MAX_PER_ITEM ?> photos (<?= max(0, ServiceImage::MAX_PER_ITEM - count($extraImages)) ?> left).</p>
+                                        </div>
+                                    </div>
+                                    <?php if (!empty($extraImages)): ?>
+                                        <div class="sp-photo-grid">
+                                            <?php foreach ($extraImages as $extra): ?>
+                                                <div class="sp-photo-tile">
+                                                    <img src="<?= serviceImagePath($extra['image']) ?>" alt="Extra photo">
+                                                    <label>Order <input type="number" name="image_order[<?= (int) $extra['image_id'] ?>]" value="<?= (int) $extra['sort_order'] ?>" min="0" max="99" class="cp-input"></label>
+                                                    <label class="sp-check"><input type="checkbox" name="remove_images[]" value="<?= (int) $extra['image_id'] ?>"> <span>Remove</span></label>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+
+                                <div class="cp-modal-foot sp-foot-split">
+                                    <div class="sp-foot-left">
+                                        <button type="submit" form="serviceDeactivate<?= $serviceId ?>" class="cp-btn cp-btn-line sp-btn-cancel">Deactivate</button>
+                                    </div>
+                                    <button type="button" class="cp-btn cp-btn-line" data-sp-close>Cancel</button>
+                                    <button type="submit" class="cp-btn cp-btn-dark">Save changes</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    <form action="../controllers/ServiceController.php" method="POST" id="serviceDeactivate<?= $serviceId ?>" hidden
+                          data-cp-confirm="The service is hidden from the website and the transaction form. Past jobs keep it."
+                          data-cp-confirm-title="Deactivate this service?" data-cp-confirm-yes="Deactivate" data-cp-confirm-no="Go back">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="service_id" value="<?= $serviceId ?>">
+                    </form>
+                    <?php $serviceDialogs .= ob_get_clean(); ?>
+                <?php endforeach; ?>
+
+                <tr class="sp-empty-row" data-sp-empty hidden>
+                    <td colspan="6">No services match your search or filter.</td>
+                </tr>
+                <?php if (empty($services)): ?>
+                    <tr class="sp-empty-row"><td colspan="6">No services yet. Add one so customers can request it.</td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </main>
 </div>
 
-<div class="modal fade" id="addServiceModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <form
-                action="../controllers/ServiceController.php"
-                method="POST"
-                enctype="multipart/form-data"
-            >
-                <?= csrfField() ?>
-                <input type="hidden" name="action" value="add">
+<datalist id="serviceCategoryList">
+    <?php foreach ($categoryOptions as $option): ?><option value="<?= cpEscape($option) ?>"></option><?php endforeach; ?>
+</datalist>
 
-                <div class="modal-header">
-                    <div>
-                        <h5 class="modal-title">Add Service</h5>
-                        <small class="text-muted">
-                            Create a new service record for repair jobs and customer service listings.
-                        </small>
-                    </div>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<?= $serviceDialogs ?>
+
+<!-- Add service -->
+<div class="sp-dialog" id="addServiceDialog" role="dialog" aria-modal="true" aria-labelledby="addServiceTitle" hidden>
+    <div class="sp-dialog-box is-wide">
+        <form action="../controllers/ServiceController.php" method="POST" enctype="multipart/form-data">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="add">
+
+            <div class="cp-modal-head">
+                <div>
+                    <p class="cp-label">Services</p>
+                    <h2 class="cp-modal-title" id="addServiceTitle">Add service</h2>
                 </div>
+                <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+            </div>
 
-                <div class="modal-body">
-                    <div class="minimal-service-form">
-                        <div class="minimal-section-title">Basic Service Details</div>
+            <div class="sp-dialog-body">
+                <?= serviceFormFields(null, 'add') ?>
 
-                        <div class="minimal-form-grid">
-                            <div class="minimal-form-field half">
-                                <label class="minimal-label">Service Name</label>
-                                <input
-                                    type="text"
-                                    name="service_name"
-                                    class="minimal-control"
-                                    required
-                                >
-                            </div>
-
-                            <div class="minimal-form-field half">
-                                <label class="minimal-label">Category</label>
-                                <input
-                                    type="text"
-                                    name="category"
-                                    class="minimal-control"
-                                    placeholder="Example: Rewinding Services"
-                                    required
-                                >
-                            </div>
-
-                            <div class="minimal-form-field half">
-                                <label class="minimal-label">Base Price</label>
-                                <input
-                                    type="number"
-                                    name="base_price"
-                                    class="minimal-control"
-                                    step="0.01"
-                                    min="0"
-                                    required
-                                >
-                            </div>
-
-                            <div class="minimal-form-field half">
-                                <label class="minimal-label">Warranty Days</label>
-                                <input
-                                    type="number"
-                                    name="warranty_days"
-                                    class="minimal-control"
-                                    min="0"
-                                    value="0"
-                                >
-                            </div>
-
-                            <div class="minimal-check-field">
-                                <input
-                                    class="form-check-input"
-                                    type="checkbox"
-                                    name="requires_down_payment"
-                                    id="addDownPayment"
-                                >
-                                <label for="addDownPayment">
-                                    Requires down payment
-                                </label>
-                            </div>
-
-                            <div class="minimal-form-field full">
-                                <label class="minimal-label">Short Description</label>
-                                <textarea
-                                    name="description"
-                                    class="minimal-control"
-                                    required
-                                ></textarea>
-                            </div>
-
-                            <div class="minimal-form-field full">
-                                <label class="minimal-label">Full Description</label>
-                                <textarea
-                                    name="full_description"
-                                    class="minimal-control"
-                                ></textarea>
-                            </div>
-
-                            <div class="minimal-form-field full">
-                                <label class="minimal-label">Features</label>
-                                <textarea
-                                    name="features"
-                                    class="minimal-control"
-                                ></textarea>
-                                <div class="minimal-helper">
-                                    Enter one feature per line.
-                                </div>
-                            </div>
-
-                            <div class="minimal-form-field full">
-                                <label class="minimal-label">Service Image</label>
-                                <input
-                                    type="file"
-                                    name="image"
-                                    class="minimal-control"
-                                    accept=".jpg,.jpeg,.png,.webp"
-                                >
-                            </div>
-                        </div>
+                <p class="sp-dialog-section">Photos</p>
+                <div class="sp-fgrid" style="margin-top: 12px">
+                    <div class="sp-field">
+                        <label for="addSvcImage">Main image</label>
+                        <input type="file" name="image" id="addSvcImage" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp">
+                    </div>
+                    <div class="sp-field">
+                        <label for="addSvcExtra">More photos</label>
+                        <input type="file" name="extra_images[]" id="addSvcExtra" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp" multiple>
+                        <p class="cp-hint">Optional. Up to <?= ServiceImage::MAX_PER_ITEM ?> photos.</p>
                     </div>
                 </div>
+            </div>
 
-                <div class="modal-footer">
-                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                        Cancel
-                    </button>
-                    <button type="submit" class="minimal-save-btn">
-                        Add Service
-                    </button>
-                </div>
-            </form>
-        </div>
+            <div class="cp-modal-foot">
+                <button type="button" class="cp-btn cp-btn-line" data-sp-close>Cancel</button>
+                <button type="submit" class="cp-btn cp-btn-dark">Add service</button>
+            </div>
+        </form>
     </div>
 </div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    const ITEMS_PER_PAGE = 5;
-
-    const serviceRows = Array.from(document.querySelectorAll('.service-row'));
-    const servicesPagination = document.getElementById('servicesPagination');
-
-    let currentPage = 1;
-
-    function renderPagination(totalPages) {
-        if (!servicesPagination) {
-            return;
-        }
-
-        servicesPagination.innerHTML = '';
-
-        if (totalPages <= 1) {
-            servicesPagination.style.display = 'none';
-            return;
-        }
-
-        servicesPagination.style.display = 'flex';
-
-        const prevButton = document.createElement('button');
-        prevButton.type = 'button';
-        prevButton.className = 'service-page-btn';
-        prevButton.innerHTML = '&laquo;';
-        prevButton.disabled = currentPage === 1;
-        prevButton.addEventListener('click', function () {
-            if (currentPage > 1) {
-                currentPage--;
-                applyServicePagination();
-            }
-        });
-        servicesPagination.appendChild(prevButton);
-
-        for (let page = 1; page <= totalPages; page++) {
-            const pageButton = document.createElement('button');
-            pageButton.type = 'button';
-            pageButton.className = 'service-page-btn' + (page === currentPage ? ' active' : '');
-            pageButton.textContent = page;
-            pageButton.addEventListener('click', function () {
-                currentPage = page;
-                applyServicePagination();
-            });
-            servicesPagination.appendChild(pageButton);
-        }
-
-        const nextButton = document.createElement('button');
-        nextButton.type = 'button';
-        nextButton.className = 'service-page-btn';
-        nextButton.innerHTML = '&raquo;';
-        nextButton.disabled = currentPage === totalPages;
-        nextButton.addEventListener('click', function () {
-            if (currentPage < totalPages) {
-                currentPage++;
-                applyServicePagination();
-            }
-        });
-        servicesPagination.appendChild(nextButton);
-    }
-
-    function applyServicePagination() {
-        const totalPages = Math.ceil(serviceRows.length / ITEMS_PER_PAGE) || 1;
-
-        if (currentPage > totalPages) {
-            currentPage = totalPages;
-        }
-
-        const start = (currentPage - 1) * ITEMS_PER_PAGE;
-        const end = start + ITEMS_PER_PAGE;
-
-        serviceRows.forEach(function (row) {
-            row.style.display = 'none';
-        });
-
-        serviceRows.slice(start, end).forEach(function (row) {
-            row.style.display = '';
-        });
-
-        renderPagination(totalPages);
-    }
-
-    applyServicePagination();
-});
-</script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 

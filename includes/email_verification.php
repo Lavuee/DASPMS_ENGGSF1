@@ -55,7 +55,7 @@ function sendVerificationEmail($email, $firstName, $token) {
             "Welcome to DASPMS! Before you can log in and start tracking your vehicle service records, we need to verify your email address.",
             "This link expires in " . EMAIL_VERIFICATION_TTL_HOURS . " hours."
         ],
-        'Verify Email Address',
+        'Verify your email address',
         buildVerificationLink($token),
         "If you did not create an account, you can safely ignore this email."
     );

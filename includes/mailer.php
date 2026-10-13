@@ -13,8 +13,10 @@ $mailLastError = '';
 /*
     Sends an HTML email. Returns true on success; on failure the reason is
     available through mailLastError() (never shown to end users).
+    $replyTo (optional): address that "Reply" in the recipient's email app should go to.
+    $fromName (optional): sender name shown in the inbox instead of MAIL_FROM_NAME.
 */
-function sendHtmlMail($to, $subject, $html) {
+function sendHtmlMail($to, $subject, $html, $replyTo = null, $fromName = null) {
     global $mailLastError;
     $mailLastError = '';
 
@@ -23,20 +25,25 @@ function sendHtmlMail($to, $subject, $html) {
         return false;
     }
 
+    if ($replyTo !== null && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
+        $replyTo = null;
+    }
+
+    $fromName = ($fromName !== null && trim($fromName) !== '') ? trim($fromName) : MAIL_FROM_NAME;
     $driver = strtolower((string)env('MAIL_DRIVER', 'mail'));
 
     if ($driver === 'log') {
-        return logMail($to, $subject, $html);
+        return logMail($to, $subject, $html, $replyTo, $fromName);
     }
 
     if ($driver === 'smtp') {
-        return sendSmtpMail($to, $subject, $html);
+        return sendSmtpMail($to, $subject, $html, $replyTo, $fromName);
     }
 
     $headers = "MIME-Version: 1.0\r\n";
     $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-    $headers .= "From: " . MAIL_FROM_NAME . " <" . MAIL_FROM_ADDRESS . ">\r\n";
-    $headers .= "Reply-To: " . MAIL_FROM_ADDRESS . "\r\n";
+    $headers .= "From: " . $fromName . " <" . MAIL_FROM_ADDRESS . ">\r\n";
+    $headers .= "Reply-To: " . ($replyTo ?? MAIL_FROM_ADDRESS) . "\r\n";
 
     if (@mail($to, $subject, $html, $headers)) {
         return true;
@@ -47,7 +54,7 @@ function sendHtmlMail($to, $subject, $html) {
     return false;
 }
 
-function sendSmtpMail($to, $subject, $html) {
+function sendSmtpMail($to, $subject, $html, $replyTo = null, $fromName = MAIL_FROM_NAME) {
     global $mailLastError;
 
     require_once __DIR__ . '/../vendor/autoload.php';
@@ -60,15 +67,19 @@ function sendSmtpMail($to, $subject, $html) {
         $mail->Port = intval(env('SMTP_PORT', 587));
         $mail->SMTPAuth = true;
         $mail->Username = (string)env('SMTP_USERNAME', '');
-        $mail->Password = (string)env('SMTP_PASSWORD', '');
+        // Gmail shows App Passwords in groups of four ("abcd efgh ..."); the spaces are not part of it
+        $mail->Password = preg_replace('/\s+/', '', (string)env('SMTP_PASSWORD', ''));
         $mail->SMTPSecure = env('SMTP_ENCRYPTION', 'tls') === 'ssl'
             ? PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
             : PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
         $mail->CharSet = 'UTF-8';
         $mail->Timeout = 15;
 
-        $mail->setFrom(MAIL_FROM_ADDRESS, MAIL_FROM_NAME);
+        $mail->setFrom(MAIL_FROM_ADDRESS, $fromName);
         $mail->addAddress($to);
+        if ($replyTo) {
+            $mail->addReplyTo($replyTo);
+        }
         $mail->isHTML(true);
         $mail->Subject = $subject;
         $mail->Body = $html;
@@ -81,14 +92,15 @@ function sendSmtpMail($to, $subject, $html) {
     }
 }
 
-function logMail($to, $subject, $html) {
+function logMail($to, $subject, $html, $replyTo = null, $fromName = MAIL_FROM_NAME) {
     $logDir = __DIR__ . '/../logs';
 
     if (!is_dir($logDir)) {
         mkdir($logDir, 0755, true);
     }
 
-    $entry = "===== " . date('Y-m-d H:i:s') . " =====\nTo: $to\nSubject: $subject\n\n$html\n\n";
+    $replyLine = $replyTo ? "Reply-To: $replyTo\n" : '';
+    $entry = "===== " . date('Y-m-d H:i:s') . " =====\nFrom: $fromName\nTo: $to\n{$replyLine}Subject: $subject\n\n$html\n\n";
     return file_put_contents($logDir . '/mail.log', $entry, FILE_APPEND | LOCK_EX) !== false;
 }
 
@@ -103,41 +115,28 @@ function mailEscape($value) {
 }
 
 /*
-    Wraps content in the shop's standard email layout.
-    $bodyHtml must already be escaped.
+    Plain email frame used by every email DASPMS sends: ordinary text on white, like a
+    message typed in Gmail, with one small gray line at the bottom. Inline styles only,
+    because many email apps (Gmail, Outlook) ignore <style> blocks.
+    $bodyHtml must already be escaped. $footerText replaces the default bottom line.
 */
-function renderEmailLayout($bodyHtml) {
+function renderEmailLayout($bodyHtml, $footerText = '') {
+    $footer = $footerText !== ''
+        ? mailEscape($footerText)
+        : "Sent automatically by DASPMS &middot; Norily's Vehicle Repair Shop, Vila Rosario, La Union";
+
     return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
-        .wrapper { width: 100%; background-color: #f4f4f5; padding: 40px 0; }
-        .container { max-width: 540px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05); border: 1px solid #e4e4e7; }
-        .header { background-color: #ffffff; padding: 30px 40px 20px; text-align: center; border-bottom: 1px solid #f4f4f5; }
-        .header h1 { margin: 0; color: #18181b; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
-        .body { padding: 40px; color: #3f3f46; font-size: 16px; line-height: 1.6; }
-        .body p { margin: 0 0 20px 0; }
-        .btn-wrapper { text-align: center; margin: 35px 0; }
-        .btn { display: inline-block; padding: 14px 32px; background-color: #f5c518; color: #111111 !important; text-decoration: none; border-radius: 999px; font-weight: 900; font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 4px 12px rgba(245, 197, 24, 0.25); }
-        .footer { background-color: #fafafa; padding: 24px 40px; text-align: center; font-size: 13px; color: #a1a1aa; border-top: 1px solid #e4e4e7; }
-    </style>
 </head>
-<body>
-    <div class="wrapper">
-        <div class="container">
-            <div class="header">
-                <h1>Norily's Repair Shop</h1>
-            </div>
-            <div class="body">
-                {$bodyHtml}
-            </div>
-            <div class="footer">
-                <p>&copy; 2026 Norily's Vehicle Repair Shop. All rights reserved.</p>
-            </div>
+<body style="margin:0; padding:0; background-color:#ffffff;">
+    <div style="max-width:600px; padding:16px; color:#202124; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.6;">
+        {$bodyHtml}
+        <div style="margin-top:24px; padding-top:12px; border-top:1px solid #dadce0; color:#5f6368; font-size:12px;">
+            {$footer}
         </div>
     </div>
 </body>
@@ -145,19 +144,43 @@ function renderEmailLayout($bodyHtml) {
 HTML;
 }
 
-// Standard email with a greeting, message paragraphs and one call-to-action button.
-function renderActionEmail($name, array $paragraphs, $buttonLabel, $url, $footnote) {
+// Paragraph of plain text (already escaped)
+function emailParagraph($html) {
+    return '<p style="margin:0 0 14px;">' . $html . '</p>';
+}
+
+// Plain link for an email action (verify, reset password)
+function renderEmailLink($label, $url) {
+    return '<a href="' . mailEscape($url) . '" style="color:#1a73e8; font-weight:bold;">' . mailEscape($label) . '</a>';
+}
+
+// Label / value lines, e.g. Name: Maria Santos ($valueHtml already escaped)
+function emailDetails(array $rows) {
+    $html = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px; font-size:14px;">';
+    foreach ($rows as $label => $valueHtml) {
+        $html .= '<tr><td style="padding:2px 18px 2px 0; font-weight:bold; vertical-align:top; white-space:nowrap;">' . mailEscape($label) . ':</td>'
+            . '<td style="padding:2px 0;">' . $valueHtml . '</td></tr>';
+    }
+    return $html . '</table>';
+}
+
+/*
+    Greeting, message paragraphs, one action link and a closing note.
+    Used by the account emails (verify email, reset password).
+*/
+function renderActionEmail($name, array $paragraphs, $linkLabel, $url, $footnote) {
     $safeUrl = mailEscape($url);
-    $body = '<p>Hi <strong>' . mailEscape($name) . '</strong>,</p>';
+    $body = emailParagraph('Hi ' . mailEscape($name) . ',');
 
     foreach ($paragraphs as $paragraph) {
-        $body .= '<p>' . mailEscape($paragraph) . '</p>';
+        $body .= emailParagraph(mailEscape($paragraph));
     }
 
-    $body .= '<div class="btn-wrapper"><a href="' . $safeUrl . '" class="btn">' . mailEscape($buttonLabel) . '</a></div>'
-        . '<p style="font-size: 14px; color: #71717a;">If the button above doesn\'t work, copy and paste this link into your web browser:</p>'
-        . '<p style="font-size: 13px; word-break: break-all;"><a href="' . $safeUrl . '" style="color: #3b82f6;">' . $safeUrl . '</a></p>'
-        . '<p style="font-size: 13px; color: #71717a;">' . mailEscape($footnote) . '</p>';
+    $body .= emailParagraph(renderEmailLink($linkLabel, $url))
+        . emailParagraph('<span style="color:#5f6368; font-size:13px;">If the link does not open, copy this address into your web browser:<br>'
+            . '<a href="' . $safeUrl . '" style="color:#1a73e8; word-break:break-all;">' . $safeUrl . '</a></span>')
+        . emailParagraph(mailEscape($footnote))
+        . '<p style="margin:0;">Thank you,<br>Norily&#039;s Vehicle Repair Shop</p>';
 
     return renderEmailLayout($body);
 }

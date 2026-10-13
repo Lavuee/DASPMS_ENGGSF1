@@ -257,8 +257,10 @@ function verifyPostRequest() {
     }
 
     if (!isSameOriginRequest()) {
-        http_response_code(403);
-        exit('Request blocked: cross-site form submission.');
+        require_once __DIR__ . '/error_page.php';
+        renderErrorPage(403, 'Security check', 'Request blocked',
+            'This form was sent from outside DASPMS, so it was stopped to protect your account. Please open the page again and resubmit.',
+            [['label' => 'Back to home', 'href' => '', 'primary' => true], ['label' => '← Go back', 'href' => 'javascript:history.back()']]);
     }
 
     if (!isValidCsrfToken($_POST['csrf_token'] ?? null)) {

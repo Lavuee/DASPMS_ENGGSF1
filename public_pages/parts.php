@@ -14,7 +14,7 @@ $dbError = '';
 
 try {
     $query = "
-        SELECT part_id, category, part_name, description, image
+        SELECT part_id, category, brand, part_name, description, image
         FROM part
         WHERE is_active = 1
         ORDER BY category ASC, part_name ASC
@@ -36,6 +36,21 @@ function partImagePath($image)
 {
     return '../assets/images/parts/' . htmlspecialchars($image ?: 'default.png', ENT_QUOTES, 'UTF-8');
 }
+
+function categoryKey($category)
+{
+    return md5(strtolower($category));
+}
+
+// The reserve button sends visitors to log in, customers to the reservation page, and staff to their dashboard.
+if (isLoggedIn()) {
+    $isCustomer = ($_SESSION['role'] ?? '') === 'Customer';
+    $reserveUrl = '../views/' . ($isCustomer ? 'customer_parts.php' : dashboardForRole($_SESSION['role'] ?? ''));
+    $reserveLabel = $isCustomer ? 'Reserve parts' : 'Go to dashboard';
+} else {
+    $reserveUrl = '../views/login.php';
+    $reserveLabel = 'Log in to reserve';
+}
 ?>
 
 <!DOCTYPE html>
@@ -44,126 +59,163 @@ function partImagePath($image)
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Parts | Norily's Vehicle Repair Shop</title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
+<link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
+<script>document.documentElement.classList.add('js');window.__motionFallback=setTimeout(function(){document.documentElement.classList.add('reveal-all');},3000);</script>
+<script src="../assets/js/motion.js?v=<?= filemtime(__DIR__ . '/../assets/js/motion.js') ?>" defer></script>
 
 <style>
     .parts-page {
-        background: #f4f5f7;
+        background: #eeeae2;
         min-height: 100vh;
     }
 
     .parts-hero {
-        padding: 3rem 0 1.2rem;
+        padding: 1.5rem 0 0;
     }
 
-    .parts-header {
+    .parts-breadcrumb {
         display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        flex-wrap: wrap;
-        padding-bottom: 1.1rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.10);
+        align-items: center;
+        gap: 0.6rem;
+        list-style: none;
+        padding: 0;
+        margin: 0 0 3.5rem;
+        color: var(--ink-2);
+        font-size: var(--fs-crumb);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
     }
 
-    .parts-kicker {
-        color: #f0b400;
-        font-size: 0.78rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.9px;
-        margin-bottom: 0.45rem;
+    .parts-breadcrumb a {
+        color: var(--ink-2);
+        text-decoration: none;
+        transition: color 0.2s ease;
+    }
+
+    .parts-breadcrumb a:hover {
+        color: var(--ink);
+    }
+
+    .parts-breadcrumb li + li::before {
+        content: "/";
+        margin-right: 0.6rem;
     }
 
     .parts-title {
-        color: #111827;
-        font-size: clamp(1.8rem, 3vw, 2.35rem);
-        font-weight: 900;
-        line-height: 1.05;
-        letter-spacing: -0.7px;
-        margin-bottom: 0.45rem;
+        color: var(--ink);
+        font-size: var(--fs-page-title);
+        font-weight: 400;
+        font-stretch: 125%;
+        text-transform: uppercase;
+        line-height: 1;
+        margin-bottom: 2.5rem;
     }
 
+
     .parts-subtext {
-        color: #5f6b7a;
-        font-size: 0.98rem;
-        line-height: 1.6;
-        max-width: 640px;
-        margin-bottom: 0;
+        color: var(--ink-2);
+        font-size: var(--fs-lead);
+        line-height: 1.75;
+        max-width: 560px;
+        margin-bottom: 1.75rem;
     }
 
     .parts-login-btn {
-        min-height: 42px;
-        border-radius: 999px;
-        padding: 0.6rem 1rem;
-        background: #f5c518;
-        border: 1px solid #f5c518;
-        color: #111827;
-        font-size: 0.88rem;
-        font-weight: 900;
         display: inline-flex;
         align-items: center;
-        gap: 0.45rem;
+        justify-content: center;
+        min-height: 64px;
+        padding: 0 2.1rem;
+        background: var(--ink);
+        border: 1px solid var(--ink);
+        color: var(--sheet);
+        font-size: 0.9rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
         text-decoration: none;
-        white-space: nowrap;
-        transition: 0.2s ease;
+        transition: background 0.2s ease, border-color 0.2s ease;
     }
 
     .parts-login-btn:hover {
-        background: #111827;
-        border-color: #111827;
-        color: #fff;
+        background: var(--olive);
+        border-color: var(--olive);
+        color: var(--sheet);
     }
 
     .parts-catalog {
-        padding: 1rem 0 4.2rem;
+        padding: 0 0 4.2rem;
     }
 
     .parts-toolbar {
-        display: grid;
-        grid-template-columns: minmax(260px, 1fr) 150px;
-        gap: 0.8rem;
-        align-items: end;
-        margin-bottom: 1.05rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.08);
-        position: relative;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin: 2.25rem 0 2.5rem;
+        padding-top: 1.75rem;
+        border-top: 1px solid var(--ink);
     }
 
-    .parts-filter-label {
-        display: block;
-        color: #6b7280;
-        font-size: 0.76rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        margin-bottom: 0.35rem;
+    .category-nav {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.4rem 1.1rem;
+    }
+
+    .category-chip {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 50%;
+        color: var(--ink-2);
+        font-size: 1.05rem;
+        padding: 0.35rem 0.25rem;
+        cursor: pointer;
+        transition: color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .category-chip:hover {
+        color: var(--ink);
+    }
+
+    /* Active filter: hand-drawn style oval around the label */
+    .category-chip.active {
+        color: var(--ink);
+        border-color: var(--ink);
+    }
+
+    .parts-search-box {
+        position: relative;
+        flex: 0 1 450px;
     }
 
     .parts-search-wrap {
-        min-height: 44px;
         display: flex;
         align-items: center;
-        gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.50);
-        border: 1px solid rgba(17, 24, 39, 0.08);
-        border-radius: 16px;
-        padding: 0.65rem 0.9rem;
-        transition: 0.2s ease;
+        gap: 1rem;
+        min-height: 60px;
+        padding: 0 1.1rem;
+        background: var(--sheet);
+        border: 1px solid var(--ink);
+        transition: box-shadow 0.2s ease;
     }
 
     .parts-search-wrap:focus-within {
-        background: rgba(255, 255, 255, 0.88);
-        border-color: rgba(245, 197, 24, 0.72);
-        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.12);
+        box-shadow: 0 0 0 3px rgba(94, 107, 52, 0.2);
     }
 
-    .parts-search-wrap i {
-        color: #5f6b7a;
-        font-size: 1.05rem;
+    .parts-search-label {
+        color: var(--ink-2);
+        font-size: 0.8rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0;
         flex-shrink: 0;
     }
 
@@ -172,53 +224,46 @@ function partImagePath($image)
         border: none;
         outline: none;
         background: transparent;
-        color: #111827;
-        font-size: 0.92rem;
-        font-weight: 500;
+        color: var(--ink);
+        font-size: 1.05rem;
     }
 
     .parts-search::placeholder {
-        color: #6b7280;
+        color: var(--ink-3);
     }
 
     .parts-clear-btn {
-        min-height: 44px;
-        border-radius: 999px;
-        border: 1px solid rgba(17, 24, 39, 0.10);
-        background: rgba(255, 255, 255, 0.50);
-        color: #111827;
-        font-size: 0.88rem;
-        font-weight: 900;
-        transition: 0.2s ease;
+        display: none;
+        background: transparent;
+        border: 0;
+        color: var(--ink-2);
+        font-size: 1.4rem;
+        line-height: 1;
+        padding: 0 0.1rem;
+        cursor: pointer;
     }
 
-    .parts-clear-btn:hover {
-        background: #f5c518;
-        border-color: #f5c518;
-        color: #111827;
+    .parts-clear-btn.visible {
+        display: block;
     }
 
     .parts-suggestions {
         display: none;
         position: absolute;
         left: 0;
-        right: 166px;
-        top: calc(100% - 0.55rem);
-        background: #fff;
-        border: 1px solid rgba(17, 24, 39, 0.10);
-        border-radius: 14px;
-        box-shadow: 0 18px 38px rgba(17, 24, 39, 0.10);
+        right: 0;
+        top: calc(100% + 4px);
+        background: var(--sheet);
+        border: 1px solid var(--ink);
         z-index: 20;
-        overflow: hidden;
     }
 
     .parts-suggestion-item {
-        padding: 0.72rem 0.9rem;
+        padding: 0.75rem 1.1rem;
         cursor: pointer;
-        color: #111827;
-        font-size: 0.84rem;
-        font-weight: 800;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+        color: var(--ink);
+        font-size: 0.95rem;
+        border-bottom: 1px solid var(--line);
     }
 
     .parts-suggestion-item:last-child {
@@ -226,38 +271,9 @@ function partImagePath($image)
     }
 
     .parts-suggestion-item:hover {
-        background: rgba(245, 197, 24, 0.10);
+        background: var(--tile);
     }
 
-    .category-nav {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 0.6rem;
-        margin-bottom: 1.6rem;
-    }
-
-    .category-chip {
-        min-height: 36px;
-        border-radius: 999px;
-        border: 1px solid rgba(17, 24, 39, 0.10);
-        background: rgba(255, 255, 255, 0.38);
-        color: #5f6b7a;
-        font-size: 0.82rem;
-        font-weight: 900;
-        padding: 0.47rem 0.82rem;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        transition: 0.2s ease;
-    }
-
-    .category-chip:hover {
-        background: #f5c518;
-        border-color: #f5c518;
-        color: #111827;
-    }
 
     .parts-category {
         margin-bottom: 2.5rem;
@@ -276,7 +292,7 @@ function partImagePath($image)
     }
 
     .parts-category-title {
-        color: #111827;
+        color: #26241f;
         font-size: 0.88rem;
         font-weight: 900;
         text-transform: uppercase;
@@ -285,7 +301,7 @@ function partImagePath($image)
     }
 
     .parts-category-count {
-        color: #6b7280;
+        color: #5e5a51;
         font-size: 0.82rem;
         font-weight: 800;
     }
@@ -303,7 +319,7 @@ function partImagePath($image)
         align-items: center;
         text-align: center;
         padding: 1.25rem 1rem 1.15rem;
-        border: 1px solid rgba(17, 24, 39, 0.10);
+        border: 1px solid rgba(38, 36, 31, 0.10);
         border-radius: 18px;
         background: transparent;
         transition: 0.2s ease;
@@ -311,7 +327,7 @@ function partImagePath($image)
 
     .part-card:hover {
         transform: translateY(-3px);
-        border-color: rgba(245, 197, 24, 0.50);
+        border-color: rgba(94, 107, 52, 0.50);
         background: rgba(255, 255, 255, 0.12);
     }
 
@@ -336,18 +352,18 @@ function partImagePath($image)
         max-height: 170px;
         object-fit: contain;
         display: block;
-        filter: drop-shadow(0 18px 18px rgba(17, 24, 39, 0.10));
+        filter: drop-shadow(0 18px 18px rgba(38, 36, 31, 0.10));
         transition: 0.2s ease;
     }
 
     .part-card:hover .part-image-wrap img {
         transform: scale(1.035);
-        filter: drop-shadow(0 22px 20px rgba(17, 24, 39, 0.13));
+        filter: drop-shadow(0 22px 20px rgba(38, 36, 31, 0.13));
     }
 
     .part-name {
         width: 100%;
-        color: #111827;
+        color: #26241f;
         font-size: 1rem;
         font-weight: 900;
         text-transform: uppercase;
@@ -357,7 +373,7 @@ function partImagePath($image)
     }
 
     .part-category-label {
-        color: #f0b400;
+        color: #5e6b34;
         font-size: 0.72rem;
         font-weight: 900;
         text-transform: uppercase;
@@ -366,7 +382,7 @@ function partImagePath($image)
     }
 
     .part-desc {
-        color: #5f6b7a;
+        color: #5e5a51;
         font-size: 0.82rem;
         font-weight: 600;
         line-height: 1.5;
@@ -380,9 +396,9 @@ function partImagePath($image)
     }
 
     .part-details-btn {
-        border: 1px solid rgba(17, 24, 39, 0.12);
+        border: 1px solid rgba(38, 36, 31, 0.12);
         background: rgba(255, 255, 255, 0.42);
-        color: #111827;
+        color: #26241f;
         border-radius: 999px;
         padding: 0.5rem 0.95rem;
         font-size: 0.78rem;
@@ -394,18 +410,18 @@ function partImagePath($image)
     }
 
     .part-details-btn:hover {
-        background: #f5c518;
-        border-color: #f5c518;
-        color: #111827;
+        background: #5e6b34;
+        border-color: #5e6b34;
+        color: #f8f6f1;
     }
 
     .parts-no-results,
     .parts-empty-state {
-        border-top: 1px solid rgba(17, 24, 39, 0.10);
-        border-bottom: 1px solid rgba(17, 24, 39, 0.10);
+        border-top: 1px solid rgba(38, 36, 31, 0.10);
+        border-bottom: 1px solid rgba(38, 36, 31, 0.10);
         padding: 3rem 1rem;
         text-align: center;
-        color: #5f6b7a;
+        color: #5e5a51;
         background: transparent;
         margin-top: 1rem;
         font-size: 0.92rem;
@@ -426,31 +442,16 @@ function partImagePath($image)
     }
 
     @media (max-width: 767.98px) {
-        .parts-hero {
-            padding: 2.3rem 0 1rem;
-        }
-
-        .parts-header {
-            flex-direction: column;
-            align-items: stretch;
+        .parts-breadcrumb {
+            margin-bottom: 2.25rem;
         }
 
         .parts-login-btn {
             width: 100%;
-            justify-content: center;
         }
 
-        .parts-toolbar {
-            grid-template-columns: 1fr;
-        }
-
-        .parts-clear-btn {
-            width: 100%;
-        }
-
-        .parts-suggestions {
-            right: 0;
-            top: calc(100% - 4.05rem);
+        .parts-search-box {
+            flex-basis: 100%;
         }
 
         .parts-grid {
@@ -467,12 +468,12 @@ function partImagePath($image)
     }
 
     @media (max-width: 575.98px) {
-        .parts-title {
-            font-size: 1.55rem;
+        .parts-subtext {
+            font-size: var(--fs-lead);
         }
 
-        .parts-subtext {
-            font-size: 0.9rem;
+        .category-chip {
+            font-size: 0.95rem;
         }
     }
 </style>
@@ -480,68 +481,71 @@ function partImagePath($image)
 
 <body>
 
-<?php include '../partials/public-navbar.php'; ?>
+<?php $activePage = 'parts'; include '../partials/public-navbar.php'; ?>
 
 <main class="parts-page">
     <section class="parts-hero">
         <div class="container">
-            <div class="parts-header">
-                <div>
-                    <div class="parts-kicker">Auto Parts</div>
+            <nav aria-label="Breadcrumb">
+                <ol class="parts-breadcrumb">
+                    <li><a href="../" class="link-grow">Home</a></li>
+                    <li aria-current="page">Parts</li>
+                </ol>
+            </nav>
 
-                    <h1 class="parts-title">
-                        Available Parts and Repair Supplies
-                    </h1>
+            <h1 class="parts-title">
+                Auto <span class="title-band">Parts</span>
+            </h1>
 
-                    <p class="parts-subtext">
-                        Browse selected auto parts, electrical supplies, and repair materials
-                        available from Norily's Vehicle Repair Shop.
-                    </p>
-                </div>
+            <p class="parts-subtext">
+                Electrical supplies and repair parts in stock at the shop.
+                Reserve online and pick up in Vila Rosario; staff confirm
+                stock before release.
+            </p>
 
-                <a href="../views/login.php" class="parts-login-btn">
-                    <i class="bi bi-box-arrow-in-right"></i>
-                    Login to Reserve
-                </a>
-            </div>
+            <a href="<?= htmlspecialchars($reserveUrl, ENT_QUOTES, 'UTF-8') ?>" class="parts-login-btn">
+                <?= htmlspecialchars($reserveLabel, ENT_QUOTES, 'UTF-8') ?>
+            </a>
         </div>
     </section>
 
     <section class="parts-catalog">
         <div class="container">
             <div class="parts-toolbar">
-                <div>
-                    <label class="parts-filter-label" for="partsSearch">Search</label>
+                <div class="category-nav" role="group" aria-label="Filter by category">
+                    <button type="button" class="category-chip active" data-category="all" aria-pressed="true">All parts</button>
 
+                    <?php if (!$dbError): ?>
+                        <?php foreach (array_keys($partCategories) as $category): ?>
+                            <button
+                                type="button"
+                                class="category-chip"
+                                data-category="<?= categoryKey($category) ?>"
+                                aria-pressed="false"
+                            ><?= htmlspecialchars(partCategoryLabel($category), ENT_QUOTES, 'UTF-8') ?></button>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="parts-search-box">
                     <div class="parts-search-wrap">
-                        <i class="bi bi-search"></i>
+                        <label class="parts-search-label" for="partsSearch">Search</label>
+
                         <input
                             type="text"
                             class="parts-search"
                             id="partsSearch"
-                            placeholder="Search parts by name, category, or description..."
+                            placeholder="Part name, brand or category"
                             autocomplete="off"
                         >
+
+                        <button type="button" class="parts-clear-btn" id="partsClearBtn" aria-label="Clear search">&times;</button>
                     </div>
+
+                    <div class="parts-suggestions" id="partsSuggestions"></div>
                 </div>
-
-                <button type="button" class="parts-clear-btn" id="partsSearchBtn">
-                    Clear
-                </button>
-
-                <div class="parts-suggestions" id="partsSuggestions"></div>
             </div>
 
-            <?php if (!$dbError && !empty($partCategories)): ?>
-                <div class="category-nav">
-                    <?php foreach ($partCategories as $category => $parts): ?>
-                        <a href="#cat-<?= htmlspecialchars(md5($category), ENT_QUOTES, 'UTF-8') ?>" class="category-chip">
-                            <?= displayText($category) ?>
-                            <span>(<?= count($parts) ?>)</span>
-                        </a>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
 
             <p class="parts-no-results" id="partsNoResults">
                 No matching parts found. Try searching for another part name, category, or type.
@@ -553,7 +557,7 @@ function partImagePath($image)
                 <p class="parts-empty-state">No parts are currently available.</p>
             <?php else: ?>
                 <?php foreach ($partCategories as $category => $parts): ?>
-                    <section class="parts-category" id="cat-<?= htmlspecialchars(md5($category), ENT_QUOTES, 'UTF-8') ?>">
+                    <section class="parts-category" data-category="<?= categoryKey($category) ?>">
                         <div class="parts-category-header">
                             <h2 class="parts-category-title">
                                 <?= displayText($category) ?>
@@ -564,7 +568,7 @@ function partImagePath($image)
                             </span>
                         </div>
 
-                        <div class="parts-grid">
+                        <div class="parts-grid" data-reveal-group>
                             <?php foreach ($parts as $part): ?>
                                 <?php
                                     $detailsUrl = 'part-details.php?id=' . urlencode($part['part_id']);
@@ -579,6 +583,7 @@ function partImagePath($image)
                                     data-part-category="<?= htmlspecialchars(strtolower($categoryPlain), ENT_QUOTES, 'UTF-8') ?>"
                                     data-part-type="<?= htmlspecialchars(strtolower($categoryPlain), ENT_QUOTES, 'UTF-8') ?>"
                                     data-part-description="<?= htmlspecialchars(strtolower($descriptionPlain), ENT_QUOTES, 'UTF-8') ?>"
+                                    data-part-brand="<?= htmlspecialchars(strtolower(plainText($part['brand'] ?? '')), ENT_QUOTES, 'UTF-8') ?>"
                                 >
                                     <a href="<?= htmlspecialchars($detailsUrl, ENT_QUOTES, 'UTF-8') ?>" class="part-link part-image-wrap">
                                         <img
@@ -620,11 +625,14 @@ function partImagePath($image)
 
 <script>
 const partsSearch = document.getElementById('partsSearch');
-const partsSearchBtn = document.getElementById('partsSearchBtn');
+const partsClearBtn = document.getElementById('partsClearBtn');
 const partsSuggestions = document.getElementById('partsSuggestions');
+const categoryChips = document.querySelectorAll('.category-chip');
 const partCards = document.querySelectorAll('.part-card');
 const partCategories = document.querySelectorAll('.parts-category');
 const partsNoResults = document.getElementById('partsNoResults');
+
+let activeCategory = 'all';
 
 const partNames = Array.from(partCards).map(function (card) {
     return card.dataset.partName || '';
@@ -636,59 +644,51 @@ function formatPartName(name) {
     });
 }
 
-function filterParts(searchValue) {
-    const value = searchValue.toLowerCase().trim();
+// Applies the category filter and the search text together.
+function filterParts() {
+    const value = partsSearch.value.toLowerCase().trim();
     let totalVisibleCards = 0;
 
-    partCards.forEach(function (card) {
-        const name = card.dataset.partName || '';
-        const category = card.dataset.partCategory || '';
-        const type = card.dataset.partType || '';
-        const description = card.dataset.partDescription || '';
-
-        const isMatch =
-            value === '' ||
-            name.includes(value) ||
-            category.includes(value) ||
-            type.includes(value) ||
-            description.includes(value);
-
-        card.style.display = isMatch ? 'flex' : 'none';
-
-        if (isMatch) {
-            totalVisibleCards++;
-        }
-    });
-
     partCategories.forEach(function (categoryBlock) {
-        const visibleCards = categoryBlock.querySelectorAll('.part-card:not([style*="display: none"])');
-        categoryBlock.style.display = visibleCards.length > 0 ? 'block' : 'none';
+        const inCategory = activeCategory === 'all' || categoryBlock.dataset.category === activeCategory;
+        let visibleInBlock = 0;
+
+        categoryBlock.querySelectorAll('.part-card').forEach(function (card) {
+            const searchable = [
+                card.dataset.partName,
+                card.dataset.partCategory,
+                card.dataset.partBrand,
+                card.dataset.partDescription
+            ].join(' ');
+
+            const isMatch = inCategory && (value === '' || searchable.includes(value));
+            card.style.display = isMatch ? 'flex' : 'none';
+
+            if (isMatch) {
+                visibleInBlock++;
+            }
+        });
+
+        categoryBlock.style.display = visibleInBlock > 0 ? 'block' : 'none';
+        totalVisibleCards += visibleInBlock;
     });
 
     if (partsNoResults) {
         partsNoResults.style.display = totalVisibleCards === 0 && partCards.length > 0 ? 'block' : 'none';
     }
+
+    partsClearBtn.classList.toggle('visible', value !== '');
 }
 
-function showSuggestions(searchValue) {
-    const value = searchValue.toLowerCase().trim();
+function showSuggestions() {
+    const value = partsSearch.value.toLowerCase().trim();
     partsSuggestions.innerHTML = '';
 
-    if (value === '') {
-        partsSuggestions.style.display = 'none';
-        return;
-    }
-
-    const matches = partNames
-        .filter(function (name) {
+    const matches = value === ''
+        ? []
+        : partNames.filter(function (name) {
             return name.includes(value);
-        })
-        .slice(0, 5);
-
-    if (matches.length === 0) {
-        partsSuggestions.style.display = 'none';
-        return;
-    }
+        }).slice(0, 5);
 
     matches.forEach(function (name) {
         const item = document.createElement('div');
@@ -698,33 +698,49 @@ function showSuggestions(searchValue) {
         item.addEventListener('click', function () {
             partsSearch.value = item.textContent;
             partsSuggestions.style.display = 'none';
-            filterParts(partsSearch.value);
+            filterParts();
         });
 
         partsSuggestions.appendChild(item);
     });
 
-    partsSuggestions.style.display = 'block';
+    partsSuggestions.style.display = matches.length > 0 ? 'block' : 'none';
 }
 
-if (partsSearch) {
-    partsSearch.addEventListener('input', function () {
-        showSuggestions(this.value);
-        filterParts(this.value);
+categoryChips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+        activeCategory = chip.dataset.category;
+
+        categoryChips.forEach(function (other) {
+            const isActive = other === chip;
+            other.classList.toggle('active', isActive);
+            other.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        });
+
+        filterParts();
     });
-}
+});
 
-if (partsSearchBtn) {
-    partsSearchBtn.addEventListener('click', function () {
-        partsSearch.value = '';
+partsSearch.addEventListener('input', function () {
+    showSuggestions();
+    filterParts();
+});
+
+partsSearch.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
         partsSuggestions.style.display = 'none';
-        filterParts('');
-        partsSearch.focus();
-    });
-}
+    }
+});
+
+partsClearBtn.addEventListener('click', function () {
+    partsSearch.value = '';
+    partsSuggestions.style.display = 'none';
+    filterParts();
+    partsSearch.focus();
+});
 
 document.addEventListener('click', function (event) {
-    if (!event.target.closest('.parts-toolbar')) {
+    if (!event.target.closest('.parts-search-box')) {
         partsSuggestions.style.display = 'none';
     }
 });

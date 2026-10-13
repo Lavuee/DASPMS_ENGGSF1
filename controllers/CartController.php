@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
+require_once __DIR__ . '/../includes/cart_store.php';
 
 requirePermission('shop.purchase', '../views/login.php');
 
@@ -65,6 +66,7 @@ try {
         ];
 
         $_SESSION['success_message'] = "Item added to cart.";
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -105,6 +107,7 @@ try {
             $_SESSION['success_message'] = "Cart updated.";
         }
 
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -117,6 +120,7 @@ try {
         }
 
         $_SESSION['success_message'] = "Item removed from cart.";
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -125,6 +129,7 @@ try {
         unset($_SESSION['cart']);
 
         $_SESSION['success_message'] = "Cart cleared.";
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }

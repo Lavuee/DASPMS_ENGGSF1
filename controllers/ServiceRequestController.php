@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
+require_once '../includes/business_rules.php';
 
 requireAnyPermission(['service_requests.submit', 'service_requests.review'], '../views/login.php');
 
@@ -139,6 +140,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             if ($estimatedCost <= 0) {
                 throw new Exception("Estimated cost must be greater than zero.");
             }
+
+            enforceMinimumServiceFee($estimatedCost, 'Estimated cost');
 
             if ($assignedMechanicId <= 0) {
                 throw new Exception("Please assign a mechanic.");

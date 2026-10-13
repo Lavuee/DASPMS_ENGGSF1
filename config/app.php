@@ -20,6 +20,8 @@ define('APP_BASE_URL', env('APP_BASE_URL'));
 
 define('MAIL_FROM_ADDRESS', env('MAIL_FROM_ADDRESS', 'daspms1998@gmail.com'));
 define('MAIL_FROM_NAME', env('MAIL_FROM_NAME', "Norily's Repair Shop"));
+// Where messages from the public Contact page are delivered (defaults to the sending address)
+define('CONTACT_INBOX', env('CONTACT_INBOX', MAIL_FROM_ADDRESS));
 
 define('SESSION_IDLE_TIMEOUT', intval(env('SESSION_IDLE_TIMEOUT', 1800)));
 define('SESSION_ABSOLUTE_TIMEOUT', intval(env('SESSION_ABSOLUTE_TIMEOUT', 28800)));

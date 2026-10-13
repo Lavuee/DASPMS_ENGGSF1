@@ -5,20 +5,16 @@ require_once __DIR__ . '/../includes/helpers.php';
 $basePath = '../';
 
 require_once '../config/Database.php';
+require_once '../models/PartImage.php';
 
 $database = new Database();
 $db = $database->getConnection();
 
 $selectedId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 $selectedPart = null;
-$relatedParts = [];
+$moreParts = [];
+$galleryImages = [];
 $dbError = '';
-
-function displayMultiline($value, $fallback = 'No detailed description available.')
-{
-    $value = plainText($value, $fallback);
-    return nl2br(htmlspecialchars($value, ENT_QUOTES, 'UTF-8'));
-}
 
 try {
     if ($selectedId) {
@@ -26,11 +22,16 @@ try {
             SELECT
                 part_id,
                 category,
+                brand,
                 part_name,
                 description,
                 full_description,
+                specification,
+                compatibility,
+                unit,
                 unit_price,
                 quantity_on_hand,
+                low_stock_threshold,
                 image
             FROM part
             WHERE part_id = :part_id
@@ -43,44 +44,26 @@ try {
         $selectedPart = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($selectedPart) {
-            $selectedCategoryPlain = plainText($selectedPart['category'] ?? '');
+            // Gallery: the main photo first, then the extra angles in their saved order.
+            $galleryImages = array_merge(
+                [$selectedPart['image'] ?? ''],
+                array_column((new PartImage($db))->listForItem($selectedId), 'image')
+            );
 
-            $relatedStmt = $db->prepare("
-                SELECT
-                    part_id,
-                    category,
-                    part_name,
-                    image
+            // Same order and numbering as the landing page carousel, minus the current part.
+            $moreStmt = $db->prepare("
+                SELECT part_id, part_name, unit_price, image
                 FROM part
                 WHERE is_active = 1
-                  AND part_id != :part_id
-                  AND REPLACE(category, '&amp;', '&') = :category
-                ORDER BY part_name ASC
-                LIMIT 3
+                ORDER BY part_id DESC
             ");
+            $moreStmt->execute();
 
-            $relatedStmt->bindParam(':part_id', $selectedId, PDO::PARAM_INT);
-            $relatedStmt->bindParam(':category', $selectedCategoryPlain);
-            $relatedStmt->execute();
-            $relatedParts = $relatedStmt->fetchAll(PDO::FETCH_ASSOC);
-
-            if (count($relatedParts) === 0) {
-                $fallbackStmt = $db->prepare("
-                    SELECT
-                        part_id,
-                        category,
-                        part_name,
-                        image
-                    FROM part
-                    WHERE is_active = 1
-                      AND part_id != :part_id
-                    ORDER BY category ASC, part_name ASC
-                    LIMIT 3
-                ");
-
-                $fallbackStmt->bindParam(':part_id', $selectedId, PDO::PARAM_INT);
-                $fallbackStmt->execute();
-                $relatedParts = $fallbackStmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($moreStmt->fetchAll(PDO::FETCH_ASSOC) as $index => $part) {
+                if ((int) $part['part_id'] !== (int) $selectedId) {
+                    $part['number'] = $index + 1;
+                    $moreParts[] = $part;
+                }
             }
         }
     }
@@ -90,13 +73,7 @@ try {
 
 function partImagePath($image)
 {
-    $fallback = 'default.png';
-
-    if (!$image) {
-        return '../assets/images/parts/' . $fallback;
-    }
-
-    return '../assets/images/parts/' . htmlspecialchars($image, ENT_QUOTES, 'UTF-8');
+    return '../assets/images/parts/' . htmlspecialchars($image ?: 'default.png', ENT_QUOTES, 'UTF-8');
 }
 
 function formatPrice($price)
@@ -104,34 +81,36 @@ function formatPrice($price)
     return '₱' . number_format((float) $price, 2);
 }
 
-function stockStatus($quantity)
+// Treats blank and placeholder values ("N/A") as missing so those rows are hidden.
+function detailValue($value)
 {
-    $quantity = (int) $quantity;
-
-    if ($quantity <= 0) {
-        return 'Out of stock';
-    }
-
-    if ($quantity <= 3) {
-        return 'Low stock';
-    }
-
-    return 'Available';
+    $value = plainText($value);
+    return in_array(strtolower($value), ['', 'n/a', 'na', 'none', '-'], true) ? '' : $value;
 }
 
-function stockBadgeClass($quantity)
-{
-    $quantity = (int) $quantity;
+if ($selectedPart) {
+    $quantity = (int) $selectedPart['quantity_on_hand'];
+    $threshold = (int) ($selectedPart['low_stock_threshold'] ?? 3);
 
     if ($quantity <= 0) {
-        return 'stock-out';
+        $stockClass = 'stock-out';
+        $stockLabel = 'Out of stock';
+    } elseif ($quantity <= $threshold) {
+        $stockClass = 'stock-low';
+        $stockLabel = 'Low stock · ' . $quantity . ' left';
+    } else {
+        $stockClass = 'stock-available';
+        $stockLabel = 'In stock · ' . $quantity . ' available';
     }
 
-    if ($quantity <= 3) {
-        return 'stock-low';
-    }
+    $unitLabel = 'Per ' . strtolower(detailValue($selectedPart['unit']) ?: 'piece');
+    $description = plainText($selectedPart['description']) ?: plainText($selectedPart['full_description'], 'No description available.');
 
-    return 'stock-available';
+    $detailRows = array_filter([
+        'Brand' => detailValue($selectedPart['brand']),
+        'Specification' => detailValue($selectedPart['specification']),
+        'Fits' => detailValue($selectedPart['compatibility']),
+    ]);
 }
 ?>
 
@@ -141,582 +120,446 @@ function stockBadgeClass($quantity)
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>
-    <?= $selectedPart ? displayText($selectedPart['part_name']) . ' | Parts' : 'Part Not Found | Parts' ?>
+    <?= $selectedPart ? displayText($selectedPart['part_name']) . ' | Parts' : 'Part Not Found | Parts' ?> | Norily's Vehicle Repair Shop
 </title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
+<link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
+<script>document.documentElement.classList.add('js');window.__motionFallback=setTimeout(function(){document.documentElement.classList.add('reveal-all');},3000);</script>
+<script src="../assets/js/motion.js?v=<?= filemtime(__DIR__ . '/../assets/js/motion.js') ?>" defer></script>
 
 <style>
     .part-detail-page {
-        background: #f4f5f7;
-        min-height: 100vh;
+        background: var(--paper);
+        padding: 1.5rem 0 5rem;
     }
 
-    .part-detail-wrapper {
-        max-width: 1180px;
-        margin: 0 auto;
-        padding: 3rem 1rem 5rem;
-    }
-
-    .detail-topbar {
+    .detail-breadcrumb {
         display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        flex-wrap: wrap;
-        padding-bottom: 1rem;
-        margin-bottom: 1.3rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.10);
-    }
-
-    .detail-topbar h2 {
-        color: #111827;
-        font-size: 2rem;
-        font-weight: 900;
-        line-height: 1.1;
-        margin-bottom: 0.25rem;
-    }
-
-    .detail-topbar p {
-        color: #5f6b7a;
-        font-size: 0.95rem;
-        font-weight: 500;
-        margin-bottom: 0;
-    }
-
-    .back-btn {
-        min-height: 42px;
-        border-radius: 999px;
-        padding: 0.6rem 1rem;
-        border: 1px solid rgba(17, 24, 39, 0.14);
-        background: rgba(255, 255, 255, 0.42);
-        color: #111827;
-        font-size: 0.86rem;
-        font-weight: 900;
-        display: inline-flex;
         align-items: center;
-        gap: 0.45rem;
-        text-decoration: none;
-        white-space: nowrap;
-        transition: 0.2s ease;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        list-style: none;
+        padding: 0;
+        margin: 0 0 2.5rem;
+        color: var(--ink-2);
+        font-size: var(--fs-crumb);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
     }
 
-    .back-btn:hover {
-        background: #f5c518;
-        border-color: #f5c518;
-        color: #111827;
+    .detail-breadcrumb a {
+        color: var(--ink-2);
+        text-decoration: none;
+        transition: color 0.2s ease;
+    }
+
+    .detail-breadcrumb a:hover {
+        color: var(--ink);
+    }
+
+    .detail-breadcrumb li + li::before {
+        content: "/";
+        margin-right: 0.6rem;
     }
 
     .part-detail-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
-        gap: 2.4rem;
-        align-items: start;
+        /* Image and panel sized to their content and centered as a pair */
+        grid-template-columns: minmax(0, 520px) minmax(0, 460px);
+        justify-content: center;
+        gap: 2.5rem;
+        align-items: center;
+        align-content: start;
+        /* Always fill the first screen (minus the breadcrumb) so "More parts" starts below
+           the fold no matter how short the part's details are. */
+        min-height: calc(100vh - 5.5rem - var(--pub-header-h));
+        min-height: calc(100svh - 5.5rem - var(--pub-header-h));
     }
 
-    .part-media-panel {
+    .part-media {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 1.25rem;
+    }
+
+    .part-thumbs {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        flex-shrink: 0;
+    }
+
+    /* Thumbnails: small versions of the main image frame */
+    .part-thumb {
+        width: 76px;
+        height: 76px;
+        padding: 6px;
+        background: transparent;
+        border: 1px solid var(--line);
+        cursor: pointer;
+        transition: border-color 0.2s ease;
+    }
+
+    .part-thumb:hover {
+        border-color: var(--ink-3);
+    }
+
+    .part-thumb.active {
+        border-color: var(--ink);
+    }
+
+    .part-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        mix-blend-mode: multiply;
+    }
+
+    /* Main image in a square frame */
+    .part-stage {
+        flex: 0 1 420px;
         min-width: 0;
-        position: sticky;
-        top: 1.2rem;
-    }
-
-    .part-media-stage {
-        min-height: 460px;
+        aspect-ratio: 1 / 1;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 0.9rem;
-        background:
-            radial-gradient(circle at center, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.20) 42%, rgba(255, 255, 255, 0) 72%);
-        overflow: visible;
+        padding: 2.5rem;
+        background: transparent;
+        border: 1px solid var(--line);
     }
 
-    .part-media-stage img {
-        max-width: 100%;
-        max-height: 420px;
+    .part-stage img {
+        width: 100%;
+        height: 100%;
         object-fit: contain;
-        display: block;
-        filter: drop-shadow(0 22px 24px rgba(17, 24, 39, 0.13));
-        transition: 0.25s ease;
+        mix-blend-mode: multiply;
     }
 
-    .part-media-stage:hover img {
-        transform: scale(1.025);
+    .part-panel {
+        border: 1px solid var(--ink);
+        padding: 1.75rem 1.75rem 1.5rem;
     }
 
-    .part-info-panel {
-        min-width: 0;
-        padding-top: 0.3rem;
-    }
-
-    .breadcrumb-text {
-        color: #6b7280;
-        font-size: 0.82rem;
-        font-weight: 700;
-        margin-bottom: 0.7rem;
-    }
-
-    .breadcrumb-text a {
-        color: #111827;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        font-weight: 900;
-    }
-
-    .part-category-label {
-        color: #f0b400;
-        font-size: 0.74rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.95px;
-        margin-bottom: 0.5rem;
+    .part-panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 1rem;
     }
 
     .part-detail-title {
-        color: #111827;
-        font-size: clamp(1.75rem, 3vw, 2.3rem);
-        font-weight: 900;
-        line-height: 1.05;
-        letter-spacing: -0.6px;
-        margin-bottom: 0.75rem;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        color: var(--ink);
+        font-size: var(--fs-item-title);
+        font-weight: 400;
+        font-stretch: 125%;
+        text-transform: uppercase;
+        line-height: 1;
+        margin: 0;
     }
 
-    .part-price-row {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-bottom: 1rem;
+    .mono {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     }
 
     .part-detail-price {
-        color: #047857;
-        font-size: 1.45rem;
-        font-weight: 900;
-        line-height: 1.1;
-        margin-bottom: 0.2rem;
+        flex-shrink: 0;
+        color: var(--ink);
+        font-size: 1.2rem;
+        font-weight: 600;
+        white-space: nowrap;
     }
 
-    .part-price-note {
-        color: #6b7280;
-        font-size: 0.76rem;
-        font-weight: 700;
+    .part-code {
+        color: var(--ink-2);
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        margin: 0.9rem 0 0;
+        padding-bottom: 1.25rem;
+        border-bottom: 1px solid var(--ink);
+    }
+
+    .part-section-title {
+        color: var(--ink);
+        font-size: 0.9rem;
+        font-weight: 500;
+        font-stretch: 125%;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin: 1.35rem 0 0.55rem;
+    }
+
+    .part-description {
+        color: var(--ink-2);
+        font-size: 0.95rem;
+        line-height: 1.6;
+        margin: 0;
+    }
+
+    .part-details-list {
+        display: grid;
+        grid-template-columns: 7.5rem 1fr;
+        gap: 0.35rem 1rem;
+        font-size: 0.95rem;
+        margin: 0;
+    }
+
+    .part-details-list dt {
+        color: var(--ink-2);
+        font-weight: 400;
+    }
+
+    .part-details-list dd {
+        color: var(--ink);
+        margin: 0;
+    }
+
+    .part-facts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border-top: 1px solid var(--ink);
+        margin-top: 1.5rem;
+    }
+
+    .part-fact {
+        padding: 1rem 0 0.9rem;
+    }
+
+    .part-fact + .part-fact {
+        border-left: 1px solid var(--ink);
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 1rem;
+    }
+
+    .part-fact-label {
+        color: var(--ink-2);
+        font-size: 0.75rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0;
+    }
+
+    .part-fact-value {
+        color: var(--ink);
+        font-size: 0.95rem;
     }
 
     .stock-pill {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
+        display: inline-block;
+        margin-top: 0.55rem;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid currentColor;
         border-radius: 999px;
-        padding: 0.42rem 0.75rem;
-        font-size: 0.76rem;
-        font-weight: 900;
-        white-space: nowrap;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
     }
 
     .stock-available {
-        background: #d7fbe5;
-        color: #047857;
+        color: var(--status-success);
     }
 
     .stock-low {
-        background: #fff3cd;
-        color: #9a5b00;
+        color: var(--status-warning);
     }
 
     .stock-out {
-        background: #fee2e2;
-        color: #b91c1c;
+        color: var(--status-danger);
     }
 
-    .detail-tabs {
+    .part-action {
         display: flex;
-        align-items: center;
-        gap: 1rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.13);
-        margin-top: 0.9rem;
-        margin-bottom: 0.85rem;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .detail-tabs::-webkit-scrollbar {
-        display: none;
-    }
-
-    .detail-tab-btn {
-        border: none;
-        background: transparent;
-        color: #6b7280;
-        font-size: 0.76rem;
-        font-weight: 900;
-        padding: 0 0 0.55rem 0;
-        white-space: nowrap;
-        position: relative;
-        transition: 0.2s ease;
-    }
-
-    .detail-tab-btn::after {
-        content: '';
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: -1px;
-        height: 2px;
-        background: transparent;
-        transition: 0.2s ease;
-    }
-
-    .detail-tab-btn:hover,
-    .detail-tab-btn.active {
-        color: #111827;
-    }
-
-    .detail-tab-btn.active::after {
-        background: #f5c518;
-    }
-
-    .tab-panels {
-        min-height: 95px;
-        max-height: 115px;
-        overflow-y: auto;
-        padding-right: 0.25rem;
-        margin-bottom: 0.65rem;
-        scrollbar-width: thin;
-    }
-
-    .tab-panel {
-        display: none;
-        color: #5f6b7a;
-        font-size: 0.86rem;
-        line-height: 1.65;
-    }
-
-    .tab-panel.active {
-        display: block;
-    }
-
-    .simple-list {
-        margin: 0;
-        padding-left: 1.05rem;
-        color: #5f6b7a;
-    }
-
-    .simple-list li {
-        color: #5f6b7a;
-        font-size: 0.8rem;
-        line-height: 1.55;
-        margin-bottom: 0.42rem;
-    }
-
-    .simple-list li::marker {
-        color: #111827;
-    }
-
-    .part-meta-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.65rem;
-        margin: 0.35rem 0 0.85rem;
-        }
-
-    .meta-box {
-        border: 1px solid rgba(17, 24, 39, 0.08);
-        border-radius: 14px;
-        padding: 0.68rem 0.75rem;
-        background: rgba(255, 255, 255, 0.26);
-    }
-
-    .meta-label {
-        display: block;
-        color: #6b7280;
-        font-size: 0.62rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.38px;
-        margin-bottom: 0.2rem;
-    }
-
-    .meta-value {
-        color: #111827;
-        font-size: 0.8rem;
-        font-weight: 900;
-        line-height: 1.4;
-    }
-
-    .detail-actions {
-        display: flex;
-        gap: 0.65rem;
-        flex-wrap: wrap;
-        padding-top: 0.85rem;
-        border-top: 1px solid rgba(17, 24, 39, 0.10);
-        margin-top: 0.9rem;
-    }
-
-    .detail-primary-btn,
-    .detail-secondary-btn {
-        min-height: 42px;
-        border-radius: 999px;
-        padding: 0.6rem 1rem;
-        font-size: 0.84rem;
-        font-weight: 900;
-        text-decoration: none;
-        display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 0.45rem;
-        transition: 0.2s ease;
+        width: 100%;
+        min-height: 58px;
+        background: transparent;
+        border: 1px solid var(--ink);
+        color: var(--ink);
+        font-size: 0.9rem;
+        font-weight: 500;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        text-decoration: none;
         cursor: pointer;
+        transition: background 0.2s ease, color 0.2s ease;
     }
 
-    .detail-primary-btn {
-        background: #f5c518;
-        border: 1px solid #f5c518;
-        color: #111827;
+    .part-action:hover {
+        background: var(--ink);
+        color: var(--sheet);
     }
 
-    .detail-primary-btn:hover {
-        background: #111827;
-        border-color: #111827;
-        color: #fff;
-    }
-
-    .detail-primary-btn:disabled {
-        background: #e5e7eb;
-        border-color: #e5e7eb;
-        color: #6b7280;
+    .part-action:disabled {
+        color: var(--ink-3);
+        border-color: var(--line);
+        background: transparent;
         cursor: not-allowed;
     }
 
-    .detail-secondary-btn {
-        background: rgba(255, 255, 255, 0.42);
-        border: 1px solid rgba(17, 24, 39, 0.14);
-        color: #111827;
-    }
-
-    .detail-secondary-btn:hover {
-        background: rgba(245, 197, 24, 0.18);
-        border-color: #f5c518;
-        color: #111827;
+    /* Customers: quantity + add to cart in one row */
+    .cart-form {
+        display: flex;
     }
 
     .qty-input {
-        width: 82px;
-        min-height: 42px;
-        border: 1px solid rgba(17, 24, 39, 0.12);
-        border-radius: 999px;
-        padding: 0.55rem 0.7rem;
-        font-weight: 900;
+        width: 80px;
+        flex-shrink: 0;
+        border: 1px solid var(--ink);
+        border-right: 0;
+        background: var(--sheet);
+        color: var(--ink);
+        font-size: 1.1rem;
         text-align: center;
-        background: rgba(255, 255, 255, 0.50);
-        color: #111827;
         outline: none;
     }
 
     .qty-input:focus {
-        border-color: rgba(245, 197, 24, 0.72);
-        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.12);
+        box-shadow: inset 0 0 0 2px rgba(94, 107, 52, 0.35);
     }
 
-    .cart-form {
-        display: flex;
-        gap: 0.6rem;
-        align-items: center;
-        flex-wrap: wrap;
+    .part-note {
+        color: var(--ink-2);
+        font-size: 0.85rem;
+        line-height: 1.6;
+        margin: 0.9rem 0 0;
     }
 
-    .detail-note {
-        margin-top: 1rem;
-        color: #6b7280;
-        font-size: 0.82rem;
-        line-height: 1.55;
+    .more-parts {
+        margin-top: 3rem;
     }
 
-    .related-section {
-        margin-top: 3.6rem;
-        padding-top: 2.2rem;
-        border-top: 1px solid rgba(17, 24, 39, 0.10);
-    }
-
-    .related-title {
-        color: #111827;
-        font-size: 1.35rem;
-        font-weight: 900;
-        letter-spacing: 2px;
+    .more-parts-title {
+        color: var(--ink);
+        font-size: clamp(1.15rem, 1.8vw, 1.45rem);
+        font-weight: 400;
+        font-stretch: 125%;
         text-transform: uppercase;
         text-align: center;
         margin-bottom: 2rem;
     }
 
-    .related-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 2.2rem;
-        max-width: 1040px;
-        margin: 0 auto;
+    /* Smaller version of the shared carousel, for this page only */
+    .more-parts .offering-visual {
+        height: 160px;
+        margin-bottom: 1.1rem;
     }
 
-    .related-card {
-        text-align: center;
-        transition: 0.2s ease;
+    .more-parts .offering-visual::after {
+        bottom: 4px;
+        height: 14px;
     }
 
-    .related-card:hover {
-        transform: translateY(-3px);
+    .more-parts .offering-visual img {
+        width: 75%;
+        height: 130px;
     }
 
-    .related-card a {
-        color: inherit;
-        text-decoration: none;
+    .more-parts .offering-index {
+        font-size: 0.85rem;
+        margin-bottom: 0.2rem;
     }
 
-    .related-image {
-        width: 100%;
-        min-height: 200px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.8rem 0.4rem 1rem;
-        margin-bottom: 0.85rem;
-    }
-
-    .related-card img {
-        max-width: 100%;
-        max-height: 160px;
-        object-fit: contain;
-        filter: drop-shadow(0 18px 18px rgba(17, 24, 39, 0.10));
-        transition: 0.2s ease;
-    }
-
-    .related-card:hover img {
-        transform: scale(1.04);
-    }
-
-    .related-card h3 {
-        color: #111827;
-        font-size: 1rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.75px;
-        line-height: 1.28;
+    .more-parts .offering-name {
+        font-size: 0.8rem;
         margin-bottom: 0.4rem;
     }
 
-    .related-card span {
-        color: #f0b400;
-        font-size: 0.7rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+    .more-parts .offering-price {
+        font-size: 0.8rem;
+    }
+
+    .more-parts .offerings-arrow {
+        top: 80px;
     }
 
     .not-found-box {
-        max-width: 720px;
-        margin: 0 auto;
-        text-align: center;
-        padding: 3rem 1rem;
-        border-top: 1px solid rgba(17, 24, 39, 0.10);
-        border-bottom: 1px solid rgba(17, 24, 39, 0.10);
-    }
-
-    .not-found-box i {
-        display: block;
-        color: #d1d5db;
-        font-size: 2.3rem;
-        margin-bottom: 0.8rem;
+        max-width: 560px;
+        padding: 4rem 0;
     }
 
     .not-found-box h1 {
-        color: #111827;
-        font-size: 1.7rem;
-        font-weight: 900;
-        margin-bottom: 0.55rem;
+        color: var(--ink);
+        font-size: clamp(2rem, 4vw, 2.75rem);
+        font-weight: 400;
+        font-stretch: 125%;
+        text-transform: uppercase;
+        margin-bottom: 1rem;
     }
 
     .not-found-box p {
-        color: #5f6b7a;
-        line-height: 1.65;
-        margin-bottom: 1.4rem;
+        color: var(--ink-2);
+        font-size: 1.05rem;
+        margin-bottom: 2rem;
     }
 
-    @media (max-width: 1199.98px) {
+    .not-found-box .part-action {
+        width: auto;
+        display: inline-flex;
+        min-height: 64px;
+        padding: 0 2rem;
+    }
+
+    @media (max-width: 991.98px) {
         .part-detail-grid {
             grid-template-columns: 1fr;
             gap: 1.5rem;
+            min-height: 0;
         }
 
-        .part-media-panel {
-            position: static;
+        .part-stage {
+            flex-basis: auto;
+            width: 100%;
+            max-width: 420px;
         }
 
-        .part-media-stage {
-            min-height: 320px;
+        /* Thumbnails become a swipe row under the main image */
+        .part-media {
+            flex-direction: column-reverse;
+            gap: 1rem;
         }
 
-        .part-media-stage img {
-            max-height: 300px;
+        .part-thumbs {
+            flex-direction: row;
+            overflow-x: auto;
+            max-width: 100%;
+            scrollbar-width: none;
         }
 
-        .tab-panels {
-            max-height: none;
-            min-height: 120px;
-            overflow-y: visible;
-        }
-
-        .related-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            max-width: 760px;
+        .part-thumb {
+            width: 64px;
+            height: 64px;
+            flex-shrink: 0;
         }
     }
 
-    @media (max-width: 767.98px) {
-        .part-detail-wrapper {
-            padding: 2.3rem 1rem 4rem;
+    @media (max-width: 575.98px) {
+        .part-panel {
+            padding: 1.5rem 1.25rem 1.25rem;
         }
 
-        .detail-topbar {
+        .part-panel-head {
             flex-direction: column;
-            align-items: stretch;
+            gap: 0.75rem;
         }
 
-        .back-btn {
-            width: 100%;
-            justify-content: center;
+        .part-details-list {
+            grid-template-columns: 7.5rem 1fr;
         }
 
-        .part-detail-title {
-            font-size: 1.55rem;
+        .part-fact + .part-fact {
+            padding-left: 1rem;
         }
 
-        .part-media-stage {
-            min-height: 245px;
-            padding: 0.45rem;
-        }
-
-        .part-media-stage img {
-            max-height: 225px;
-        }
-
-        .part-meta-grid,
-        .related-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .related-grid {
-            max-width: 360px;
-        }
-
-        .cart-form,
-        .detail-primary-btn,
-        .detail-secondary-btn {
-            width: 100%;
-        }
-
-        .qty-input {
-            width: 100%;
+        .part-stage {
+            padding: 1.75rem;
         }
     }
 </style>
@@ -724,250 +567,163 @@ function stockBadgeClass($quantity)
 
 <body>
 
-<?php include '../partials/public-navbar.php'; ?>
+<?php $activePage = 'parts'; include '../partials/public-navbar.php'; ?>
 
 <main class="part-detail-page">
-    <section class="part-detail-wrapper">
-        <div class="detail-topbar">
-            <div>
-                <h2>Part Details</h2>
-                <p>Review part information before logging in to reserve or add to cart.</p>
-            </div>
+    <div class="container">
+        <nav aria-label="Breadcrumb">
+            <ol class="detail-breadcrumb">
+                <li><a href="../" class="link-grow">Home</a></li>
+                <li><a href="parts.php" class="link-grow">Parts</a></li>
+                <li aria-current="page"><?= $selectedPart ? displayText($selectedPart['part_name']) : 'Not found' ?></li>
+            </ol>
+        </nav>
 
-            <a href="parts.php" class="back-btn">
-                <i class="bi bi-arrow-left"></i>
-                Back to Parts
-            </a>
-        </div>
-
-        <?php if ($dbError): ?>
+        <?php if ($dbError || !$selectedPart): ?>
             <div class="not-found-box">
-                <i class="bi bi-exclamation-circle"></i>
-                <h1>Unable to Load Part</h1>
-                <p><?= htmlspecialchars($dbError, ENT_QUOTES, 'UTF-8') ?></p>
-
-                <a href="parts.php" class="detail-primary-btn">
-                    Browse Parts
-                </a>
-            </div>
-
-        <?php elseif (!$selectedPart): ?>
-            <div class="not-found-box">
-                <i class="bi bi-box-seam"></i>
-                <h1>Part Not Found</h1>
+                <h1><?= $dbError ? 'Something went wrong' : 'Part not found' ?></h1>
                 <p>
-                    The part you are looking for does not exist, is inactive, or may have been removed.
-                    Please return to the parts page and select another item.
+                    <?= $dbError
+                        ? htmlspecialchars($dbError, ENT_QUOTES, 'UTF-8')
+                        : 'This part may have been removed or is no longer available.' ?>
                 </p>
-
-                <a href="parts.php" class="detail-primary-btn">
-                    Browse Parts
-                </a>
+                <a href="parts.php" class="part-action">Back to parts</a>
             </div>
-
         <?php else: ?>
-            <?php
-                $quantity = (int)($selectedPart['quantity_on_hand'] ?? 0);
-                $stockLabel = stockStatus($quantity);
-            ?>
-
             <div class="part-detail-grid">
-                <div class="part-media-panel">
-                    <div class="part-media-stage">
+                <div class="part-media" data-gallery>
+                    <?php if (count($galleryImages) > 1): ?>
+                        <div class="part-thumbs" role="group" aria-label="Part photos">
+                            <?php foreach ($galleryImages as $index => $image): ?>
+                                <button
+                                    type="button"
+                                    class="part-thumb<?= $index === 0 ? ' active' : '' ?>"
+                                    data-full="<?= partImagePath($image) ?>"
+                                    aria-label="Show photo <?= $index + 1 ?>"
+                                    aria-pressed="<?= $index === 0 ? 'true' : 'false' ?>"
+                                >
+                                    <img src="<?= partImagePath($image) ?>" alt="" loading="lazy">
+                                </button>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="part-stage">
                         <img
-                            src="<?= partImagePath($selectedPart['image'] ?? '') ?>"
+                            id="partMainImage"
+                            data-gallery-main
+                            src="<?= partImagePath($galleryImages[0] ?? '') ?>"
                             alt="<?= displayText($selectedPart['part_name']) ?>"
                         >
                     </div>
                 </div>
 
-                <div class="part-info-panel">
-                    <p class="breadcrumb-text">
-                        <a href="parts.php">Parts</a> / <?= displayText($selectedPart['category']) ?>
+                <div class="part-panel">
+                    <div class="part-panel-head">
+                        <h1 class="part-detail-title"><?= displayText($selectedPart['part_name']) ?></h1>
+                        <div class="part-detail-price mono"><?= formatPrice($selectedPart['unit_price']) ?></div>
+                    </div>
+
+                    <p class="part-code mono">
+                        <?= htmlspecialchars(partCategoryLabel($selectedPart['category']), ENT_QUOTES, 'UTF-8') ?>
                     </p>
 
-                    <div class="part-category-label">
-                        <?= displayText($selectedPart['category']) ?>
-                    </div>
+                    <h2 class="part-section-title">Description</h2>
+                    <p class="part-description"><?= nl2br(htmlspecialchars($description, ENT_QUOTES, 'UTF-8')) ?></p>
 
-                    <h1 class="part-detail-title">
-                        <?= displayText($selectedPart['part_name']) ?>
-                    </h1>
+                    <?php if (!empty($detailRows)): ?>
+                        <h2 class="part-section-title">Details</h2>
+                        <dl class="part-details-list">
+                            <?php foreach ($detailRows as $label => $value): ?>
+                                <dt><?= $label ?></dt>
+                                <dd><?= htmlspecialchars($value, ENT_QUOTES, 'UTF-8') ?></dd>
+                            <?php endforeach; ?>
+                        </dl>
+                    <?php endif; ?>
 
-                    <div class="part-price-row">
-                        <div>
-                            <div class="part-detail-price">
-                                <?= formatPrice($selectedPart['unit_price']) ?>
-                            </div>
-                            <div class="part-price-note">
-                                Final availability is subject to shop confirmation.
-                            </div>
+                    <div class="part-facts">
+                        <div class="part-fact">
+                            <p class="part-fact-label">Stock</p>
+                            <span class="stock-pill <?= $stockClass ?>"><?= htmlspecialchars($stockLabel, ENT_QUOTES, 'UTF-8') ?></span>
                         </div>
 
-                        <span class="stock-pill <?= stockBadgeClass($quantity) ?>">
-                            <?= htmlspecialchars($stockLabel, ENT_QUOTES, 'UTF-8') ?>
-                        </span>
-                    </div>
-
-                    <div class="detail-tabs" role="tablist" aria-label="Part detail sections">
-                        <button type="button" class="detail-tab-btn active" data-tab="overview">Overview</button>
-                        <button type="button" class="detail-tab-btn" data-tab="availability">Availability</button>
-                        <button type="button" class="detail-tab-btn" data-tab="reservation">Reservation</button>
-                    </div>
-
-                    <div class="tab-panels">
-                        <div class="tab-panel active" id="tab-overview">
-                            <?= displayMultiline($selectedPart['full_description'] ?: $selectedPart['description'], 'No detailed description available.') ?>
-                        </div>
-
-                        <div class="tab-panel" id="tab-availability">
-                            <ul class="simple-list">
-                                <li>Status: <?= htmlspecialchars($stockLabel, ENT_QUOTES, 'UTF-8') ?>.</li>
-
-                                <?php if ($quantity > 0): ?>
-                                    <li>Current stock shown by the system: <?= $quantity ?> item<?= $quantity !== 1 ? 's' : '' ?>.</li>
-                                <?php else: ?>
-                                    <li>This part is currently unavailable for reservation.</li>
-                                <?php endif; ?>
-
-                                <li>Actual availability may still be confirmed by shop staff before pickup.</li>
-                            </ul>
-                        </div>
-
-                        <div class="tab-panel" id="tab-reservation">
-                            <ul class="simple-list">
-                                <li>Guests can view part information, but cart reservation requires login.</li>
-                                <li>Reserved parts are for shop pickup and subject to shop confirmation.</li>
-                                <li>Payments may be settled through accepted shop payment options after confirmation.</li>
-                            </ul>
+                        <div class="part-fact">
+                            <p class="part-fact-label">Unit</p>
+                            <span class="part-fact-value"><?= htmlspecialchars(ucfirst($unitLabel), ENT_QUOTES, 'UTF-8') ?></span>
                         </div>
                     </div>
 
-                    <div class="part-meta-grid">
-                        <div class="meta-box">
-                            <span class="meta-label">Category</span>
-                            <div class="meta-value">
-                                <?= displayText($selectedPart['category']) ?>
-                            </div>
-                        </div>
+                    <?php if ($quantity <= 0): ?>
+                        <button type="button" class="part-action" disabled>Out of stock</button>
+                    <?php elseif (can('shop.purchase')): ?>
+                        <form action="../controllers/CartController.php" method="POST" class="cart-form">
+                            <?= csrfField() ?>
+                            <input type="hidden" name="action" value="add">
+                            <input type="hidden" name="part_id" value="<?= (int) $selectedPart['part_id'] ?>">
 
-                        <div class="meta-box">
-                            <span class="meta-label">Stock</span>
-                            <div class="meta-value">
-                                <?php if ($quantity > 0): ?>
-                                    <?= $quantity ?> item<?= $quantity !== 1 ? 's' : '' ?>
-                                <?php else: ?>
-                                    Out of stock
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
+                            <input
+                                type="number"
+                                name="quantity"
+                                value="1"
+                                min="1"
+                                max="<?= $quantity ?>"
+                                class="qty-input"
+                                aria-label="Quantity"
+                                required
+                            >
 
-                    <div class="detail-actions">
-                        <?php if ($quantity <= 0): ?>
+                            <button type="submit" class="part-action">Add to cart</button>
+                        </form>
+                    <?php elseif (isLoggedIn()): ?>
+                        <a href="../views/<?= dashboardForRole($_SESSION['role'] ?? '') ?>" class="part-action">Go to dashboard</a>
+                    <?php else: ?>
+                        <a href="../views/login.php" class="part-action">Log in to reserve</a>
+                    <?php endif; ?>
 
-                            <button type="button" class="detail-primary-btn" disabled>
-                                <i class="bi bi-x-circle"></i>
-                                Out of Stock
-                            </button>
-
-                        <?php elseif (can('shop.purchase')): ?>
-
-                            <form action="../controllers/CartController.php" method="POST" class="cart-form">
-                                <?= csrfField() ?>
-                                <input type="hidden" name="action" value="add">
-                                <input type="hidden" name="part_id" value="<?= (int) $selectedPart['part_id'] ?>">
-
-                                <input
-                                    type="number"
-                                    name="quantity"
-                                    value="1"
-                                    min="1"
-                                    max="<?= $quantity ?>"
-                                    class="qty-input"
-                                    required
-                                >
-
-                                <button type="submit" class="detail-primary-btn">
-                                    <i class="bi bi-cart-plus"></i>
-                                    Add to Cart
-                                </button>
-                            </form>
-
-                        <?php else: ?>
-
-                            <a href="../views/login.php" class="detail-primary-btn">
-                                <i class="bi bi-box-arrow-in-right"></i>
-                                Login to Reserve
-                            </a>
-
-                        <?php endif; ?>
-
-                        <a href="parts.php" class="detail-secondary-btn">
-                            <i class="bi bi-box-seam"></i>
-                            Browse Parts
-                        </a>
-                    </div>
-
-                    <p class="detail-note">
-                        Part reservation and pickup are processed through the customer portal.
-                        Please log in or create an account to continue.
+                    <p class="part-note">
+                        Reserve online and pick up at the shop. Availability is confirmed by the shop.
                     </p>
                 </div>
             </div>
 
-            <?php if (!empty($relatedParts)): ?>
-                <section class="related-section">
-                    <h2 class="related-title">Related Parts</h2>
+            <?php if (!empty($moreParts)): ?>
+                <section class="more-parts" data-reveal>
+                    <h2 class="more-parts-title">More parts</h2>
 
-                    <div class="related-grid">
-                        <?php foreach ($relatedParts as $related): ?>
-                            <article class="related-card">
-                                <a href="part-details.php?id=<?= urlencode($related['part_id']) ?>">
-                                    <div class="related-image">
-                                        <img
-                                            src="<?= partImagePath($related['image'] ?? '') ?>"
-                                            alt="<?= displayText($related['part_name']) ?>"
-                                        >
+                    <div class="offerings-carousel">
+                        <button class="offerings-arrow offerings-arrow-prev" type="button" aria-label="Previous" data-scroll="-1">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4 7 12l8 8"/></svg>
+                        </button>
+
+                        <div class="offerings-track">
+                            <?php foreach ($moreParts as $part): ?>
+                                <a href="part-details.php?id=<?= urlencode($part['part_id']) ?>" class="offering-item">
+                                    <div class="offering-visual">
+                                        <img src="<?= partImagePath($part['image'] ?? '') ?>" alt="<?= displayText($part['part_name']) ?>" loading="lazy">
                                     </div>
 
-                                    <h3><?= displayText($related['part_name']) ?></h3>
-                                    <span><?= displayText($related['category']) ?></span>
+                                    <span class="offering-index"><?= str_pad($part['number'], 2, '0', STR_PAD_LEFT) ?></span>
+                                    <h3 class="offering-name"><?= displayText($part['part_name']) ?></h3>
+                                    <span class="offering-price"><?= formatPrice($part['unit_price']) ?></span>
                                 </a>
-                            </article>
-                        <?php endforeach; ?>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <button class="offerings-arrow offerings-arrow-next" type="button" aria-label="Next" data-scroll="1">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4 8 8-8 8"/></svg>
+                        </button>
                     </div>
                 </section>
             <?php endif; ?>
         <?php endif; ?>
-    </section>
+    </div>
 </main>
 
 <?php include '../partials/public-footer.php'; ?>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="../assets/js/offerings-carousel.js"></script>
 
-<script>
-const detailTabButtons = document.querySelectorAll('.detail-tab-btn');
-const detailTabPanels = document.querySelectorAll('.tab-panel');
-
-detailTabButtons.forEach(button => {
-    button.addEventListener('click', function () {
-        const target = this.dataset.tab;
-
-        detailTabButtons.forEach(btn => btn.classList.remove('active'));
-        detailTabPanels.forEach(panel => panel.classList.remove('active'));
-
-        this.classList.add('active');
-
-        const activePanel = document.getElementById('tab-' + target);
-
-        if (activePanel) {
-            activePanel.classList.add('active');
-        }
-    });
-});
-</script>
 
 </body>
 </html>

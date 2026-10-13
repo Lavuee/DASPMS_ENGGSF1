@@ -4,633 +4,336 @@ require_once __DIR__ . '/../includes/auth.php';
 requirePermission('dashboard.cashier');
 
 require_once '../config/Database.php';
+require_once '../includes/business_rules.php';
+require_once '../includes/staff_ui.php';
 
 $db = (new Database())->getConnection();
 
+// Release unpaid web-order reservations older than RESERVATION_HOLD_DAYS (SRS)
+require_once '../models/PartOrder.php';
+(new PartOrder($db))->expireStaleReservations();
+
 $cashierName = $_SESSION['first_name'] ?? 'Cashier';
+$userId = intval($_SESSION['user_id'] ?? 0);
 
-$pendingBillingItems = $db->query("
-    SELECT COUNT(*)
-    FROM invoice
-    WHERE payment_status IS NULL
-       OR payment_status != 'Paid'
-")->fetchColumn() ?: 0;
+/* Column 1: ready for pickup (repair jobs and web orders) */
+$readyJobs = $db->query("
+    SELECT jo.job_order_number, c.first_name, c.last_name, v.plate_number
+    FROM job_order jo
+    JOIN customer c ON c.customer_id = jo.customer_id
+    JOIN vehicle v ON v.vehicle_id = jo.vehicle_id
+    WHERE jo.status = 'Ready for Pickup'
+    ORDER BY jo.date_created ASC
+")->fetchAll(PDO::FETCH_ASSOC);
 
-$pendingPaymentAmount = $db->query("
-    SELECT SUM(balance_due)
-    FROM invoice
-    WHERE payment_status IS NULL
-       OR payment_status != 'Paid'
-")->fetchColumn() ?: 0;
+$readyOrders = $db->query("
+    SELECT po.order_id, po.payment_method, c.first_name, c.last_name,
+           COALESCE(i.payment_status, 'No Invoice') AS payment_status, COALESCE(i.balance_due, po.total_amount) AS balance_due,
+           GROUP_CONCAT(CONCAT(p.part_name, ' × ', poi.quantity) ORDER BY poi.order_item_id SEPARATOR ', ') AS items
+    FROM part_order po
+    JOIN customer c ON c.customer_id = po.customer_id
+    LEFT JOIN invoice i ON i.part_order_id = po.order_id AND i.is_voided = 0
+    LEFT JOIN part_order_item poi ON poi.order_id = po.order_id
+    LEFT JOIN part p ON p.part_id = poi.part_id
+    WHERE po.status = 'Ready for Pickup'
+    GROUP BY po.order_id
+    ORDER BY po.order_date ASC
+")->fetchAll(PDO::FETCH_ASSOC);
 
-$readyWebOrders = $db->query("
-    SELECT COUNT(*)
-    FROM part_order
-    WHERE status = 'Ready for Pickup'
-")->fetchColumn() ?: 0;
+/* Column 2: waiting for payment (open invoices, and finished jobs with no invoice yet) */
+$openInvoices = $db->query("
+    SELECT i.invoice_number, i.invoice_type, i.payment_status, i.balance_due, i.due_date,
+           jo.job_order_number, i.part_order_id, c.first_name, c.last_name
+    FROM invoice i
+    JOIN customer c ON c.customer_id = i.customer_id
+    LEFT JOIN job_order jo ON jo.job_order_id = i.job_order_id
+    WHERE i.is_voided = 0 AND i.payment_status <> 'Paid'
+      AND (i.job_order_id IS NULL OR jo.status = 'Completed') -- down-payment invoices wait until the job is done
+    ORDER BY (i.due_date IS NULL), i.due_date ASC, i.date_issued ASC
+")->fetchAll(PDO::FETCH_ASSOC);
 
-$activeJobs = $db->query("
-    SELECT COUNT(*)
-    FROM job_order
-    WHERE status IN ('Pending', 'In Progress', 'Ready for Pickup')
-")->fetchColumn() ?: 0;
+$unbilledJobs = $db->query("
+    SELECT jo.job_order_number, c.first_name, c.last_name
+    FROM job_order jo
+    JOIN customer c ON c.customer_id = jo.customer_id
+    LEFT JOIN invoice i ON i.job_order_id = jo.job_order_id
+    WHERE jo.status = 'Completed' AND i.invoice_id IS NULL
+    ORDER BY jo.date_completed ASC
+")->fetchAll(PDO::FETCH_ASSOC);
 
-$recentSalesStmt = $db->query("
-    SELECT pos_id, total_amount, payment_method, transaction_date
-    FROM pos_transaction
-    WHERE status = 'Completed'
-    ORDER BY transaction_date DESC
-    LIMIT 5
+/* Column 3: new from the website */
+$pendingOrders = $db->query("
+    SELECT po.order_id, po.payment_method, po.preferred_pickup_date, c.first_name, c.last_name,
+           GROUP_CONCAT(CONCAT(p.part_name, ' × ', poi.quantity) ORDER BY poi.order_item_id SEPARATOR ', ') AS items
+    FROM part_order po
+    JOIN customer c ON c.customer_id = po.customer_id
+    LEFT JOIN part_order_item poi ON poi.order_id = po.order_id
+    LEFT JOIN part p ON p.part_id = poi.part_id
+    WHERE po.status = 'Pending'
+    GROUP BY po.order_id
+    ORDER BY po.order_date ASC
+")->fetchAll(PDO::FETCH_ASSOC);
+
+$pendingRequests = $db->query("
+    SELECT sr.request_number, sr.preferred_appointment_date, c.first_name, c.last_name, s.service_name
+    FROM service_request sr
+    JOIN customer c ON c.customer_id = sr.customer_id
+    LEFT JOIN service s ON s.service_id = sr.service_id
+    WHERE sr.status = 'Pending'
+    ORDER BY sr.created_at ASC
+")->fetchAll(PDO::FETCH_ASSOC);
+
+/* Section 03: this cashier's POS sales today */
+$stmtSales = $db->prepare("
+    SELECT pt.*, c.first_name, c.last_name
+    FROM pos_transaction pt
+    LEFT JOIN customer c ON c.customer_id = pt.customer_id
+    WHERE pt.processed_by = ? AND DATE(pt.transaction_date) = CURDATE()
+    ORDER BY pt.transaction_date DESC
 ");
+$stmtSales->execute([$userId]);
+$salesToday = $stmtSales->fetchAll(PDO::FETCH_ASSOC);
+
+$saleItems = [];
+if (!empty($salesToday)) {
+    $ids = array_map('intval', array_column($salesToday, 'pos_id'));
+    $stmtItems = $db->prepare("
+        SELECT pi.pos_id, p.part_name, pi.quantity_sold
+        FROM pos_item pi JOIN part p ON p.part_id = pi.part_id
+        WHERE pi.pos_id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
+        ORDER BY pi.pos_item_id
+    ");
+    $stmtItems->execute($ids);
+    foreach ($stmtItems->fetchAll(PDO::FETCH_ASSOC) as $item) {
+        $saleItems[$item['pos_id']][] = $item['part_name'] . ' × ' . intval($item['quantity_sold']);
+    }
+}
+$salesTotal = array_sum(array_map(function ($s) {
+    return $s['status'] === 'Completed' ? floatval($s['total_amount']) : 0;
+}, $salesToday));
+
+$readyCount = count($readyJobs) + count($readyOrders);
+$payCount = count($openInvoices) + count($unbilledJobs);
+$webCount = count($pendingOrders) + count($pendingRequests);
+$listLimit = 6; // rows shown per column; the link opens the full list
+
+function deskName($row) {
+    return trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+}
+
+$hour = intval(date('H'));
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Front Desk - Norily's Repair Shop</title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
-
-<style>
-    .main-content {
-        overflow-x: hidden;
-    }
-
-    .cashier-dashboard {
-        width: 100%;
-        max-width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 1.25rem;
-    }
-
-    .cashier-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        margin-bottom: 0.15rem;
-    }
-
-    .cashier-title h2 {
-        font-size: 2rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
-    }
-
-    .cashier-title p {
-        color: var(--dashboard-text-muted);
-        font-size: 0.95rem;
-        font-weight: 500;
-        margin-bottom: 0;
-    }
-
-    .cashier-date-pill {
-        height: 44px;
-        background: rgba(255, 255, 255, 0.56);
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        color: var(--dashboard-text-muted);
-        border-radius: 999px;
-        padding: 0.58rem 0.95rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        white-space: nowrap;
-        display: inline-flex;
-        align-items: center;
-        box-shadow: none;
-    }
-
-    .cashier-actions-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.9rem;
-    }
-
-    .cashier-action-card {
-        min-height: 120px;
-        background: rgba(255, 255, 255, 0.34);
-        border: 1px solid rgba(15, 23, 42, 0.05);
-        border-radius: 16px;
-        padding: 1.05rem 1.1rem;
-        text-decoration: none;
-        color: var(--dashboard-text-main);
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        box-shadow: none;
-        position: relative;
-        transition: all 0.2s ease;
-    }
-
-    .cashier-action-card::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 12px;
-        bottom: 12px;
-        width: 3px;
-        border-radius: 999px;
-        background: rgba(245, 197, 24, 0.85);
-    }
-
-    .cashier-action-card:hover {
-        color: var(--dashboard-text-main);
-        transform: translateY(-2px);
-        background: rgba(255, 255, 255, 0.58);
-        border-color: rgba(245, 197, 24, 0.45);
-    }
-
-    .action-title {
-        font-size: 1rem;
-        font-weight: 900;
-        margin-bottom: 0.25rem;
-        color: var(--dashboard-text-main);
-    }
-
-    .action-subtitle {
-        color: var(--dashboard-text-muted);
-        font-size: 0.84rem;
-        line-height: 1.45;
-        margin-bottom: 0;
-    }
-
-    .action-icon {
-        width: 44px;
-        height: 44px;
-        border-radius: 13px;
-        background: rgba(245, 197, 24, 0.16);
-        color: var(--black);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.15rem;
-        flex-shrink: 0;
-    }
-
-    .cashier-overview-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.9rem;
-    }
-
-    .overview-card {
-        min-height: 105px;
-        background: rgba(255, 255, 255, 0.34);
-        border: 1px solid rgba(15, 23, 42, 0.05);
-        border-radius: 16px;
-        padding: 1rem 1.1rem;
-        box-shadow: none;
-    }
-
-    .overview-label {
-        color: var(--dashboard-text-muted);
-        font-size: 0.84rem;
-        font-weight: 800;
-        margin-bottom: 0.35rem;
-    }
-
-    .overview-value {
-        color: var(--dashboard-text-main);
-        font-size: 1.45rem;
-        font-weight: 900;
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
-    }
-
-    .overview-caption {
-        color: var(--dashboard-text-muted);
-        font-size: 0.78rem;
-        margin-bottom: 0;
-        line-height: 1.35;
-    }
-
-    .cashier-main-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-        gap: 1rem;
-        align-items: start;
-    }
-
-    .cashier-panel {
-        background: rgba(255, 255, 255, 0.34);
-        border: 1px solid rgba(15, 23, 42, 0.05);
-        border-radius: 16px;
-        box-shadow: none;
-        overflow: hidden;
-    }
-
-    .panel-header {
-        padding: 1.1rem 1.15rem;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 1rem;
-    }
-
-    .panel-header h5 {
-        font-size: 1rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.2rem;
-    }
-
-    .panel-header p {
-        color: var(--dashboard-text-muted);
-        font-size: 0.86rem;
-        margin-bottom: 0;
-    }
-
-    .section-link {
-        color: var(--dashboard-text-muted);
-        text-decoration: none;
-        font-weight: 800;
-        font-size: 0.86rem;
-        white-space: nowrap;
-        transition: color 0.2s ease;
-    }
-
-    .section-link:hover {
-        color: var(--black);
-    }
-
-    .monitoring-list {
-        display: grid;
-        gap: 0;
-    }
-
-    .monitoring-row {
-        padding: 0.95rem 1.15rem;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.05);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-    }
-
-    .monitoring-row:last-child {
-        border-bottom: none;
-    }
-
-    .monitoring-left {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        min-width: 0;
-    }
-
-    .monitoring-icon {
-        width: 38px;
-        height: 38px;
-        border-radius: 12px;
-        background: rgba(245, 197, 24, 0.16);
-        color: var(--black);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-    }
-
-    .monitoring-title {
-        font-size: 0.92rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.15rem;
-    }
-
-    .monitoring-subtitle {
-        color: var(--dashboard-text-muted);
-        font-size: 0.78rem;
-        margin-bottom: 0;
-    }
-
-    .monitoring-value {
-        font-size: 1rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        white-space: nowrap;
-    }
-
-    .recent-sale-card {
-        padding: 0.95rem 1.15rem;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.05);
-        transition: background 0.2s ease;
-    }
-
-    .recent-sale-card:last-child {
-        border-bottom: none;
-    }
-
-    .recent-sale-card:hover {
-        background: rgba(245, 197, 24, 0.035);
-    }
-
-    .sale-title {
-        font-size: 0.92rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.15rem;
-    }
-
-    .sale-meta {
-        color: var(--dashboard-text-muted);
-        font-size: 0.78rem;
-        line-height: 1.45;
-    }
-
-    .sale-amount {
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        white-space: nowrap;
-    }
-
-    .empty-state {
-        padding: 2rem 1.5rem;
-        text-align: center;
-        color: var(--dashboard-text-muted);
-        font-size: 0.92rem;
-    }
-
-    .cashier-note {
-        background: rgba(245, 197, 24, 0.08);
-        border: 1px solid rgba(245, 197, 24, 0.18);
-        border-radius: 16px;
-        padding: 1rem 1.15rem;
-    }
-
-    .cashier-note h6 {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.35rem;
-    }
-
-    .cashier-note p {
-        color: var(--dashboard-text-muted);
-        font-size: 0.84rem;
-        line-height: 1.55;
-        margin-bottom: 0;
-    }
-
-    @media (max-width: 1199.98px) {
-        .cashier-actions-grid,
-        .cashier-overview-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .cashier-main-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media (max-width: 767.98px) {
-        .cashier-header {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .cashier-title h2 {
-            font-size: 1.75rem;
-        }
-
-        .cashier-date-pill {
-            width: 100%;
-            justify-content: center;
-        }
-
-        .cashier-actions-grid,
-        .cashier-overview-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .cashier-action-card {
-            min-height: 105px;
-        }
-    }
-</style>
+<link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
-
 <body>
+
 <div class="app-wrapper">
     <?php include '../includes/sidebar.php'; ?>
 
-    <main class="main-content">
-        <div class="cashier-dashboard">
+    <main class="main-content sp-page" id="spMain">
 
-            <div class="cashier-header">
-                <div class="cashier-title">
-                    <h2>
-                        Good <?php echo (date('H') < 12) ? 'Morning' : ((date('H') < 18) ? 'Afternoon' : 'Evening'); ?>,
-                        <?php echo htmlspecialchars($cashierName); ?>!
-                    </h2>
-                    <p>Welcome to the Front Desk Terminal.</p>
-                </div>
+        <?php
+        spPageHead(
+            strtoupper(date('l')) . ' · ' . strtoupper(date('d M Y')),
+            'Front Desk',
+            'Good ' . ($hour < 12 ? 'morning' : ($hour < 18 ? 'afternoon' : 'evening')) . ', ' . $cashierName . '. Start a task, or clear the three lists below from left to right.'
+        );
+        cpFlash();
+        ?>
 
-                <div class="cashier-date-pill">
-                    <i class="bi bi-calendar3 me-2"></i>
-                    <?php echo date('F d, Y'); ?>
-                </div>
-            </div>
-
-            <div class="cashier-actions-grid">
-                <a href="pos.php" class="cashier-action-card">
-                    <div>
-                        <div class="action-title">POS Terminal</div>
-                        <p class="action-subtitle">Process walk-in auto parts sales and issue receipts.</p>
-                    </div>
-                    <div class="action-icon">
-                        <i class="bi bi-calculator"></i>
-                    </div>
+        <!-- 01 Start a task -->
+        <section class="sp-sec" aria-label="Start a task">
+            <?php spSectionHead('01', 'Start a task'); ?>
+            <div class="sp-tasks">
+                <a href="pos.php" class="sp-task">
+                    <span class="sp-task-kicker sp-mono">POS Terminal</span>
+                    <span class="sp-task-title">New sale <span aria-hidden="true">↗</span></span>
+                    <span class="sp-task-note">Sell parts over the counter</span>
                 </a>
-
-                <a href="billing.php" class="cashier-action-card">
-                    <div>
-                        <div class="action-title">Billing & Invoices</div>
-                        <p class="action-subtitle">Collect repair payments and manage invoice balances.</p>
-                    </div>
-                    <div class="action-icon">
-                        <i class="bi bi-receipt"></i>
-                    </div>
+                <a href="create_transaction.php" class="sp-task">
+                    <span class="sp-task-kicker sp-mono">Transaction Form</span>
+                    <span class="sp-task-title">Walk-in repair <span aria-hidden="true">↗</span></span>
+                    <span class="sp-task-note">Customer, vehicle and services</span>
                 </a>
-
-                <a href="job_orders.php" class="cashier-action-card">
-                    <div>
-                        <div class="action-title">Job Orders</div>
-                        <p class="action-subtitle">View repair records and monitor job progress.</p>
-                    </div>
-                    <div class="action-icon">
-                        <i class="bi bi-tools"></i>
-                    </div>
+                <a href="billing.php" class="sp-task">
+                    <span class="sp-task-kicker sp-mono">Billing</span>
+                    <span class="sp-task-title">Record payment <span aria-hidden="true">↗</span></span>
+                    <span class="sp-task-note">Generate an invoice, then collect</span>
                 </a>
-
-                <a href="online_orders.php" class="cashier-action-card">
-                    <div>
-                        <div class="action-title">Web Orders</div>
-                        <p class="action-subtitle">Monitor pickup orders and customer reservations.</p>
-                    </div>
-                    <div class="action-icon">
-                        <i class="bi bi-globe"></i>
-                    </div>
+                <a href="online_orders.php" class="sp-task">
+                    <span class="sp-task-kicker sp-mono">Web Orders</span>
+                    <span class="sp-task-title">Check GCash <span aria-hidden="true">↗</span></span>
+                    <span class="sp-task-note">Verify reference numbers</span>
                 </a>
             </div>
+        </section>
 
-            <div class="cashier-overview-grid">
-                <div class="overview-card">
-                    <div class="overview-label">Pending Billing</div>
-                    <div class="overview-value"><?php echo intval($pendingBillingItems); ?></div>
-                    <p class="overview-caption">Invoices not fully paid</p>
-                </div>
+        <!-- 02 To do today -->
+        <section class="sp-sec" aria-label="To do today">
+            <?php spSectionHead('02', 'To do today'); ?>
+            <div class="sp-todo">
 
-                <div class="overview-card">
-                    <div class="overview-label">Pending Balance</div>
-                    <div class="overview-value">₱<?php echo number_format(floatval($pendingPaymentAmount), 2); ?></div>
-                    <p class="overview-caption">Unpaid or partial balances</p>
-                </div>
-
-                <div class="overview-card">
-                    <div class="overview-label">Ready Web Orders</div>
-                    <div class="overview-value"><?php echo intval($readyWebOrders); ?></div>
-                    <p class="overview-caption">Waiting for pickup handling</p>
-                </div>
-
-                <div class="overview-card">
-                    <div class="overview-label">Active Jobs</div>
-                    <div class="overview-value"><?php echo intval($activeJobs); ?></div>
-                    <p class="overview-caption">Jobs needing front desk monitoring</p>
-                </div>
-            </div>
-
-            <div class="cashier-main-grid">
-
-                <div class="cashier-panel">
-                    <div class="panel-header">
-                        <div>
-                            <h5>Front Desk Monitoring</h5>
-                            <p>Items that may need cashier attention today.</p>
-                        </div>
+                <div class="sp-todo-col is-ok">
+                    <div class="sp-todo-head">
+                        <h3>Ready for pickup <span class="sp-todo-count"><?= $readyCount ?></span></h3>
+                        <a href="job_orders.php?status=readyforpickup" class="sp-arrow-link">All ↗</a>
                     </div>
-
-                    <div class="monitoring-list">
-                        <div class="monitoring-row">
-                            <div class="monitoring-left">
-                                <div class="monitoring-icon">
-                                    <i class="bi bi-receipt"></i>
-                                </div>
-                                <div>
-                                    <div class="monitoring-title">Unpaid or Partial Invoices</div>
-                                    <p class="monitoring-subtitle">Open billing records for follow-up</p>
-                                </div>
-                            </div>
-                            <div class="monitoring-value"><?php echo intval($pendingBillingItems); ?></div>
+                    <p class="sp-todo-note">Collect any balance, then release.</p>
+                    <?php $shown = 0; ?>
+                    <?php foreach ($readyJobs as $job): if ($shown++ >= $listLimit) break; ?>
+                        <div class="sp-todo-item">
+                            <span>
+                                <strong><?= cpEscape(deskName($job)) ?> · <span class="sp-plate sp-plate-sm"><?= cpEscape($job['plate_number'] ?: '—') ?></span></strong>
+                                <small><?= cpEscape($job['job_order_number']) ?> · complete the job to bill it</small>
+                            </span>
+                            <a href="job_orders.php?q=<?= rawurlencode($job['job_order_number']) ?>" class="cp-btn cp-btn-line cp-btn-sm">Release</a>
                         </div>
-
-                        <div class="monitoring-row">
-                            <div class="monitoring-left">
-                                <div class="monitoring-icon">
-                                    <i class="bi bi-cash-stack"></i>
-                                </div>
-                                <div>
-                                    <div class="monitoring-title">Pending Payment Amount</div>
-                                    <p class="monitoring-subtitle">Remaining unpaid balance</p>
-                                </div>
-                            </div>
-                            <div class="monitoring-value">₱<?php echo number_format(floatval($pendingPaymentAmount), 2); ?></div>
-                        </div>
-
-                        <div class="monitoring-row">
-                            <div class="monitoring-left">
-                                <div class="monitoring-icon">
-                                    <i class="bi bi-bag-check"></i>
-                                </div>
-                                <div>
-                                    <div class="monitoring-title">Ready for Pickup Web Orders</div>
-                                    <p class="monitoring-subtitle">Customer orders ready for release</p>
-                                </div>
-                            </div>
-                            <div class="monitoring-value"><?php echo intval($readyWebOrders); ?></div>
-                        </div>
-
-                        <div class="monitoring-row">
-                            <div class="monitoring-left">
-                                <div class="monitoring-icon">
-                                    <i class="bi bi-tools"></i>
-                                </div>
-                                <div>
-                                    <div class="monitoring-title">Active Repair Jobs</div>
-                                    <p class="monitoring-subtitle">Pending, in-progress, or pickup stage</p>
-                                </div>
-                            </div>
-                            <div class="monitoring-value"><?php echo intval($activeJobs); ?></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="d-flex flex-column gap-3">
-                    <div class="cashier-panel">
-                        <div class="panel-header">
-                            <div>
-                                <h5>Recent POS Sales</h5>
-                                <p>Latest completed over-the-counter transactions.</p>
-                            </div>
-
-                            <a href="pos.php" class="section-link">
-                                Open POS <i class="bi bi-arrow-right"></i>
-                            </a>
-                        </div>
-
-                        <div>
-                            <?php if ($recentSalesStmt->rowCount() > 0): ?>
-                                <?php while ($sale = $recentSalesStmt->fetch(PDO::FETCH_ASSOC)): ?>
-                                    <div class="recent-sale-card">
-                                        <div class="d-flex justify-content-between align-items-start gap-3">
-                                            <div>
-                                                <div class="sale-title">
-                                                    Sale #<?php echo intval($sale['pos_id']); ?>
-                                                </div>
-                                                <div class="sale-meta">
-                                                    <?php echo date('M d, h:i A', strtotime($sale['transaction_date'])); ?>
-                                                    <br>
-                                                    <?php echo htmlspecialchars($sale['payment_method']); ?>
-                                                </div>
-                                            </div>
-
-                                            <div class="sale-amount">
-                                                ₱<?php echo number_format(floatval($sale['total_amount']), 2); ?>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endwhile; ?>
+                    <?php endforeach; ?>
+                    <?php foreach ($readyOrders as $order): if ($shown++ >= $listLimit) break; ?>
+                        <?php $paid = $order['payment_status'] === 'Paid'; ?>
+                        <div class="sp-todo-item">
+                            <span>
+                                <strong>PO-<?= intval($order['order_id']) ?> · <?= cpEscape(deskName($order)) ?></strong>
+                                <small><?= cpEscape($order['items'] ?: 'Parts order') ?> · <?= $paid ? 'paid in full' : 'balance ' . cpMoney($order['balance_due']) ?></small>
+                            </span>
+                            <?php if ($paid): ?>
+                                <a href="online_orders.php?q=<?= rawurlencode('PO-' . $order['order_id']) ?>" class="cp-btn cp-btn-line cp-btn-sm">Release</a>
                             <?php else: ?>
-                                <div class="empty-state">
-                                    <i class="bi bi-receipt fs-3 d-block mb-2"></i>
-                                    No recent POS sales recorded.
-                                </div>
+                                <a href="billing.php?q=<?= rawurlencode('PO-' . $order['order_id']) ?>" class="cp-btn cp-btn-line cp-btn-sm">Collect</a>
                             <?php endif; ?>
                         </div>
-                    </div>
-
-                    <div class="cashier-note">
-                        <h6>
-                            <i class="bi bi-info-circle me-1"></i>
-                            Cashier Reminder
-                        </h6>
-                        <p>
-                            Check pending invoices, confirm payment references for non-cash transactions,
-                            and make sure pickup orders are released only after payment status is verified.
-                        </p>
-                    </div>
+                    <?php endforeach; ?>
+                    <?php if ($readyCount === 0): ?><p class="sp-todo-empty">Nothing waiting for pickup.</p><?php endif; ?>
                 </div>
 
-            </div>
+                <div class="sp-todo-col is-bad">
+                    <div class="sp-todo-head">
+                        <h3>Waiting for payment <span class="sp-todo-count"><?= $payCount ?></span></h3>
+                        <a href="billing.php" class="sp-arrow-link">Billing ↗</a>
+                    </div>
+                    <p class="sp-todo-note">Unpaid and partial invoices.</p>
+                    <?php $shown = 0; ?>
+                    <?php foreach ($openInvoices as $inv): if ($shown++ >= $listLimit) break; ?>
+                        <?php
+                        $ref = $inv['job_order_number'] ?: 'PO-' . intval($inv['part_order_id']);
+                        $overdue = isInvoiceOverdue($inv['invoice_type'], $inv['payment_status'], $inv['due_date']);
+                        ?>
+                        <a href="billing.php?q=<?= rawurlencode($ref) ?>" class="sp-todo-item">
+                            <span>
+                                <strong><?= cpEscape(deskName($inv)) ?></strong>
+                                <small>
+                                    <?= cpEscape($ref) ?> ·
+                                    <?php if ($overdue): ?><?= SERVICE_CREDIT_DAYS ?>-day limit ended <?= date('d M', strtotime($inv['due_date'])) ?>
+                                    <?php else: ?>balance <?= cpMoney($inv['balance_due']) ?><?php endif; ?>
+                                </small>
+                            </span>
+                            <?= $overdue ? '<span class="st bad solid">Overdue</span>' : cpBadge($inv['payment_status']) ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <?php foreach ($unbilledJobs as $job): if ($shown++ >= $listLimit) break; ?>
+                        <a href="billing.php?q=<?= rawurlencode($job['job_order_number']) ?>" class="sp-todo-item">
+                            <span>
+                                <strong><?= cpEscape(deskName($job)) ?></strong>
+                                <small><?= cpEscape($job['job_order_number']) ?> · no invoice yet</small>
+                            </span>
+                            <?= cpBadge('Not Paid', 'No invoice') ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <?php if ($payCount === 0): ?><p class="sp-todo-empty">Every invoice is paid.</p><?php endif; ?>
+                </div>
 
-        </div>
+                <div class="sp-todo-col is-pend">
+                    <div class="sp-todo-head">
+                        <h3>New from the website <span class="sp-todo-count"><?= $webCount ?></span></h3>
+                        <a href="online_orders.php" class="sp-arrow-link">Web orders ↗</a>
+                    </div>
+                    <p class="sp-todo-note">Approve or reject each request.</p>
+                    <?php $shown = 0; ?>
+                    <?php foreach ($pendingOrders as $order): if ($shown++ >= $listLimit) break; ?>
+                        <a href="online_orders.php?q=<?= rawurlencode('PO-' . $order['order_id']) ?>" class="sp-todo-item">
+                            <span>
+                                <strong>PO-<?= intval($order['order_id']) ?> · <?= cpEscape(deskName($order)) ?></strong>
+                                <small>
+                                    <?= cpEscape($order['items'] ?: 'Parts order') ?>
+                                    <?php if (stripos((string) $order['payment_method'], 'gcash') !== false): ?> · <?= cpEscape($order['payment_method']) ?>
+                                    <?php elseif (!empty($order['preferred_pickup_date'])): ?> · pickup <?= date('d M', strtotime($order['preferred_pickup_date'])) ?><?php endif; ?>
+                                </small>
+                            </span>
+                            <?= cpBadge('Pending') ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <?php foreach ($pendingRequests as $request): if ($shown++ >= $listLimit) break; ?>
+                        <a href="service_requests.php?q=<?= rawurlencode($request['request_number']) ?>" class="sp-todo-item">
+                            <span>
+                                <strong><?= cpEscape($request['request_number']) ?> · <?= cpEscape(deskName($request)) ?></strong>
+                                <small><?= cpEscape($request['service_name'] ?: 'Service request') ?><?= $request['preferred_appointment_date'] ? ' · prefers ' . date('d M', strtotime($request['preferred_appointment_date'])) : '' ?></small>
+                            </span>
+                            <?= cpBadge('Pending') ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <?php if ($webCount === 0): ?><p class="sp-todo-empty">No new orders or requests.</p><?php endif; ?>
+                </div>
+            </div>
+        </section>
+
+        <!-- 03 Your sales today -->
+        <section class="sp-sec" aria-label="Your sales today">
+            <?php spSectionHead('03', 'Your sales today', '<a href="invoice_history.php" class="sp-arrow-link">Invoice history ↗</a>'); ?>
+            <table class="cp-table sp-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Ref</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Items</th>
+                        <th scope="col">Method</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col"><span class="visually-hidden">Receipt</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($salesToday as $sale): ?>
+                        <?php
+                        $receiptNo = 'POS-' . str_pad($sale['pos_id'], 5, '0', STR_PAD_LEFT);
+                        $customer = !empty($sale['customer_id']) ? deskName($sale) : ($sale['walkin_customer_name'] ?: 'Walk-in');
+                        ?>
+                        <tr>
+                            <td data-label="Ref">
+                                <div>
+                                    <span class="sp-ref sp-mono"><?= cpEscape($receiptNo) ?></span>
+                                    <span class="cp-cell-sub"><?= date('g:i A', strtotime($sale['transaction_date'])) ?></span>
+                                </div>
+                            </td>
+                            <td data-label="Customer"><?= cpEscape($customer) ?></td>
+                            <td data-label="Items"><?= cpEscape(implode(', ', $saleItems[$sale['pos_id']] ?? []) ?: '—') ?></td>
+                            <td data-label="Method"><?= cpEscape($sale['payment_method']) ?><?= !empty($sale['reference_number']) ? ' · ref ' . cpEscape($sale['reference_number']) : '' ?></td>
+                            <td data-label="Status"><?= cpBadge($sale['status']) ?></td>
+                            <td data-label="Amount" class="sp-mono"><?= cpMoney($sale['total_amount']) ?></td>
+                            <td class="cp-num">
+                                <a href="print_pos_receipt.php?pos_id=<?= intval($sale['pos_id']) ?>" target="_blank" class="cp-btn cp-btn-line cp-btn-sm"
+                                   data-sp-doc data-sp-doc-kind="Sales receipt" data-sp-doc-ref="<?= cpEscape($receiptNo) ?>">Receipt</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($salesToday)): ?>
+                        <tr class="sp-empty-row"><td colspan="7">No sales yet today. <a href="pos.php" class="sp-inv-link">Open the POS</a> to start one.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            <?php if (!empty($salesToday)): ?>
+                <p class="sp-week-foot"><span><?= count($salesToday) ?> sale<?= count($salesToday) === 1 ? '' : 's' ?> today</span><span class="sp-mono">Completed total <?= cpMoney($salesTotal) ?></span></p>
+            <?php endif; ?>
+        </section>
     </main>
 </div>
 

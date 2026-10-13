@@ -4,9 +4,10 @@ require_once '../includes/passwords.php';
 require_once '../includes/rate_limit.php';
 require_once '../includes/email_verification.php';
 require_once '../includes/password_reset.php';
+require_once '../includes/cart_store.php';
 
 // Login throttling: per account+IP, and a looser per-IP limit.
-const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_MAX_ATTEMPTS = 3; // SRS UC01: lock the account after 3 failed attempts
 const LOGIN_IP_MAX_ATTEMPTS = 30;
 const LOGIN_WINDOW_SECONDS = 900;
 const LOGIN_LOCK_SECONDS = 900;
@@ -191,6 +192,11 @@ function handleLogin(PDO $db) {
     $db->prepare("UPDATE user SET last_login_at = NOW() WHERE user_id = ?")->execute([intval($user['user_id'])]);
 
     loginUser($user, $customerId);
+
+    // Bring back the cart this customer had before logging out.
+    if ($customerId) {
+        cartRestoreFromDb($db, $customerId);
+    }
 
     redirectTo("../views/" . dashboardForRole($user['role']));
 }

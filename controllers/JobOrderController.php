@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 
 require_once '../config/Database.php';
 require_once '../models/JobOrder.php';
+require_once '../includes/business_rules.php';
 
 requireAnyPermission(['job_orders.manage', 'job_orders.progress'], '../views/login.php');
 
@@ -17,6 +19,12 @@ $canUpdateRepairProgress = can('job_orders.progress');
 $canCompleteAndCancelJobOrders = can('job_orders.manage');
 
 function redirectJobOrders() {
+    // The Head Mechanic job board posts return_to so it lands back on the board
+    if (($_POST['return_to'] ?? '') === 'dashboard_mechanic.php') {
+        header("Location: ../views/dashboard_mechanic.php");
+        exit;
+    }
+
     header("Location: ../views/job_orders.php");
     exit;
 }
@@ -88,6 +96,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             if ($estimated_cost <= 0) {
                 throw new Exception("Estimated cost must be greater than zero.");
             }
+
+            enforceMinimumServiceFee($estimated_cost, 'Estimated cost');
 
             if ($expected_completion_date !== '' && $expected_completion_date < date('Y-m-d')) {
                 throw new Exception("Target completion date cannot be in the past.");
@@ -174,12 +184,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
                 throw new Exception("Estimated cost must be greater than zero.");
             }
 
+            enforceMinimumServiceFee($estimated_cost, 'Estimated cost');
+
             if (!$requires_down_payment) {
                 $down_payment_amount = 0;
             }
 
-            if ($requires_down_payment && $down_payment_amount <= 0) {
-                throw new Exception("Down payment amount must be greater than zero.");
+            // SRS UC20: the down payment is at least 50% of the estimate; left blank, it defaults to 50%.
+            if ($requires_down_payment) {
+                $minimumDown = minimumDownPayment($estimated_cost);
+
+                if ($down_payment_amount <= 0) {
+                    $down_payment_amount = $minimumDown;
+                }
+
+                if ($down_payment_amount < $minimumDown) {
+                    throw new Exception("Down payment must be at least 50% of the estimate (₱" . number_format($minimumDown, 2) . ").");
+                }
             }
 
             if ($down_payment_amount > $estimated_cost) {
@@ -215,6 +236,34 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
                 $_SESSION['error_message'] = "Failed to update Job Order details.";
             }
 
+            redirectJobOrders();
+        }
+
+        // SRS UC20 Record Down Payment (Owner and Cashier: the people who handle payments)
+        elseif ($_POST['action'] === 'record_down_payment') {
+
+            if (!can('billing.manage')) {
+                throw new Exception("Only the Owner or Cashier can record a down payment.");
+            }
+
+            require_once '../models/Billing.php';
+
+            $job_order_id = intval($_POST['job_order_id'] ?? 0);
+            $amount = floatval($_POST['amount'] ?? 0);
+            $method = trim($_POST['payment_method'] ?? '');
+            $reference_number = trim($_POST['reference_number'] ?? '');
+
+            if ($job_order_id <= 0) {
+                throw new Exception("Invalid job order record.");
+            }
+
+            $invoiceId = (new Billing($db))->recordDownPayment($job_order_id, $userId, $amount, $method, $reference_number);
+
+            logActivity($db, 'Recorded down payment', 'Job order', $job_order_id, activityRef($db, 'Job order', $job_order_id),
+                '₱' . number_format($amount, 2) . ' by ' . $method . ($reference_number !== '' ? ' (ref ' . $reference_number . ')' : '')
+                . ' · invoice ' . activityRef($db, 'Invoice', $invoiceId));
+
+            $_SESSION['success_message'] = "Down payment of ₱" . number_format($amount, 2) . " recorded. The final bill will only show the remaining balance.";
             redirectJobOrders();
         }
 
@@ -301,6 +350,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
 
             validateStatusTransition($current_status, $status, $userRole);
 
+            // SRS UC16: a cancellation reason is mandatory.
+            if ($status === 'Cancelled' && $cancellation_reason === '') {
+                throw new Exception("Please enter the reason for cancelling this job order.");
+            }
+
+            if (mb_strlen($cancellation_reason) > 500) {
+                throw new Exception("Cancellation reason must be 500 characters or fewer.");
+            }
+
             if ($status === 'Completed') {
                 $stmt = $db->prepare("
                     UPDATE job_order
@@ -316,11 +374,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
                     UPDATE job_order
                     SET status = 'Cancelled',
                         cancellation_reason = ?,
-                        cancelled_at = NOW()
+                        cancelled_at = NOW(),
+                        cancelled_by = ?
                     WHERE job_order_id = ?
                 ");
                 $stmt->execute([
-                    $cancellation_reason !== '' ? htmlspecialchars(strip_tags($cancellation_reason)) : null,
+                    htmlspecialchars(strip_tags($cancellation_reason)),
+                    $userId,
                     $job_order_id
                 ]);
 
@@ -331,6 +391,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
                     WHERE job_order_id = ?
                 ");
                 $stmt->execute([$status, $job_order_id]);
+            }
+
+            if ($status === 'Cancelled') {
+                logActivity($db, 'Cancelled job order', 'Job order', $job_order_id, activityRef($db, 'Job order', $job_order_id), 'Reason: ' . $cancellation_reason);
             }
 
             $_SESSION['success_message'] = "Job Order updated to '{$status}'.";

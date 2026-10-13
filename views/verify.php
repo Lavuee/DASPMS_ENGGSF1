@@ -14,19 +14,19 @@ $user = findUserByVerificationToken((new Database())->getConnection(), $token);
 if (!$user) {
     renderAuthPageStart('Verify Email', 'Link expired', 'This verification link is invalid, already used, or has expired.');
     ?>
-        <a href="resend_verification.php" class="btn btn-reset w-100 mb-3">Send a New Link</a>
+        <a href="resend_verification.php" class="auth-submit">Send a new link</a>
     <?php
     renderAuthPageEnd();
     exit;
 }
 
 $firstName = html_entity_decode((string)$user['first_name'], ENT_QUOTES, 'UTF-8');
-renderAuthPageStart('Verify Email', 'Confirm Your Email', 'Hi ' . $firstName . ', click below to verify ' . $user['email'] . '.');
+renderAuthPageStart('Verify Email', 'Confirm your email', 'Hi ' . $firstName . ', click below to verify ' . $user['email'] . '.');
 ?>
-        <form action="../controllers/AuthController.php" method="POST">
+        <form action="../controllers/AuthController.php" method="POST" class="auth-form" data-auth-form>
             <?= csrfField() ?>
             <input type="hidden" name="action" value="confirm_email">
             <input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES, 'UTF-8') ?>">
-            <button type="submit" class="btn btn-reset w-100 mb-3">Verify My Email</button>
+            <button type="submit" class="auth-submit" data-loading-text="Verifying…">Verify my email</button>
         </form>
 <?php renderAuthPageEnd(); ?>

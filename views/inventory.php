@@ -4,8 +4,13 @@ require_once __DIR__ . '/../includes/auth.php';
 requirePermission('inventory.manage');
 
 require_once '../config/Database.php';
+require_once '../includes/staff_ui.php';
 
 $db = (new Database())->getConnection();
+
+// SRS: archiving, changing prices and cost (procurement) prices are for the Owner
+$canArchiveParts = can('inventory.archive');
+$canManagePricing = can('pricing.manage');
 
 // Active suppliers for the dropdown menus
 $supplierStmt = $db->query("SELECT supplier_id, supplier_name FROM supplier WHERE is_active = 1 ORDER BY supplier_name ASC");
@@ -16,13 +21,6 @@ $viewStatus = $viewStatus === 'archived' ? 'archived' : 'active';
 $isActiveView = $viewStatus === 'active';
 $isActiveValue = $isActiveView ? 1 : 0;
 
-$itemsPerPage = 5;
-$currentPage = isset($_GET['page']) ? intval($_GET['page']) : 1;
-
-if ($currentPage < 1) {
-    $currentPage = 1;
-}
-
 $countActiveStmt = $db->prepare("SELECT COUNT(*) FROM part WHERE is_active = 1");
 $countActiveStmt->execute();
 $activeCount = intval($countActiveStmt->fetchColumn());
@@ -31,23 +29,6 @@ $countArchivedStmt = $db->prepare("SELECT COUNT(*) FROM part WHERE is_active = 0
 $countArchivedStmt->execute();
 $archivedCount = intval($countArchivedStmt->fetchColumn());
 
-$countStmt = $db->prepare("
-    SELECT COUNT(*)
-    FROM part
-    WHERE is_active = :is_active
-");
-$countStmt->bindValue(':is_active', $isActiveValue, PDO::PARAM_INT);
-$countStmt->execute();
-$totalParts = intval($countStmt->fetchColumn());
-
-$totalPages = max(1, ceil($totalParts / $itemsPerPage));
-
-if ($currentPage > $totalPages) {
-    $currentPage = $totalPages;
-}
-
-$offset = ($currentPage - 1) * $itemsPerPage;
-
 // Parts with their linked supplier name and email
 $stmt = $db->prepare("
     SELECT p.*, s.supplier_name, s.email AS supplier_email 
@@ -55,14 +36,16 @@ $stmt = $db->prepare("
     LEFT JOIN supplier s ON p.supplier_id = s.supplier_id
     WHERE p.is_active = :is_active
     ORDER BY p.category ASC, p.part_name ASC
-    LIMIT :limit OFFSET :offset
 ");
+// All parts in this view are loaded; the page pages and filters them itself.
 $stmt->bindValue(':is_active', $isActiveValue, PDO::PARAM_INT);
-$stmt->bindValue(':limit', $itemsPerPage, PDO::PARAM_INT);
-$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
 
 $parts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Extra gallery photos for the parts on this page, keyed by part_id
+require_once '../models/PartImage.php';
+$extraImagesByPart = (new PartImage($db))->listForItems(array_column($parts, 'part_id'));
 
 function partImagePath($image) {
     if (!$image) {
@@ -82,1346 +65,433 @@ function cleanValue($value, $fallback = 'N/A') {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
-function inventoryPageUrl($page, $status = 'active') {
-    $page = max(1, intval($page));
-    $status = $status === 'archived' ? 'archived' : 'active';
-
-    return 'inventory.php?status=' . $status . '&page=' . $page;
-}
-
 function inventoryStatusUrl($status) {
     $status = $status === 'archived' ? 'archived' : 'active';
 
     return 'inventory.php?status=' . $status;
 }
-?>
 
+// Suggestions for the free-text category and unit fields
+$categoryOptions = $db->query("SELECT DISTINCT category FROM part WHERE category IS NOT NULL AND category <> '' ORDER BY category")->fetchAll(PDO::FETCH_COLUMN);
+$unitOptions = array_values(array_unique(array_merge(['piece', 'pair', 'set', 'meter', 'box'], $db->query("SELECT DISTINCT unit FROM part WHERE unit IS NOT NULL AND unit <> ''")->fetchAll(PDO::FETCH_COLUMN))));
+
+// Stock state used for the chips and badges (same rule as everywhere else)
+function partStockKey($qty, $threshold) {
+    if ($qty <= 0) return 'out';
+    if ($qty <= $threshold) return 'low';
+    return 'in';
+}
+
+$stockCounts = ['in' => 0, 'low' => 0, 'out' => 0];
+foreach ($parts as $p) {
+    $stockCounts[partStockKey(intval($p['quantity_on_hand']), intval($p['low_stock_threshold']))]++;
+}
+
+// Field value for a form (raw text, escaped once)
+function partField($p, $key, $default = '') {
+    $value = $p !== null ? ($p[$key] ?? $default) : $default;
+    return cpEscape(html_entity_decode((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+}
+
+// Fields shared by the Add part and Edit part popups
+function partFormFields($p, $id, array $suppliersList) {
+    $isEdit = $p !== null;
+    ob_start();
+    ?>
+    <div class="sp-fgrid">
+        <div class="sp-field">
+            <label for="<?= $id ?>Name">Part name <span class="sp-req">*</span></label>
+            <input type="text" name="part_name" id="<?= $id ?>Name" class="cp-input" value="<?= partField($p, 'part_name') ?>" required>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Category">Category <span class="sp-req">*</span></label>
+            <input type="text" name="category" id="<?= $id ?>Category" class="cp-input" list="partCategoryList" value="<?= partField($p, 'category') ?>" placeholder="e.g. Electrical Parts & Supplies" required>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Brand">Brand</label>
+            <input type="text" name="brand" id="<?= $id ?>Brand" class="cp-input" value="<?= partField($p, 'brand') ?>" placeholder="e.g. Bosch, NGK, Motolite">
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Unit">Unit</label>
+            <input type="text" name="unit" id="<?= $id ?>Unit" class="cp-input" list="partUnitList" value="<?= partField($p, 'unit', 'piece') ?>">
+        </div>
+    </div>
+    <div class="sp-fgrid is-3" style="margin-top: 22px">
+        <div class="sp-field">
+            <label for="<?= $id ?>Qty">Quantity <span class="sp-req">*</span></label>
+            <input type="number" name="quantity_on_hand" id="<?= $id ?>Qty" class="cp-input" min="0" value="<?= partField($p, 'quantity_on_hand') ?>" required>
+        </div>
+        <?php $priceLocked = $isEdit && !can('pricing.manage'); ?>
+        <div class="sp-field">
+            <label for="<?= $id ?>Price">Unit price <span class="sp-req">*</span></label>
+            <input type="number" name="unit_price" id="<?= $id ?>Price" class="cp-input" step="0.01" min="0" value="<?= partField($p, 'unit_price') ?>" required<?= $priceLocked ? ' readonly aria-describedby="' . $id . 'PriceNote"' : '' ?>>
+            <?php if ($priceLocked): ?>
+                <p class="cp-hint" id="<?= $id ?>PriceNote">Only the Owner can change prices.</p>
+            <?php endif; ?>
+        </div>
+        <?php if (can('pricing.manage')): ?>
+            <div class="sp-field">
+                <label for="<?= $id ?>Cost">Cost price</label>
+                <input type="number" name="cost_price" id="<?= $id ?>Cost" class="cp-input" step="0.01" min="0" value="<?= partField($p, 'cost_price') ?>">
+            </div>
+        <?php endif; ?>
+        <div class="sp-field">
+            <label for="<?= $id ?>Alert">Low stock alert at</label>
+            <input type="number" name="low_stock_threshold" id="<?= $id ?>Alert" class="cp-input" min="0" value="<?= partField($p, 'low_stock_threshold', '5') ?>">
+            <p class="cp-hint">The supplier gets an email at this level.</p>
+        </div>
+        <div class="sp-field" style="grid-column: span 2">
+            <label for="<?= $id ?>Supplier">Primary supplier</label>
+            <select name="supplier_id" id="<?= $id ?>Supplier" class="cp-input">
+                <option value="">Select supplier</option>
+                <?php foreach ($suppliersList as $sup): ?>
+                    <option value="<?= intval($sup['supplier_id']) ?>"<?= $isEdit && intval($p['supplier_id'] ?? 0) === intval($sup['supplier_id']) ? ' selected' : '' ?>><?= cpEscape($sup['supplier_name']) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <p class="cp-hint">Restock alerts go to this supplier.</p>
+        </div>
+    </div>
+
+    <?php if ($isEdit): ?>
+        <div class="sp-fgrid" style="margin-top: 22px">
+            <div class="sp-field">
+                <label for="<?= $id ?>Ref">Restock document no.</label>
+                <input type="text" name="stock_in_reference" id="<?= $id ?>Ref" class="cp-input" maxlength="100" placeholder="Optional, e.g. supplier receipt no.">
+            </div>
+            <div class="sp-field">
+                <label for="<?= $id ?>RefNote">Restock note</label>
+                <input type="text" name="stock_in_notes" id="<?= $id ?>RefNote" class="cp-input" maxlength="255" placeholder="Optional">
+            </div>
+            <p class="cp-hint sp-span">Raising the quantity records a stock-in entry with these details.</p>
+        </div>
+    <?php endif; ?>
+
+    <div class="sp-fgrid" style="margin-top: 22px">
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Desc">Short description <span class="sp-req">*</span></label>
+            <input type="text" name="description" id="<?= $id ?>Desc" class="cp-input" value="<?= partField($p, 'description') ?>" required>
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Spec">Specification</label>
+            <input type="text" name="specification" id="<?= $id ?>Spec" class="cp-input" value="<?= partField($p, 'specification') ?>" placeholder="e.g. 12V, 40A">
+        </div>
+        <div class="sp-field">
+            <label for="<?= $id ?>Fits">Compatibility</label>
+            <input type="text" name="compatibility" id="<?= $id ?>Fits" class="cp-input" value="<?= partField($p, 'compatibility') ?>" placeholder="e.g. Toyota Vios 2014–2019, Universal">
+        </div>
+        <div class="sp-field sp-span">
+            <label for="<?= $id ?>Full">Full description</label>
+            <textarea name="full_description" id="<?= $id ?>Full" class="cp-input" rows="4"><?= partField($p, 'full_description') ?></textarea>
+        </div>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+$partDialogs = '';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Inventory - Norily's Repair Shop</title>
+<title>Parts Inventory - Norily's Repair Shop</title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
-
-<style>
-    .main-content {
-        overflow-x: hidden;
-    }
-
-    .inventory-page {
-        width: 100%;
-        max-width: 100%;
-    }
-
-    .inventory-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-bottom: 1.15rem;
-    }
-
-    .inventory-header h2 {
-        font-size: 2rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
-    }
-
-    .inventory-count-text {
-        color: var(--dashboard-text-muted);
-        font-size: 0.95rem;
-        font-weight: 500;
-        margin-bottom: 0;
-    }
-
-    .part-add-btn {
-        min-height: 44px;
-        background: var(--dashboard-primary);
-        border: 1px solid var(--dashboard-primary);
-        color: var(--black);
-        font-size: 0.9rem;
-        font-weight: 800;
-        padding: 0.55rem 1rem;
-        border-radius: 999px;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.45rem;
-        transition: 0.2s ease;
-        white-space: nowrap;
-    }
-
-    .part-add-btn i {
-        font-size: 0.95rem;
-    }
-
-    .part-add-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
-    }
-
-    .inventory-tabs {
-        display: flex;
-        align-items: center;
-        gap: 0.7rem;
-        flex-wrap: wrap;
-        margin-bottom: 1.35rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.08);
-    }
-
-    .inventory-tab-link {
-        border: 1px solid #e5e7eb;
-        background: rgba(255, 255, 255, 0.55);
-        color: var(--dashboard-text-muted);
-        border-radius: 999px;
-        padding: 0.5rem 0.9rem;
-        font-size: 0.86rem;
-        font-weight: 900;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.42rem;
-        transition: 0.2s ease;
-    }
-
-    .inventory-tab-link:hover {
-        color: var(--black);
-        background: rgba(245, 197, 24, 0.14);
-        border-color: rgba(245, 197, 24, 0.45);
-    }
-
-    .inventory-tab-link.active {
-        background: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-        color: var(--black);
-    }
-
-    .inventory-alert {
-        border-radius: 16px;
-        font-size: 0.92rem;
-        margin-bottom: 1.5rem;
-    }
-
-    .inventory-table-wrap {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-
-    .inventory-table {
-        width: 100%;
-        min-width: 1380px;
-        border-collapse: collapse;
-        background: transparent;
-        margin-bottom: 0;
-    }
-
-    .inventory-table thead th {
-        color: var(--dashboard-text-muted);
-        font-size: 0.82rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        padding: 0.9rem 0.85rem;
-        border-bottom: 1px solid #dcdfe4;
-        background: transparent;
-        white-space: nowrap;
-    }
-
-    .inventory-table tbody td {
-        padding: 1rem 0.85rem;
-        border-bottom: 1px solid #e8ebef;
-        vertical-align: middle;
-        color: var(--dashboard-text-main);
-        background: transparent;
-        font-size: 0.95rem;
-    }
-
-    .inventory-table tbody tr:hover td {
-        background: rgba(245, 197, 24, 0.035);
-    }
-
-    .inventory-table th:last-child,
-    .inventory-table td:last-child {
-        min-width: 160px;
-    }
-
-    .part-thumb {
-        width: 64px;
-        height: 48px;
-        object-fit: cover;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-    }
-
-    .part-name {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        white-space: nowrap;
-    }
-
-    .part-brand {
-        color: var(--dashboard-text-muted);
-        font-size: 0.78rem;
-        font-weight: 700;
-        margin-top: 0.15rem;
-        white-space: nowrap;
-    }
-
-    .part-category-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 999px;
-        padding: 0.42rem 0.72rem;
-        font-size: 0.78rem;
-        font-weight: 900;
-        white-space: nowrap;
-        background: #fff4cc;
-        color: var(--black);
-    }
-
-    .part-description-cell {
-        max-width: 310px;
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        line-height: 1.45;
-    }
-
-    .part-spec-cell {
-        max-width: 360px;
-        font-size: 0.88rem;
-        line-height: 1.45;
-        color: var(--dashboard-text-main);
-    }
-
-    .part-spec-line {
-        display: block;
-        margin-bottom: 0.25rem;
-    }
-
-    .part-spec-label {
-        color: var(--dashboard-text-muted);
-        font-size: 0.74rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.25px;
-    }
-
-    .stock-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 999px;
-        padding: 0.42rem 0.72rem;
-        font-size: 0.78rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .stock-low {
-        background: #fef3c7;
-        color: #b45309;
-    }
-
-    .stock-available {
-        background: rgba(16, 185, 129, 0.12);
-        color: #047857;
-    }
-
-    .stock-archived {
-        background: #f3f4f6;
-        color: #4b5563;
-    }
-
-    .part-price {
-        color: #047857;
-        font-size: 0.95rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .part-unit {
-        color: var(--dashboard-text-muted);
-        font-size: 0.76rem;
-        font-weight: 700;
-        margin-top: 0.2rem;
-    }
-
-    .supplier-cell {
-        max-width: 230px;
-        color: var(--dashboard-text-main);
-        font-size: 0.86rem;
-        line-height: 1.4;
-    }
-
-    .supplier-ref {
-        font-weight: 800;
-        color: var(--dashboard-text-main);
-    }
-
-    .supplier-email-link {
-        color: #1d4ed8;
-        font-size: 0.78rem;
-        font-weight: 800;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        margin-top: 0.25rem;
-    }
-
-    .supplier-email-link:hover {
-        text-decoration: underline;
-    }
-
-    .part-action-group {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.45rem;
-        flex-wrap: nowrap;
-    }
-
-    .part-action-form {
-        margin: 0;
-        display: inline-flex;
-    }
-
-    .icon-action-btn {
-        width: 38px;
-        height: 38px;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-        color: var(--dashboard-text-muted);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        text-decoration: none;
-        font-size: 0.95rem;
-        transition: all 0.2s ease;
-    }
-
-    .icon-action-btn:hover {
-        transform: translateY(-1px);
-    }
-
-    .icon-action-btn.edit-btn:hover {
-        background: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-        color: var(--black);
-    }
-
-    .icon-action-btn.archive-btn:hover {
-        background: #fff1f2;
-        border-color: #fecdd3;
-        color: #be123c;
-    }
-
-    .icon-action-btn.restore-btn:hover {
-        background: #ecfdf5;
-        border-color: #bbf7d0;
-        color: #15803d;
-    }
-
-    .icon-action-btn.permanent-delete-btn:hover {
-        background: #fee2e2;
-        border-color: #fecaca;
-        color: #b91c1c;
-    }
-
-    .inventory-empty-state {
-        padding: 3rem 1rem;
-        text-align: center;
-        color: var(--dashboard-text-muted);
-        font-size: 0.95rem;
-    }
-
-    .inventory-empty-state i {
-        display: block;
-        color: var(--dashboard-primary);
-        font-size: 2.25rem;
-        margin-bottom: 0.75rem;
-    }
-
-    .inventory-empty-state .fw-bold {
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        font-weight: 900 !important;
-    }
-
-    .inventory-pagination-wrap {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.35rem;
-        margin-top: 1rem;
-        flex-wrap: wrap;
-    }
-
-    .pagination-controls {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.35rem;
-        flex-wrap: wrap;
-    }
-
-    .page-link-custom {
-        min-width: 38px;
-        min-height: 38px;
-        border-radius: 999px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-        color: var(--dashboard-text-muted);
-        text-decoration: none;
-        font-size: 0.82rem;
-        font-weight: 900;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.45rem 0.75rem;
-        transition: 0.2s ease;
-    }
-
-    .page-link-custom:hover {
-        border-color: var(--dashboard-primary);
-        background: #fffaf0;
-        color: var(--black);
-    }
-
-    .page-link-custom.active {
-        background: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-        color: var(--black);
-    }
-
-    .page-link-custom.disabled {
-        pointer-events: none;
-        opacity: 0.45;
-        cursor: not-allowed;
-    }
-
-    .modal-content {
-        border-radius: 20px;
-        border: 1px solid var(--border-light);
-        overflow: hidden;
-    }
-
-    .modal-header {
-        border-bottom: 1px solid var(--border-light);
-        background: #fffdf5;
-    }
-
-    .modal-footer {
-        border-top: none;
-        padding-top: 0.75rem;
-    }
-
-    .modal-title {
-        font-size: 1rem;
-        font-weight: 900;
-    }
-
-    .modal-header small {
-        font-size: 0.78rem;
-    }
-
-    .minimal-part-form {
-        padding: 0.25rem 0;
-    }
-
-    .minimal-section-title {
-        font-size: 0.95rem;
-        font-weight: 900;
-        color: var(--dashboard-primary);
-        margin-bottom: 1.35rem;
-        padding-bottom: 0.85rem;
-        border-bottom: 1px solid #dfe3e8;
-    }
-
-    .minimal-form-grid {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        column-gap: 1.2rem;
-        row-gap: 1.4rem;
-    }
-
-    .minimal-form-field {
-        min-width: 0;
-        grid-column: span 2;
-    }
-
-    .minimal-form-field.half {
-        grid-column: span 3;
-    }
-
-    .minimal-form-field.full {
-        grid-column: 1 / -1;
-    }
-
-    .minimal-label {
-        display: block;
-        font-size: 0.76rem;
-        font-weight: 800;
-        color: var(--dashboard-text-muted);
-        margin-bottom: 0.35rem;
-    }
-
-    .minimal-control {
-        width: 100%;
-        border: none;
-        border-bottom: 1px solid #cfd6df;
-        border-radius: 0;
-        padding: 0.45rem 0 0.55rem 0;
-        font-size: 0.95rem;
-        color: var(--dashboard-text-main);
-        background: transparent;
-        box-shadow: none;
-    }
-
-    .minimal-control:focus {
-        border-color: var(--dashboard-primary);
-        outline: none;
-        box-shadow: none;
-        background: transparent;
-    }
-
-    textarea.minimal-control {
-        min-height: 95px;
-        resize: vertical;
-        line-height: 1.5;
-    }
-
-    input[type="file"].minimal-control {
-        cursor: pointer;
-    }
-
-    .minimal-helper,
-    .help-text {
-        color: var(--dashboard-text-muted);
-        font-size: 0.76rem;
-        margin-top: 0.35rem;
-    }
-
-    .minimal-cancel-btn {
-        border: 1px solid #e5e7eb;
-        background: transparent;
-        color: var(--dashboard-text-main);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        transition: 0.2s ease;
-    }
-
-    .minimal-cancel-btn:hover {
-        background: #f8fafc;
-        color: var(--black);
-    }
-
-    .minimal-save-btn {
-        border: 1px solid var(--dashboard-primary);
-        background: var(--dashboard-primary);
-        color: var(--black);
-        border-radius: 999px;
-        padding: 0.55rem 1rem;
-        font-size: 0.9rem;
-        font-weight: 900;
-        transition: 0.2s ease;
-    }
-
-    .minimal-save-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
-    }
-
-    @media (max-width: 767.98px) {
-        .inventory-header {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .part-add-btn {
-            width: 100%;
-            justify-content: center;
-        }
-
-        .inventory-header h2 {
-            font-size: 1.75rem;
-        }
-
-        .inventory-tabs {
-            align-items: stretch;
-            flex-direction: column;
-        }
-
-        .inventory-tab-link {
-            justify-content: center;
-        }
-
-        .inventory-pagination-wrap {
-            justify-content: center;
-        }
-
-        .pagination-controls {
-            justify-content: center;
-        }
-
-        .minimal-form-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .minimal-form-field,
-        .minimal-form-field.half,
-        .minimal-form-field.full {
-            grid-column: 1 / -1;
-        }
-
-        .modal-footer {
-            flex-direction: column-reverse;
-            align-items: stretch;
-        }
-
-        .minimal-cancel-btn,
-        .minimal-save-btn {
-            width: 100%;
-        }
-    }
-</style>
+<link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
-
 <body>
 
 <div class="app-wrapper">
     <?php include '../includes/sidebar.php'; ?>
 
-    <main class="main-content">
-        <div class="inventory-page">
+    <main class="main-content sp-page" id="spMain">
 
-            <div class="inventory-header">
-                <div>
-                    <h2>Parts Inventory</h2>
-                    <p class="inventory-count-text">
-                        Manage parts, stock, pricing, images, specifications, compatibility, and supplier details
-                    </p>
+        <?php
+        $pageActions = $isActiveView
+                ? '<a href="' . inventoryStatusUrl('archived') . '" class="cp-btn cp-btn-line">Archived (' . $archivedCount . ')</a><button type="button" class="cp-btn cp-btn-dark" data-sp-open="#addPartDialog">+ Add part</button>'
+                : '<a href="' . inventoryStatusUrl('active') . '" class="cp-btn cp-btn-line">← Active parts (' . $activeCount . ')</a>';
+        spPageHead(
+            spPortalLabel() . ' · Stock',
+            $isActiveView ? 'Parts Inventory' : 'Archived Parts',
+            $isActiveView
+                ? 'When a part drops to its alert level, its supplier gets a restock email.'
+                : 'Parts taken out of the active list. Restore one to sell it again.'
+        );
+        cpFlash();
+        ?>
+
+        <div data-sp-filter="#partRows">
+            <div class="sp-toolbar">
+                <div class="sp-search-field-inline">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                    <input type="search" class="cp-input" data-sp-search placeholder="Search part, brand or supplier" aria-label="Search part, brand or supplier" autocomplete="off">
                 </div>
-
-                <?php if ($isActiveView): ?>
-                    <button
-                        class="btn part-add-btn"
-                        data-bs-toggle="modal"
-                        data-bs-target="#addPartModal"
-                    >
-                        <i class="bi bi-plus-lg"></i>
-                        Add Part
-                    </button>
-                <?php endif; ?>
+                <div class="sp-toolbar-actions"><?= $pageActions ?></div>
             </div>
 
-            <div class="inventory-tabs">
-                <a
-                    href="<?= inventoryStatusUrl('active') ?>"
-                    class="inventory-tab-link <?= $isActiveView ? 'active' : '' ?>"
-                >
-                    <i class="bi bi-box-seam"></i>
-                    Active Parts (<?= $activeCount ?>)
-                </a>
-
-                <a
-                    href="<?= inventoryStatusUrl('archived') ?>"
-                    class="inventory-tab-link <?= !$isActiveView ? 'active' : '' ?>"
-                >
-                    <i class="bi bi-archive"></i>
-                    Archived Parts (<?= $archivedCount ?>)
-                </a>
-            </div>
-
-            <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success alert-dismissible fade show inventory-alert">
-                    <i class="bi bi-check-circle-fill me-2"></i>
-                    <?= htmlspecialchars($_SESSION['success_message'], ENT_QUOTES, 'UTF-8') ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                <?php unset($_SESSION['success_message']); ?>
-            <?php endif; ?>
-
-            <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-danger alert-dismissible fade show inventory-alert">
-                    <i class="bi bi-exclamation-circle-fill me-2"></i>
-                    <?= htmlspecialchars($_SESSION['error_message'], ENT_QUOTES, 'UTF-8') ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                <?php unset($_SESSION['error_message']); ?>
-            <?php endif; ?>
-
-            <div class="inventory-table-wrap">
-                <table class="inventory-table">
-                    <thead>
-                        <tr>
-                            <th>Image</th>
-                            <th>Part Details</th>
-                            <th>Category</th>
-                            <th>Description</th>
-                            <th>Specifications</th>
-                            <th>Stock</th>
-                            <th>Unit Price</th>
-                            <th>Supplier</th>
-                            <th class="text-end">Actions</th>
-                        </tr>
-                    </thead>
-
-                    <tbody>
-                        <?php if (empty($parts)): ?>
-                            <tr>
-                                <td colspan="9">
-                                    <div class="inventory-empty-state">
-                                        <i class="bi <?= $isActiveView ? 'bi-box-seam' : 'bi-archive' ?>"></i>
-                                        <div class="fw-bold mb-1">
-                                            <?= $isActiveView ? 'No active parts found' : 'No archived parts found' ?>
-                                        </div>
-                                        <div>
-                                            <?= $isActiveView ? 'Add a part to start managing inventory records.' : 'Archived parts will appear here.' ?>
-                                        </div>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endif; ?>
-
-                        <?php foreach ($parts as $p): ?>
-                            <tr>
-                                <td>
-                                    <img
-                                        src="<?= partImagePath($p['image'] ?? '') ?>"
-                                        alt="<?= cleanValue($p['part_name'] ?? 'Part image') ?>"
-                                        class="part-thumb"
-                                    >
-                                </td>
-
-                                <td>
-                                    <div class="part-name">
-                                        <?= cleanValue($p['part_name'] ?? 'N/A') ?>
-                                    </div>
-
-                                    <div class="part-brand">
-                                        Brand: <?= cleanValue($p['brand'] ?? '', 'Unspecified') ?>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <span class="part-category-badge">
-                                        <?= cleanValue($p['category'] ?? 'N/A') ?>
-                                    </span>
-                                </td>
-
-                                <td>
-                                    <div class="part-description-cell">
-                                        <?= cleanValue($p['description'] ?? '') ?>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <div class="part-spec-cell">
-                                        <span class="part-spec-line">
-                                            <span class="part-spec-label">Spec:</span>
-                                            <?= cleanValue($p['specification'] ?? '', 'No specification') ?>
-                                        </span>
-
-                                        <span class="part-spec-line">
-                                            <span class="part-spec-label">Compatibility:</span>
-                                            <?= cleanValue($p['compatibility'] ?? '', 'Not specified') ?>
-                                        </span>
-
-                                        <span class="part-spec-line">
-                                            <span class="part-spec-label">Unit:</span>
-                                            <?= cleanValue($p['unit'] ?? '', 'piece') ?>
-                                        </span>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <?php if (!$isActiveView): ?>
-                                        <span class="stock-badge stock-archived">
-                                            Archived
-                                        </span>
-                                    <?php elseif ((int) $p['quantity_on_hand'] <= (int) $p['low_stock_threshold']): ?>
-                                        <span class="stock-badge stock-low">
-                                            <?= (int) $p['quantity_on_hand'] ?> Low
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="stock-badge stock-available">
-                                            <?= (int) $p['quantity_on_hand'] ?> Available
-                                        </span>
-                                    <?php endif; ?>
-                                </td>
-
-                                <td>
-                                    <span class="part-price">
-                                        ₱<?= number_format((float) $p['unit_price'], 2) ?>
-                                    </span>
-
-                                    <div class="part-unit">
-                                        per <?= cleanValue($p['unit'] ?? '', 'piece') ?>
-                                    </div>
-                                </td>
-
-                                <td>
-                                    <div class="supplier-cell">
-                                        <div class="supplier-ref">
-                                            <?= cleanValue($p['supplier_name'] ?? '', 'No Assigned Supplier') ?>
-                                        </div>
-
-                                        <?php if (!empty($p['supplier_email'])): ?>
-                                            <a
-                                                href="mailto:<?= htmlspecialchars($p['supplier_email'], ENT_QUOTES, 'UTF-8') ?>?subject=Parts Inquiry - <?= rawurlencode($p['part_name'] ?? 'Part') ?>"
-                                                class="supplier-email-link"
-                                                title="Send email to supplier"
-                                            >
-                                                <i class="bi bi-envelope"></i>
-                                                <?= htmlspecialchars($p['supplier_email'], ENT_QUOTES, 'UTF-8') ?>
-                                            </a>
-                                        <?php else: ?>
-                                            <div class="part-brand">No email on file</div>
-                                        <?php endif; ?>
-                                    </div>
-                                </td>
-
-                                <td class="text-end">
-                                    <?php if ($isActiveView && !empty($p['supplier_email'])): ?>
-                                            <form
-                                                action="../controllers/PartController.php"
-                                                method="POST"
-                                                class="part-action-form"
-                                                onsubmit="return confirm('Force send a restock request email to <?= htmlspecialchars(addslashes($p['supplier_name'])) ?>
-                                                <?= csrfField() ?>?');"
-                                            >
-                                                <input type="hidden" name="action" value="send_restock_alert">
-                                                <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
-                                                <input type="hidden" name="redirect_status" value="<?= $viewStatus ?>">
-
-                                                <button
-                                                    type="submit"
-                                                    class="icon-action-btn"
-                                                    title="Send Manual Restock Alert"
-                                                    style="color: #047857; background-color: #ecfdf5; border-color: #a7f3d0;"
-                                                    onmouseover="this.style.backgroundColor='#10b981'; this.style.color='#fff';"
-                                                    onmouseout="this.style.backgroundColor='#ecfdf5'; this.style.color='#047857';"
-                                                >
-                                                    <i class="bi bi-envelope-paper-fill"></i>
-                                                </button>
-                                            </form>
-                                        <?php endif; ?>
-                                    <div class="part-action-group">
-                                        <?php if ($isActiveView): ?>
-                                            <button
-                                                type="button"
-                                                class="icon-action-btn edit-btn"
-                                                title="Edit Part"
-                                                data-bs-toggle="modal"
-                                                data-bs-target="#editPartModal<?= (int) $p['part_id'] ?>"
-                                            >
-                                                <i class="bi bi-pencil-square"></i>
-                                            </button>
-
-                                            <form
-                                                action="../controllers/PartController.php"
-                                                method="POST"
-                                                class="part-action-form"
-                                                onsubmit="return confirm('Archive this part? It will be removed from active inventory but kept in archived records.');"
-                                            >
-                                                <?= csrfField() ?>
-                                                <input type="hidden" name="action" value="archive">
-                                                <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
-                                                <input type="hidden" name="redirect_status" value="active">
-
-                                                <button
-                                                    type="submit"
-                                                    class="icon-action-btn archive-btn"
-                                                    title="Archive Part"
-                                                >
-                                                    <i class="bi bi-archive"></i>
-                                                </button>
-                                            </form>
-                                        <?php else: ?>
-                                            <form
-                                                action="../controllers/PartController.php"
-                                                method="POST"
-                                                class="part-action-form"
-                                                onsubmit="return confirm('Restore this part to active inventory?');"
-                                            >
-                                                <?= csrfField() ?>
-                                                <input type="hidden" name="action" value="restore">
-                                                <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
-                                                <input type="hidden" name="redirect_status" value="archived">
-
-                                                <button
-                                                    type="submit"
-                                                    class="icon-action-btn restore-btn"
-                                                    title="Restore Part"
-                                                >
-                                                    <i class="bi bi-arrow-counterclockwise"></i>
-                                                </button>
-                                            </form>
-
-                                            <form
-                                                action="../controllers/PartController.php"
-                                                method="POST"
-                                                class="part-action-form"
-                                                onsubmit="return confirm('Permanently delete this archived part? This action cannot be undone. It will only work if the part has no transaction history.');"
-                                            >
-                                                <?= csrfField() ?>
-                                                <input type="hidden" name="action" value="permanent_delete">
-                                                <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
-                                                <input type="hidden" name="redirect_status" value="archived">
-
-                                                <button
-                                                    type="submit"
-                                                    class="icon-action-btn permanent-delete-btn"
-                                                    title="Delete Permanently"
-                                                >
-                                                    <i class="bi bi-trash3"></i>
-                                                </button>
-                                            </form>
-                                        <?php endif; ?>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <?php if ($isActiveView): ?>
-                                <div class="modal fade" id="editPartModal<?= (int) $p['part_id'] ?>" tabindex="-1">
-                                    <div class="modal-dialog modal-lg modal-dialog-centered">
-                                        <div class="modal-content">
-                                            <form
-                                                action="../controllers/PartController.php"
-                                                method="POST"
-                                                enctype="multipart/form-data"
-                                            >
-                                                <?= csrfField() ?>
-                                                <input type="hidden" name="action" value="edit">
-                                                <input type="hidden" name="part_id" value="<?= (int) $p['part_id'] ?>">
-                                                <input type="hidden" name="existing_image" value="<?= htmlspecialchars($p['image'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
-                                                <input type="hidden" name="redirect_status" value="active">
-
-                                                <div class="modal-header">
-                                                    <div>
-                                                        <h5 class="modal-title">Edit Part</h5>
-                                                        <small class="text-muted">
-                                                            Update inventory details, specifications, compatibility, and supplier information.
-                                                        </small>
-                                                    </div>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                                </div>
-
-                                                <div class="modal-body">
-                                                    <div class="minimal-part-form">
-                                                        <div class="minimal-section-title">Basic Part Details</div>
-
-                                                        <div class="minimal-form-grid">
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Part Name</label>
-                                                                <input
-                                                                    type="text"
-                                                                    name="part_name"
-                                                                    class="minimal-control"
-                                                                    value="<?= cleanValue($p['part_name'] ?? '') ?>"
-                                                                    required
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Category</label>
-                                                                <input
-                                                                    type="text"
-                                                                    name="category"
-                                                                    class="minimal-control"
-                                                                    value="<?= cleanValue($p['category'] ?? '') ?>"
-                                                                    required
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Brand</label>
-                                                                <input
-                                                                    type="text"
-                                                                    name="brand"
-                                                                    class="minimal-control"
-                                                                    value="<?= cleanValue($p['brand'] ?? '') ?>"
-                                                                    placeholder="Example: Bosch, NGK, Motolite"
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Unit</label>
-                                                                <input
-                                                                    type="text"
-                                                                    name="unit"
-                                                                    class="minimal-control"
-                                                                    value="<?= cleanValue($p['unit'] ?? 'piece') ?>"
-                                                                    placeholder="Example: piece, set, meter, box"
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field">
-                                                                <label class="minimal-label">Quantity</label>
-                                                                <input
-                                                                    type="number"
-                                                                    name="quantity_on_hand"
-                                                                    class="minimal-control"
-                                                                    min="0"
-                                                                    value="<?= htmlspecialchars($p['quantity_on_hand'] ?? 0, ENT_QUOTES, 'UTF-8') ?>"
-                                                                    required
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field">
-                                                                <label class="minimal-label">Unit Price</label>
-                                                                <input
-                                                                    type="number"
-                                                                    name="unit_price"
-                                                                    class="minimal-control"
-                                                                    step="0.01"
-                                                                    min="0"
-                                                                    value="<?= htmlspecialchars($p['unit_price'] ?? 0, ENT_QUOTES, 'UTF-8') ?>"
-                                                                    required
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field">
-                                                                <label class="minimal-label">Cost Price</label>
-                                                                <input
-                                                                    type="number"
-                                                                    name="cost_price"
-                                                                    class="minimal-control"
-                                                                    step="0.01"
-                                                                    min="0"
-                                                                    value="<?= htmlspecialchars($p['cost_price'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field half">
-                                                                <label class="minimal-label">Low Stock Threshold</label>
-                                                                <input
-                                                                    type="number"
-                                                                    name="low_stock_threshold"
-                                                                    class="minimal-control"
-                                                                    min="0"
-                                                                    value="<?= htmlspecialchars($p['low_stock_threshold'] ?? 5, ENT_QUOTES, 'UTF-8') ?>"
-                                                                >
-                                                            </div>
-
-                                                            <div class="minimal-form-field full">
-                                                                <label class="minimal-label">Primary Supplier (For Auto-Restock Alerts)</label>
-                                                                <select name="supplier_id" class="minimal-control">
-                                                                    <option value="">-- Select Preferred Supplier --</option>
-                                                                    <?php foreach($suppliersList as $sup): ?>
-                                                                        <option value="<?= $sup['supplier_id'] ?>" <?= (isset($p['supplier_id']) && $p['supplier_id'] == $sup['supplier_id']) ? 'selected' : '' ?>>
-                                                                            <?= htmlspecialchars($sup['supplier_name']) ?>
-                                                                        </option>
-                                                                    <?php endforeach; ?>
-                                                                </select>
-                                                            </div>
-
-                                                            <div class="minimal-form-field full">
-                                                                <label class="minimal-label">Short Description</label>
-                                                                <textarea
-                                                                    name="description"
-                                                                    class="minimal-control"
-                                                                    required
-                                                                ><?= cleanValue($p['description'] ?? '') ?></textarea>
-                                                            </div>
-
-                                                            <div class="minimal-form-field full">
-                                                                <label class="minimal-label">Specification</label>
-                                                                <textarea
-                                                                    name="specification"
-                                                                    class="minimal-control"
-                                                                    placeholder="Example: 12V, 40A, iridium, copper wire 1.2mm, etc."
-                                                                ><?= cleanValue($p['specification'] ?? '') ?></textarea>
-                                                            </div>
-
-                                                            <div class="minimal-form-field full">
-                                                                <label class="minimal-label">Compatibility</label>
-                                                                <textarea
-                                                                    name="compatibility"
-                                                                    class="minimal-control"
-                                                                    placeholder="Example: Toyota Vios 2014-2019, Honda City, Universal, etc."
-                                                                ><?= cleanValue($p['compatibility'] ?? '') ?></textarea>
-                                                            </div>
-
-                                                            <div class="minimal-form-field full">
-                                                                <label class="minimal-label">Full Description</label>
-                                                                <textarea
-                                                                    name="full_description"
-                                                                    class="minimal-control"
-                                                                ><?= cleanValue($p['full_description'] ?? '') ?></textarea>
-                                                            </div>
-
-                                                            <div class="minimal-form-field full">
-                                                                <label class="minimal-label">Part Image</label>
-                                                                <input
-                                                                    type="file"
-                                                                    name="image"
-                                                                    class="minimal-control"
-                                                                    accept=".jpg,.jpeg,.png,.webp"
-                                                                >
-                                                                <div class="minimal-helper">
-                                                                    Leave empty to keep current image.
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div class="modal-footer">
-                                                    <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                                                        Cancel
-                                                    </button>
-                                                    <button type="submit" class="minimal-save-btn">
-                                                        Save Changes
-                                                    </button>
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endif; ?>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-
-            <?php if ($totalPages > 1): ?>
-                <div class="inventory-pagination-wrap">
-                    <div class="pagination-controls">
-                        <a
-                            href="<?= inventoryPageUrl($currentPage - 1, $viewStatus) ?>"
-                            class="page-link-custom <?= $currentPage <= 1 ? 'disabled' : '' ?>"
-                            title="Previous page"
-                        >
-                            <i class="bi bi-chevron-left"></i>
-                        </a>
-
-                        <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                            <a
-                                href="<?= inventoryPageUrl($i, $viewStatus) ?>"
-                                class="page-link-custom <?= $i === $currentPage ? 'active' : '' ?>"
-                            >
-                                <?= $i ?>
-                            </a>
-                        <?php endfor; ?>
-
-                        <a
-                            href="<?= inventoryPageUrl($currentPage + 1, $viewStatus) ?>"
-                            class="page-link-custom <?= $currentPage >= $totalPages ? 'disabled' : '' ?>"
-                            title="Next page"
-                        >
-                            <i class="bi bi-chevron-right"></i>
-                        </a>
-                    </div>
+            <?php if ($isActiveView): ?>
+                <div class="sp-chips" role="group" aria-label="Filter by stock">
+                    <button type="button" class="sp-chip" data-sp-chip="all" aria-pressed="true">All <span class="sp-chip-count"><?= count($parts) ?></span></button>
+                    <button type="button" class="sp-chip is-ok" data-sp-chip="in" aria-pressed="false"><span class="sp-chip-dot"></span>In stock <span class="sp-chip-count"><?= $stockCounts['in'] ?></span></button>
+                    <button type="button" class="sp-chip is-pend" data-sp-chip="low" aria-pressed="false"><span class="sp-chip-dot"></span>Low stock <span class="sp-chip-count"><?= $stockCounts['low'] ?></span></button>
+                    <button type="button" class="sp-chip is-bad" data-sp-chip="out" aria-pressed="false"><span class="sp-chip-dot"></span>Out of stock <span class="sp-chip-count"><?= $stockCounts['out'] ?></span></button>
                 </div>
             <?php endif; ?>
 
+            <p class="sp-showing" data-sp-showing aria-live="polite"<?= $isActiveView ? '' : ' style="margin-top: 16px"' ?>>Showing <?= count($parts) ?> of <?= count($parts) ?></p>
         </div>
+
+        <table class="cp-table sp-table" id="partsTable">
+            <thead>
+                <tr>
+                    <th scope="col">Image</th>
+                    <th scope="col">Part</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Description</th>
+                    <th scope="col">Specs</th>
+                    <th scope="col">Stock</th>
+                    <th scope="col">Price</th>
+                    <th scope="col">Supplier</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
+                </tr>
+            </thead>
+            <tbody id="partRows" data-cp-paginate="10" data-cp-noun="part">
+                <?php foreach ($parts as $p): ?>
+                    <?php
+                    $partId = intval($p['part_id']);
+                    $qty = intval($p['quantity_on_hand']);
+                    $threshold = intval($p['low_stock_threshold']);
+                    $stockKey = partStockKey($qty, $threshold);
+                    $name = html_entity_decode((string) ($p['part_name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $brand = html_entity_decode((string) ($p['brand'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $unit = trim($p['unit'] ?? '') ?: 'piece';
+                    $spec = html_entity_decode((string) ($p['specification'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $fits = html_entity_decode((string) ($p['compatibility'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $searchText = strtolower($name . ' ' . $brand . ' ' . ($p['category'] ?? '') . ' ' . ($p['description'] ?? '') . ' ' . $spec . ' ' . $fits . ' ' . ($p['supplier_name'] ?? ''));
+                    ?>
+                    <tr data-status="<?= $stockKey ?>" data-search="<?= cpEscape($searchText) ?>">
+                        <td data-label="Image">
+                            <span class="sp-thumb"><?= cpThumb(!empty($p['image']) ? partImagePath($p['image']) : '', $name) ?></span>
+                        </td>
+                        <td data-label="Part">
+                            <div>
+                                <span class="sp-ref sp-wrap"><?= cpEscape($name) ?></span>
+                                <span class="cp-cell-sub"><?= cpHasValue($brand) ? cpEscape($brand) : '—' ?> · per <?= cpEscape($unit) ?></span>
+                            </div>
+                        </td>
+                        <td data-label="Category"><?= cleanValue($p['category'] ?? '', '—') ?></td>
+                        <td data-label="Description" class="sp-desc"><?= cleanValue($p['description'] ?? '', '—') ?></td>
+                        <td data-label="Specs">
+                            <div>
+                                <span class="sp-cell-line"><?= cpHasValue($spec) ? cpEscape($spec) : '—' ?></span>
+                                <span class="cp-cell-sub">Fits <?= cpHasValue($fits) ? cpEscape($fits) : '—' ?></span>
+                            </div>
+                        </td>
+                        <td data-label="Stock">
+                            <div>
+                                <strong class="sp-stock-qty"><?= $qty ?></strong>
+                                <span class="cp-cell-sub">alert at <?= $threshold ?></span>
+                                <?php if ($isActiveView): ?>
+                                    <div class="sp-badge-gap"><?= $stockKey === 'out' ? cpBadge('Out of stock') : ($stockKey === 'low' ? cpBadge('Low stock') : cpBadge('In stock')) ?></div>
+                                <?php else: ?>
+                                    <div class="sp-badge-gap"><?= cpBadge('Archived') ?></div>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td data-label="Price" class="sp-nowrap">
+                            <div>
+                                <span class="sp-mono sp-price"><?= cpMoney($p['unit_price']) ?></span>
+                                <?php if ($canManagePricing && !empty($p['cost_price'])): ?>
+                                    <span class="cp-cell-sub">cost <?= cpMoney($p['cost_price']) ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td data-label="Supplier"><?= cleanValue($p['supplier_name'] ?? '', 'No supplier') ?></td>
+                        <td class="cp-num">
+                            <div class="sp-row-actions">
+                                <?php if ($isActiveView): ?>
+                                    <button type="button" class="cp-btn cp-btn-line cp-btn-sm" data-sp-open="#partEdit<?= $partId ?>">Edit</button>
+                                <?php elseif (!$canArchiveParts): ?>
+                                    <span class="cp-cell-sub">Owner only</span>
+                                <?php else: ?>
+                                    <form action="../controllers/PartController.php" method="POST"
+                                          data-cp-confirm="The part goes back to the active inventory." data-cp-confirm-title="Restore this part?"
+                                          data-cp-confirm-yes="Restore" data-cp-confirm-no="Go back" data-cp-confirm-tone="dark">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="action" value="restore">
+                                        <input type="hidden" name="part_id" value="<?= $partId ?>">
+                                        <input type="hidden" name="redirect_status" value="archived">
+                                        <button type="submit" class="cp-btn cp-btn-line cp-btn-sm">Restore</button>
+                                    </form>
+                                    <form action="../controllers/PartController.php" method="POST"
+                                          data-cp-confirm="This can't be undone. It only works if the part was never used in a sale, order or job." data-cp-confirm-title="Delete permanently?"
+                                          data-cp-confirm-yes="Delete" data-cp-confirm-no="Keep it">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="action" value="permanent_delete">
+                                        <input type="hidden" name="part_id" value="<?= $partId ?>">
+                                        <input type="hidden" name="redirect_status" value="archived">
+                                        <button type="submit" class="cp-btn cp-btn-line cp-btn-sm sp-btn-cancel">Delete</button>
+                                    </form>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <?php if ($isActiveView): ?>
+                        <?php ob_start(); ?>
+                        <?php $extraImages = $extraImagesByPart[$p['part_id']] ?? []; ?>
+                        <div class="sp-dialog" id="partEdit<?= $partId ?>" role="dialog" aria-modal="true" aria-labelledby="partEditTitle<?= $partId ?>" hidden>
+                            <div class="sp-dialog-box is-wide">
+                                <form action="../controllers/PartController.php" method="POST" enctype="multipart/form-data" id="partEditForm<?= $partId ?>">
+                                    <?= csrfField() ?>
+                                    <input type="hidden" name="action" value="edit">
+                                    <input type="hidden" name="part_id" value="<?= $partId ?>">
+                                    <input type="hidden" name="existing_image" value="<?= cpEscape($p['image'] ?? '') ?>">
+                                    <input type="hidden" name="redirect_status" value="active">
+
+                                    <div class="cp-modal-head">
+                                        <div>
+                                            <p class="cp-label"><?= cpEscape($name) ?></p>
+                                            <h2 class="cp-modal-title" id="partEditTitle<?= $partId ?>">Edit part</h2>
+                                        </div>
+                                        <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+                                    </div>
+
+                                    <div class="sp-dialog-body">
+                                        <?= partFormFields($p, 'edit' . $partId, $suppliersList) ?>
+
+                                        <p class="sp-dialog-section">Photos</p>
+                                        <div class="sp-fgrid" style="margin-top: 12px">
+                                            <div class="sp-field">
+                                                <label for="editImage<?= $partId ?>">Main image</label>
+                                                <div class="sp-photo-current">
+                                                    <span class="sp-thumb"><?= cpThumb(!empty($p['image']) ? partImagePath($p['image']) : '', $name) ?></span>
+                                                    <input type="file" name="image" id="editImage<?= $partId ?>" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp">
+                                                </div>
+                                                <p class="cp-hint">Shown first everywhere. Leave empty to keep the current image.</p>
+                                            </div>
+                                            <div class="sp-field">
+                                                <label for="editExtra<?= $partId ?>">More photos</label>
+                                                <input type="file" name="extra_images[]" id="editExtra<?= $partId ?>" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp" multiple>
+                                                <p class="cp-hint">Other angles for the part page. Up to <?= PartImage::MAX_PER_ITEM ?> photos (<?= max(0, PartImage::MAX_PER_ITEM - count($extraImages)) ?> left).</p>
+                                            </div>
+                                        </div>
+                                        <?php if (!empty($extraImages)): ?>
+                                            <div class="sp-photo-grid">
+                                                <?php foreach ($extraImages as $extra): ?>
+                                                    <div class="sp-photo-tile">
+                                                        <img src="<?= partImagePath($extra['image']) ?>" alt="Extra photo">
+                                                        <label>Order <input type="number" name="image_order[<?= (int) $extra['image_id'] ?>]" value="<?= (int) $extra['sort_order'] ?>" min="0" max="99" class="cp-input"></label>
+                                                        <label class="sp-check"><input type="checkbox" name="remove_images[]" value="<?= (int) $extra['image_id'] ?>"> <span>Remove</span></label>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                    </div>
+
+                                    <div class="cp-modal-foot sp-foot-split">
+                                        <div class="sp-foot-left">
+                                            <?php if ($canArchiveParts): ?>
+                                                <button type="submit" form="partArchive<?= $partId ?>" class="cp-btn cp-btn-line sp-btn-cancel">Archive</button>
+                                            <?php endif; ?>
+                                            <?php if (!empty($p['supplier_email'])): ?>
+                                                <button type="submit" form="partRestock<?= $partId ?>" class="cp-btn cp-btn-line">Email supplier</button>
+                                            <?php endif; ?>
+                                        </div>
+                                        <button type="button" class="cp-btn cp-btn-line" data-sp-close>Cancel</button>
+                                        <button type="submit" class="cp-btn cp-btn-dark">Save changes</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Archive / restock email forms live outside the edit form (forms can't be nested) -->
+                        <?php if ($canArchiveParts): ?>
+                        <form action="../controllers/PartController.php" method="POST" id="partArchive<?= $partId ?>" hidden
+                              data-cp-confirm="The part leaves the active inventory but its records are kept. You can restore it later."
+                              data-cp-confirm-title="Archive this part?" data-cp-confirm-yes="Archive" data-cp-confirm-no="Go back">
+                            <?= csrfField() ?>
+                            <input type="hidden" name="action" value="archive">
+                            <input type="hidden" name="part_id" value="<?= $partId ?>">
+                            <input type="hidden" name="redirect_status" value="active">
+                        </form>
+                        <?php endif; ?>
+                        <?php if (!empty($p['supplier_email'])): ?>
+                            <form action="../controllers/PartController.php" method="POST" id="partRestock<?= $partId ?>" hidden
+                                  data-cp-confirm="<?= cpEscape('A restock request email is sent to ' . ($p['supplier_name'] ?? 'the supplier') . ' (' . $p['supplier_email'] . ').') ?>"
+                                  data-cp-confirm-title="Email the supplier?" data-cp-confirm-yes="Send email" data-cp-confirm-no="Go back" data-cp-confirm-tone="dark">
+                                <?= csrfField() ?>
+                                <input type="hidden" name="action" value="send_restock_alert">
+                                <input type="hidden" name="part_id" value="<?= $partId ?>">
+                                <input type="hidden" name="redirect_status" value="active">
+                            </form>
+                        <?php endif; ?>
+                        <?php $partDialogs .= ob_get_clean(); ?>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+
+                <tr class="sp-empty-row" data-sp-empty hidden>
+                    <td colspan="9">No parts match your search or filter.</td>
+                </tr>
+                <?php if (empty($parts)): ?>
+                    <tr class="sp-empty-row"><td colspan="9"><?= $isActiveView ? 'No parts yet. Add one to start tracking stock.' : 'No archived parts.' ?></td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </main>
 </div>
 
+<datalist id="partCategoryList">
+    <?php foreach ($categoryOptions as $option): ?><option value="<?= cpEscape($option) ?>"></option><?php endforeach; ?>
+</datalist>
+<datalist id="partUnitList">
+    <?php foreach ($unitOptions as $option): ?><option value="<?= cpEscape($option) ?>"></option><?php endforeach; ?>
+</datalist>
+
+<?= $partDialogs ?>
+
 <?php if ($isActiveView): ?>
-    <div class="modal fade" id="addPartModal" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <form
-                    action="../controllers/PartController.php"
-                    method="POST"
-                    enctype="multipart/form-data"
-                >
-                    <?= csrfField() ?>
-                    <input type="hidden" name="action" value="add">
-                    <input type="hidden" name="redirect_status" value="active">
+    <!-- Add part -->
+    <div class="sp-dialog" id="addPartDialog" role="dialog" aria-modal="true" aria-labelledby="addPartTitle" hidden>
+        <div class="sp-dialog-box is-wide">
+            <form action="../controllers/PartController.php" method="POST" enctype="multipart/form-data">
+                <?= csrfField() ?>
+                <input type="hidden" name="action" value="add">
+                <input type="hidden" name="redirect_status" value="active">
 
-                    <div class="modal-header">
-                        <div>
-                            <h5 class="modal-title">Add Part</h5>
-                            <small class="text-muted">
-                                Create a new part record with specifications for inventory and customer web orders.
-                            </small>
-                        </div>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <div class="cp-modal-head">
+                    <div>
+                        <p class="cp-label">Inventory</p>
+                        <h2 class="cp-modal-title" id="addPartTitle">Add part</h2>
                     </div>
+                    <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+                </div>
 
-                    <div class="modal-body">
-                        <div class="minimal-part-form">
-                            <div class="minimal-section-title">Basic Part Details</div>
+                <div class="sp-dialog-body">
+                    <?= partFormFields(null, 'add', $suppliersList) ?>
 
-                            <div class="minimal-form-grid">
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Part Name</label>
-                                    <input
-                                        type="text"
-                                        name="part_name"
-                                        class="minimal-control"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Category</label>
-                                    <input
-                                        type="text"
-                                        name="category"
-                                        class="minimal-control"
-                                        placeholder="Example: Electrical Parts & Supplies"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Brand</label>
-                                    <input
-                                        type="text"
-                                        name="brand"
-                                        class="minimal-control"
-                                        placeholder="Example: Bosch, NGK, Motolite"
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Unit</label>
-                                    <input
-                                        type="text"
-                                        name="unit"
-                                        class="minimal-control"
-                                        value="piece"
-                                        placeholder="Example: piece, set, meter, box"
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field">
-                                    <label class="minimal-label">Quantity</label>
-                                    <input
-                                        type="number"
-                                        name="quantity_on_hand"
-                                        class="minimal-control"
-                                        min="0"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field">
-                                    <label class="minimal-label">Unit Price</label>
-                                    <input
-                                        type="number"
-                                        name="unit_price"
-                                        class="minimal-control"
-                                        step="0.01"
-                                        min="0"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field">
-                                    <label class="minimal-label">Cost Price</label>
-                                    <input
-                                        type="number"
-                                        name="cost_price"
-                                        class="minimal-control"
-                                        step="0.01"
-                                        min="0"
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field half">
-                                    <label class="minimal-label">Low Stock Threshold</label>
-                                    <input
-                                        type="number"
-                                        name="low_stock_threshold"
-                                        class="minimal-control"
-                                        min="0"
-                                        value="5"
-                                    >
-                                </div>
-
-                                <div class="minimal-form-field full">
-                                    <label class="minimal-label">Primary Supplier (For Auto-Restock Alerts)</label>
-                                    <select name="supplier_id" class="minimal-control">
-                                        <option value="">-- Select Preferred Supplier --</option>
-                                        <?php foreach($suppliersList as $sup): ?>
-                                            <option value="<?= $sup['supplier_id'] ?>"><?= htmlspecialchars($sup['supplier_name']) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-
-                                <div class="minimal-form-field full">
-                                    <label class="minimal-label">Short Description</label>
-                                    <textarea
-                                        name="description"
-                                        class="minimal-control"
-                                        required
-                                    ></textarea>
-                                </div>
-
-                                <div class="minimal-form-field full">
-                                    <label class="minimal-label">Specification</label>
-                                    <textarea
-                                        name="specification"
-                                        class="minimal-control"
-                                        placeholder="Example: 12V, 40A, iridium, copper wire 1.2mm, etc."
-                                    ></textarea>
-                                </div>
-
-                                <div class="minimal-form-field full">
-                                    <label class="minimal-label">Compatibility</label>
-                                    <textarea
-                                        name="compatibility"
-                                        class="minimal-control"
-                                        placeholder="Example: Toyota Vios 2014-2019, Honda City, Universal, etc."
-                                    ></textarea>
-                                </div>
-
-                                <div class="minimal-form-field full">
-                                    <label class="minimal-label">Full Description</label>
-                                    <textarea
-                                        name="full_description"
-                                        class="minimal-control"
-                                    ></textarea>
-                                </div>
-
-                                <div class="minimal-form-field full">
-                                    <label class="minimal-label">Part Image</label>
-                                    <input
-                                        type="file"
-                                        name="image"
-                                        class="minimal-control"
-                                        accept=".jpg,.jpeg,.png,.webp"
-                                    >
-                                </div>
-                            </div>
+                    <p class="sp-dialog-section">Photos</p>
+                    <div class="sp-fgrid" style="margin-top: 12px">
+                        <div class="sp-field">
+                            <label for="addImage">Main image</label>
+                            <input type="file" name="image" id="addImage" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp">
+                        </div>
+                        <div class="sp-field">
+                            <label for="addExtra">More photos</label>
+                            <input type="file" name="extra_images[]" id="addExtra" class="cp-input sp-file" accept=".jpg,.jpeg,.png,.webp" multiple>
+                            <p class="cp-hint">Optional. Up to <?= PartImage::MAX_PER_ITEM ?> photos.</p>
                         </div>
                     </div>
+                </div>
 
-                    <div class="modal-footer">
-                        <button type="button" class="minimal-cancel-btn" data-bs-dismiss="modal">
-                            Cancel
-                        </button>
-                        <button type="submit" class="minimal-save-btn">
-                            Add Part
-                        </button>
-                    </div>
-                </form>
-            </div>
+                <div class="cp-modal-foot">
+                    <button type="button" class="cp-btn cp-btn-line" data-sp-close>Cancel</button>
+                    <button type="submit" class="cp-btn cp-btn-dark">Add part</button>
+                </div>
+            </form>
         </div>
     </div>
 <?php endif; ?>

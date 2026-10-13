@@ -229,6 +229,75 @@ class POS {
         }
     }
 
+    /*
+        Void a completed POS sale (Owner only; the controller checks the permission).
+        The sale keeps its number, is marked Cancelled with who/when/why,
+        and every part sold goes back into stock. Returns ['success' => bool, 'message' => string].
+    */
+    public function void($posId, $userId, $reason) {
+        try {
+            $posId = intval($posId);
+            $userId = intval($userId);
+            $reason = trim((string) $reason);
+
+            if ($posId <= 0 || $userId <= 0) {
+                throw new Exception("Invalid sale.");
+            }
+
+            if ($reason === '') {
+                throw new Exception("Please enter the reason for voiding this sale.");
+            }
+
+            if (mb_strlen($reason) > 500) {
+                throw new Exception("The void reason must be 500 characters or fewer.");
+            }
+
+            $this->conn->beginTransaction();
+
+            $stmtSale = $this->conn->prepare("SELECT pos_id, status, total_amount FROM pos_transaction WHERE pos_id = ? FOR UPDATE");
+            $stmtSale->execute([$posId]);
+            $sale = $stmtSale->fetch(PDO::FETCH_ASSOC);
+
+            if (!$sale) {
+                throw new Exception("Sale not found.");
+            }
+
+            if ($sale['status'] !== 'Completed') {
+                throw new Exception("Only completed sales can be voided.");
+            }
+
+            $stmtItems = $this->conn->prepare("SELECT part_id, quantity_sold FROM pos_item WHERE pos_id = ?");
+            $stmtItems->execute([$posId]);
+            $stmtRestore = $this->conn->prepare("UPDATE part SET quantity_on_hand = quantity_on_hand + ? WHERE part_id = ?");
+
+            foreach ($stmtItems->fetchAll(PDO::FETCH_ASSOC) as $item) {
+                $stmtRestore->execute([intval($item['quantity_sold']), intval($item['part_id'])]);
+            }
+
+            $stmtVoid = $this->conn->prepare("
+                UPDATE pos_transaction
+                SET status = 'Cancelled', void_reason = ?, voided_at = NOW(), voided_by = ?
+                WHERE pos_id = ?
+            ");
+            $stmtVoid->execute([htmlspecialchars(strip_tags($reason)), $userId, $posId]);
+
+            $this->conn->commit();
+
+            return ['success' => true, 'message' => 'Sale voided. The parts are back in stock.', 'total_amount' => floatval($sale['total_amount'])];
+        } catch (Exception $e) {
+            if ($this->conn->inTransaction()) {
+                $this->conn->rollBack();
+            }
+
+            if ($e instanceof PDOException) {
+                error_log("DASPMS POS VOID ERROR: " . $e->getMessage());
+                return ['success' => false, 'message' => 'The sale could not be voided. Please try again.'];
+            }
+
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
     public function readRecent() {
         $query = "
             SELECT 

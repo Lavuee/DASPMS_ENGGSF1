@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../includes/business_rules.php';
 
 class Billing {
     private $conn;
@@ -30,13 +31,19 @@ class Billing {
                 FROM job_order_part
                 GROUP BY job_order_id
             ) parts ON jo.job_order_id = parts.job_order_id
-            SET 
+            SET
                 i.total_amount = $jobTotal,
                 i.balance_due = GREATEST($jobTotal - COALESCE(i.amount_paid, 0), 0),
                 i.payment_status = CASE
                     WHEN COALESCE(i.amount_paid, 0) <= 0 THEN 'Not Paid'
                     WHEN COALESCE(i.amount_paid, 0) >= $jobTotal THEN 'Paid'
                     ELSE 'Partial'
+                END,
+                -- An invoice opened early by a down payment gets its 7-day due date once the job is completed
+                i.due_date = CASE
+                    WHEN i.due_date IS NULL AND jo.status = 'Completed'
+                        THEN DATE_ADD(DATE(COALESCE(jo.date_completed, NOW())), INTERVAL " . intval(SERVICE_CREDIT_DAYS) . " DAY)
+                    ELSE i.due_date
                 END
             WHERE i.job_order_id IS NOT NULL
         ";
@@ -84,7 +91,8 @@ class Billing {
                 COALESCE(i.payment_status, 'No Invoice') AS payment_status,
                 NULL AS payment_method,
                 NULL AS gcash_reference,
-                NULL AS gcash_payment_amount
+                NULL AS gcash_payment_amount,
+                i.due_date
             FROM job_order jo
             JOIN customer c ON jo.customer_id = c.customer_id
             LEFT JOIN (
@@ -114,7 +122,8 @@ class Billing {
                 COALESCE(i.payment_status, 'No Invoice') AS payment_status,
                 po.payment_method,
                 po.gcash_reference,
-                po.gcash_payment_amount
+                po.gcash_payment_amount,
+                NULL AS due_date
             FROM part_order po
             JOIN customer c ON po.customer_id = c.customer_id
             LEFT JOIN invoice i ON po.order_id = i.part_order_id
@@ -201,7 +210,8 @@ class Billing {
                     total_amount,
                     amount_paid,
                     balance_due,
-                    payment_status
+                    payment_status,
+                    due_date
                 ) VALUES (
                     :job_order_id,
                     NULL,
@@ -212,17 +222,20 @@ class Billing {
                     :total_amount,
                     0,
                     :balance_due,
-                    'Not Paid'
+                    'Not Paid',
+                    :due_date
                 )
             ");
 
+            // SRS 1.3: service bills follow the 7-day credit period.
             $stmtInv->execute([
                 ':job_order_id' => $job_order_id,
                 ':customer_id' => $customer_id,
                 ':created_by' => $created_by,
                 ':invoice_number' => $invoice_number,
                 ':total_amount' => $total,
-                ':balance_due' => $total
+                ':balance_due' => $total,
+                ':due_date' => serviceCreditDueDate()
             ]);
 
             $this->conn->commit();
@@ -509,6 +522,130 @@ class Billing {
             }
 
             return false;
+        }
+    }
+
+    /*
+        SRS UC20 Record Down Payment: a partial payment taken while a repair job is still Pending or
+        In Progress. It is saved on the job's invoice (opened now if the job has none yet, without a
+        due date) and flagged is_down_payment, so the final bill only shows the remaining balance.
+        The down payment must leave part of the job total unpaid. Throws Exception with a message
+        for the user; returns the invoice id.
+    */
+    public function recordDownPayment($job_order_id, $user_id, $amount, $method, $ref) {
+        $amount = round(floatval($amount), 2);
+        $ref = trim((string)$ref);
+
+        if ($amount <= 0) {
+            throw new Exception("Enter a down payment greater than zero.");
+        }
+
+        if (!in_array($method, ['Cash', 'GCash', 'Bank Transfer', 'Cheque'], true)) {
+            throw new Exception("Invalid payment method.");
+        }
+
+        if (in_array($method, ['GCash', 'Bank Transfer', 'Cheque'], true) && $ref === '') {
+            throw new Exception("Reference number is required for {$method} payments.");
+        }
+
+        $this->conn->beginTransaction();
+
+        try {
+            $jobTotal = $this->getJobTotalExpression();
+            $stmtJob = $this->conn->prepare("
+                SELECT jo.job_order_id, jo.customer_id, jo.status, $jobTotal AS job_total
+                FROM job_order jo
+                LEFT JOIN (
+                    SELECT job_order_id, SUM(subtotal) AS parts_total
+                    FROM job_order_part
+                    GROUP BY job_order_id
+                ) parts ON jo.job_order_id = parts.job_order_id
+                WHERE jo.job_order_id = ?
+                LIMIT 1
+                FOR UPDATE
+            ");
+            $stmtJob->execute([intval($job_order_id)]);
+            $job = $stmtJob->fetch(PDO::FETCH_ASSOC);
+
+            if (!$job) {
+                throw new Exception("Job order not found.");
+            }
+
+            if (!in_array($job['status'], ['Pending', 'In Progress'], true)) {
+                throw new Exception("Down payments are recorded while the job is Pending or In Progress. Use Billing for the final payment.");
+            }
+
+            $total = round(floatval($job['job_total']), 2);
+
+            if ($total <= 0) {
+                throw new Exception("Set the job's estimated cost before recording a down payment.");
+            }
+
+            $stmtInv = $this->conn->prepare("
+                SELECT invoice_id, amount_paid
+                FROM invoice
+                WHERE job_order_id = ? AND is_voided = 0
+                LIMIT 1
+                FOR UPDATE
+            ");
+            $stmtInv->execute([intval($job_order_id)]);
+            $invoice = $stmtInv->fetch(PDO::FETCH_ASSOC);
+
+            $alreadyPaid = $invoice ? round(floatval($invoice['amount_paid']), 2) : 0.0;
+
+            // SRS UC20: the down payment must be less than the estimated total
+            if ($alreadyPaid + $amount >= $total) {
+                $maximum = max($total - $alreadyPaid - 0.01, 0);
+                throw new Exception("A down payment must leave part of the bill unpaid. The most you can record now is ₱" . number_format($maximum, 2) . ". Collect the full amount in Billing after the job is completed.");
+            }
+
+            if (!$invoice) {
+                // Opened early; the due date is set when the job is completed (syncJobInvoiceTotals)
+                $stmtNew = $this->conn->prepare("
+                    INSERT INTO invoice (
+                        job_order_id, part_order_id, customer_id, created_by, invoice_number, invoice_type,
+                        total_amount, amount_paid, balance_due, payment_status, due_date
+                    ) VALUES (?, NULL, ?, ?, ?, 'Service', ?, 0, ?, 'Not Paid', NULL)
+                ");
+                $stmtNew->execute([
+                    intval($job_order_id),
+                    intval($job['customer_id']),
+                    intval($user_id),
+                    'INV-JOB-' . date('Ymd-His') . '-' . intval($job_order_id),
+                    $total,
+                    $total
+                ]);
+                $invoiceId = intval($this->conn->lastInsertId());
+            } else {
+                $invoiceId = intval($invoice['invoice_id']);
+            }
+
+            $newPaid = $alreadyPaid + $amount;
+
+            $this->conn->prepare("
+                UPDATE invoice
+                SET total_amount = ?, amount_paid = ?, balance_due = ?, payment_status = 'Partial'
+                WHERE invoice_id = ?
+            ")->execute([$total, $newPaid, $total - $newPaid, $invoiceId]);
+
+            $this->conn->prepare("
+                INSERT INTO payment (invoice_id, received_by, amount, payment_method, reference_number, is_down_payment, payment_date, notes)
+                VALUES (?, ?, ?, ?, ?, 1, NOW(), 'Down payment')
+            ")->execute([
+                $invoiceId,
+                intval($user_id),
+                $amount,
+                $method,
+                $ref !== '' ? htmlspecialchars(strip_tags($ref)) : null
+            ]);
+
+            $this->conn->commit();
+            return $invoiceId;
+        } catch (Exception $e) {
+            if ($this->conn->inTransaction()) {
+                $this->conn->rollBack();
+            }
+            throw $e;
         }
     }
 

@@ -1,0 +1,690 @@
+/* =========================================================
+   Narrow digital receipt, shared by:
+   views/print_invoice.php, views/print_pos_receipt.php and the
+   print/PDF copy of views/reports.php (#reportReceipt).
+   ========================================================= */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&family=JetBrains+Mono:wght@400..600&display=swap');
+
+:root {
+    --rc-page: #E4E4E1;
+    --rc-paper: #FBFBFA;
+    --rc-ink: #1C1C1C;
+    --rc-gray: #5B5B58;
+    --rc-line: #D2D2CE;
+    --rc-track: #E9E9E6;
+    --rc-amber: #94600F;
+    --rc-amber-bg: #F4E8CF;
+    --rc-green: #2C6A45;
+    --rc-green-bg: #DCEADF;
+    --rc-grayst: #5B5B58;
+    --rc-grayst-bg: #E3E3E0;
+    --rc-red: #A8322A;
+    --rc-red-bg: #F3DDD9;
+    --rc-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+}
+
+body.rc-body {
+    margin: 0;
+    background: var(--rc-page);
+    color: var(--rc-ink);
+    font-family: 'Archivo', system-ui, -apple-system, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.45;
+}
+
+.rc-body *,
+.rc-receipt,
+.rc-receipt * {
+    box-sizing: border-box;
+}
+
+.rc-mono {
+    font-family: var(--rc-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Action bar (screen only) ---------- */
+.rc-bar {
+    background: #EFEFED;
+    border-bottom: 1px solid var(--rc-line);
+}
+
+.rc-bar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 440px;
+    max-width: 100%;
+    margin: 0 auto;
+    padding: 12px 0;
+}
+
+.rc-bar-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.rc-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 16px;
+    background: transparent;
+    border: 1px solid var(--rc-ink);
+    border-radius: 0;
+    color: var(--rc-ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.rc-btn:hover {
+    background: #E4E4E1;
+    color: var(--rc-ink);
+}
+
+.rc-btn-solid {
+    background: var(--rc-ink);
+    color: var(--rc-paper);
+}
+
+.rc-btn-solid:hover {
+    background: #000;
+    color: var(--rc-paper);
+}
+
+/* Shown inside the staff popup (?embed=1): no action bar, a little less margin */
+.is-embed .rc-bar {
+    display: none;
+}
+
+/* ---------- The sheet ---------- */
+.rc-wrap {
+    width: 440px;
+    max-width: 100%;
+    margin: 32px auto;
+}
+
+.is-embed .rc-wrap {
+    margin: 16px auto;
+}
+
+.rc-receipt {
+    background: var(--rc-paper);
+    padding: 32px 30px 40px;
+    color: var(--rc-ink);
+    font-family: 'Archivo', system-ui, -apple-system, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.rc-tear {
+    display: block;
+    height: 14px;
+    background: var(--rc-paper);
+    line-height: 0;
+}
+
+.rc-tear {
+    display: flex;
+    justify-content: space-between;
+    overflow: hidden;
+}
+
+.rc-tear span {
+    flex: 0 0 12px;
+    width: 12px;
+    height: 12px;
+    margin-top: 8px;
+    border-radius: 50%;
+    background: var(--rc-page);
+}
+
+/* ---------- Header ---------- */
+.rc-head {
+    text-align: center;
+}
+
+.rc-logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    background: var(--rc-ink);
+    color: #fff;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.rc-shop {
+    margin: 14px 0 6px;
+    font-size: 17px;
+    font-weight: 600;
+    font-stretch: 118%;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+
+.rc-sub {
+    margin: 0;
+    color: var(--rc-gray);
+    font-size: 12.5px;
+    line-height: 1.55;
+}
+
+.rc-kind {
+    margin: 20px 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+}
+
+.rc-number {
+    margin: 0;
+    font-family: var(--rc-mono);
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.rc-title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 300;
+    font-stretch: 112%;
+    text-transform: uppercase;
+    line-height: 1.15;
+}
+
+/* ---------- Sections ---------- */
+.rc-sep {
+    margin: 22px 0;
+    border: 0;
+    border-top: 1.5px dashed var(--rc-line);
+}
+
+.rc-label {
+    margin: 0 0 10px;
+    color: var(--rc-gray);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.rc-details {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 9px 16px;
+    margin: 0;
+    font-size: 13.5px;
+}
+
+.rc-details dt {
+    color: var(--rc-gray);
+    font-weight: 400;
+}
+
+.rc-details dd {
+    margin: 0;
+    text-align: right;
+}
+
+.rc-parties {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.rc-parties > div:last-child {
+    text-align: right;
+}
+
+.rc-party-name {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.rc-muted {
+    display: block;
+    color: var(--rc-gray);
+    font-size: 12.5px;
+}
+
+/* ---------- Status badge ---------- */
+.rc-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.rc-badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.rc-amber { color: var(--rc-amber); background: var(--rc-amber-bg); }
+.rc-green { color: var(--rc-green); background: var(--rc-green-bg); }
+.rc-gray { color: var(--rc-grayst); background: var(--rc-grayst-bg); }
+.rc-red { color: var(--rc-red); background: var(--rc-red-bg); }
+
+/* ---------- Items ---------- */
+.rc-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 7px 0;
+}
+
+.rc-item-main {
+    min-width: 0;
+}
+
+.rc-item-sub {
+    display: block;
+    margin-top: 2px;
+    color: var(--rc-gray);
+    font-family: var(--rc-mono);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.rc-money {
+    flex-shrink: 0;
+    font-family: var(--rc-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* ---------- Totals ---------- */
+.rc-totals {
+    position: relative;
+}
+
+.rc-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 5px 0;
+}
+
+.rc-total {
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1.5px solid var(--rc-ink);
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.rc-inkbox {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-top: 14px;
+    padding: 16px 18px;
+    background: var(--rc-ink);
+    color: var(--rc-paper);
+}
+
+.rc-inkbox span {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.rc-inkbox strong {
+    font-family: var(--rc-mono);
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.rc-stamp {
+    position: absolute;
+    left: 40%;
+    top: 6px;
+    padding: 2px 10px;
+    border: 2px solid currentColor;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    transform: rotate(-8deg);
+    pointer-events: none;
+}
+
+.rc-stamp.is-green { color: var(--rc-green); }
+.rc-stamp.is-amber { color: var(--rc-amber); }
+.rc-stamp.is-red { color: var(--rc-red); }
+
+/* ---------- Payment table ---------- */
+.rc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    table-layout: fixed;
+}
+
+.rc-table th {
+    padding: 0 0 7px;
+    border-bottom: 1px solid var(--rc-line);
+    color: var(--rc-gray);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-align: left;
+    text-transform: uppercase;
+}
+
+.rc-table td {
+    padding: 9px 0;
+    border-bottom: 1px solid var(--rc-line);
+    vertical-align: top;
+}
+
+.rc-table .rc-right {
+    text-align: right;
+}
+
+.rc-table small {
+    display: block;
+    color: var(--rc-gray);
+    font-family: var(--rc-mono);
+    font-size: 11px;
+}
+
+/* ---------- Notes, signatures, footer ---------- */
+.rc-note {
+    margin: 0 0 10px;
+    color: var(--rc-gray);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.rc-note strong {
+    color: var(--rc-ink);
+}
+
+.rc-sign {
+    width: 180px;
+    margin: 30px auto 0;
+    padding-top: 8px;
+    border-top: 1.5px solid var(--rc-ink);
+    text-align: center;
+    font-size: 12.5px;
+}
+
+.rc-sign strong {
+    display: block;
+}
+
+.rc-sign span {
+    color: var(--rc-gray);
+}
+
+.rc-signs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.rc-signs .rc-sign {
+    width: auto;
+}
+
+.rc-foot {
+    margin-top: 28px;
+    text-align: center;
+}
+
+.rc-thanks {
+    margin: 0 0 6px;
+    font-size: 20px;
+    font-weight: 300;
+    font-stretch: 118%;
+    text-transform: uppercase;
+}
+
+.rc-foot-code {
+    margin: 0;
+    color: var(--rc-gray);
+    font-family: var(--rc-mono);
+    font-size: 11px;
+}
+
+.rc-end {
+    margin: 0 0 6px;
+    color: var(--rc-gray);
+    font-family: var(--rc-mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+}
+
+.rc-empty {
+    margin: 0;
+    color: var(--rc-gray);
+    font-size: 12.5px;
+}
+
+/* ---------- Report bits ---------- */
+.rc-sec-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.rc-sec-head h2 {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.rc-sec-num {
+    color: var(--rc-gray);
+    font-family: var(--rc-mono);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+}
+
+.rc-sec-tag {
+    color: var(--rc-gray);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.rc-leader {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 0;
+}
+
+.rc-leader-fill {
+    flex: 1;
+    min-width: 12px;
+    border-bottom: 1.5px dotted var(--rc-line);
+    transform: translateY(-3px);
+}
+
+.rc-share {
+    color: var(--rc-gray);
+    font-family: var(--rc-mono);
+    font-size: 11px;
+}
+
+.rc-bar-row {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 8px;
+    align-items: center;
+    margin: 2px 0 8px;
+}
+
+.rc-track {
+    display: block;
+    height: 6px;
+    background: var(--rc-track);
+}
+
+.rc-fill {
+    display: block;
+    height: 100%;
+    background: var(--rc-ink);
+}
+
+.rc-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+
+.rc-dot.is-amber { background: var(--rc-amber); }
+.rc-dot.is-blue { background: #3A5878; }
+.rc-dot.is-green { background: var(--rc-green); }
+.rc-dot.is-gray { background: var(--rc-grayst); }
+.rc-dot.is-red { background: var(--rc-red); }
+
+.rc-stock {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 6px 0;
+}
+
+.rc-double {
+    margin: 22px 0 14px;
+    border: 0;
+    border-top: 3px double var(--rc-ink);
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 480px) {
+    .rc-wrap {
+        width: auto;
+        margin: 16px;
+    }
+
+    .rc-receipt {
+        padding: 26px 20px 34px;
+    }
+
+    .rc-bar-inner {
+        flex-wrap: wrap;
+        padding: 12px 16px;
+    }
+
+    .rc-bar-inner > .rc-btn {
+        flex: 1 1 100%;
+    }
+
+    .rc-bar-actions {
+        flex: 1 1 100%;
+    }
+
+    .rc-bar-actions .rc-btn {
+        flex: 1 1 0;
+    }
+
+    .rc-signs {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ---------- Print ---------- */
+@page {
+    size: A4 portrait;
+    margin: 12mm;
+}
+
+@media print {
+    body.rc-body,
+    body.rc-body.is-embed {
+        background: #fff;
+    }
+
+    .no-print,
+    .rc-bar,
+    .rc-tear {
+        display: none !important;
+    }
+
+    .rc-wrap {
+        width: 110mm;
+        max-width: none;
+        margin: 0 auto;
+    }
+
+    .rc-receipt {
+        padding: 0;
+        background: #fff;
+    }
+
+    .rc-head,
+    .rc-section,
+    .rc-totals,
+    .rc-inkbox,
+    .rc-table,
+    .rc-table tr,
+    .rc-leader,
+    .rc-stock,
+    .rc-sign,
+    .rc-signs,
+    .rc-foot {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    .rc-receipt * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}
+
+/* PDF copy only: the PDF tool mis-measures font-stretch, so wide headings use the normal width */
+.rc-pdf .rc-shop,
+.rc-pdf .rc-thanks,
+.rc-pdf .rc-title {
+    font-stretch: 100%;
+    letter-spacing: 0.01em;
+}
