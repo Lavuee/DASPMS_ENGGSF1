@@ -395,3 +395,51 @@
         bar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     };
 })();
+
+/* ---------- Pop-up message (Shopee style) ----------
+   cpToast(true, 'Added to cart', '1 × Switches')   centred box with a check, closes by itself after 1.5s
+   cpToast(false, 'Quantity exceeds available stock.') same box with a cross, stays 2.5s
+   Pages can also queue one for page load: <div data-cp-toast data-ok="1" data-title="..." data-detail="..."> */
+(function () {
+    let box = null;
+    let timer = null;
+
+    function build() {
+        box = document.createElement('div');
+        box.className = 'cp-toast';
+        box.setAttribute('role', 'status');
+        box.setAttribute('aria-live', 'polite');
+        box.hidden = true;
+        box.innerHTML = '<span class="cp-toast-icon" aria-hidden="true"></span><p class="cp-toast-title"></p><p class="cp-toast-detail"></p>';
+        document.body.appendChild(box);
+    }
+
+    window.cpToast = function (ok, title, detail) {
+        if (!box) build();
+        box.classList.toggle('is-bad', !ok);
+        box.querySelector('.cp-toast-icon').textContent = ok ? '\u2713' : '\u2715';
+        box.querySelector('.cp-toast-title').textContent = title;
+        box.querySelector('.cp-toast-detail').textContent = detail || '';
+        box.hidden = false;
+        void box.offsetWidth; // restart the fade-in
+        box.classList.add('is-shown');
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+            box.classList.remove('is-shown');
+            timer = setTimeout(function () { box.hidden = true; }, 250);
+        }, ok ? 1500 : 2500);
+    };
+
+    function showQueued() {
+        const queued = document.querySelector('[data-cp-toast]');
+        if (!queued) return;
+        window.cpToast(queued.dataset.ok === '1', queued.dataset.title, queued.dataset.detail);
+        queued.remove();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', showQueued);
+    } else {
+        showQueued();
+    }
+})();

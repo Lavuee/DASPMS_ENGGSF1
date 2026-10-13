@@ -266,8 +266,14 @@ function displayMultiline($value, $fallback = 'No information available.')
                     </div>
                 </div>
 
+                <?php
+                // Pieces already in the cart count against the stock that can still be added
+                $inCartQty = intval($_SESSION['cart'][intval($part['part_id'])]['qty'] ?? 0);
+                $canAddQty = max($quantity - $inCartQty, 0);
+                ?>
+
                 <?php if ($quantity > 0): ?>
-                    <form action="../controllers/CartController.php" method="POST" class="cpd-cart-form">
+                    <form action="../controllers/CartController.php" method="POST" class="cpd-cart-form" id="addToCartForm"<?= $canAddQty <= 0 ? ' hidden' : '' ?>>
                         <?= csrfField() ?>
                         <input type="hidden" name="action" value="add">
                         <input type="hidden" name="part_id" value="<?php echo intval($part['part_id']); ?>">
@@ -279,7 +285,7 @@ function displayMultiline($value, $fallback = 'No information available.')
                                 name="quantity"
                                 id="quantityInput"
                                 min="1"
-                                max="<?php echo $quantity; ?>"
+                                max="<?php echo max($canAddQty, 1); ?>"
                                 value="1"
                                 inputmode="numeric"
                                 aria-label="Quantity"
@@ -291,9 +297,11 @@ function displayMultiline($value, $fallback = 'No information available.')
                         <button type="submit" class="cpd-action">Add to cart</button>
                     </form>
 
+                    <p class="cpd-cart-full" id="cartFull"<?= $canAddQty > 0 ? ' hidden' : '' ?>>All <?php echo $quantity; ?> in stock are already in your cart.</p>
+
                     <div class="cpd-subline">
-                        <span>Maximum: <span class="cp-mono"><?php echo $quantity; ?></span></span>
-                        <a href="customer_cart.php">View cart (<?php echo intval($cartCount ?? 0); ?>)</a>
+                        <span>Maximum: <span class="cp-mono" id="cartMax"><?php echo $canAddQty; ?></span><?php if ($inCartQty > 0): ?> <span id="cartInNote">(<?php echo $inCartQty; ?> in cart)</span><?php else: ?> <span id="cartInNote"></span><?php endif; ?></span>
+                        <a href="customer_cart.php">View cart (<span id="cartSubCount"><?php echo intval($cartCount ?? 0); ?></span>)</a>
                     </div>
                 <?php else: ?>
                     <button type="button" class="cpd-action" disabled>Out of stock</button>
@@ -339,6 +347,7 @@ function displayMultiline($value, $fallback = 'No information available.')
 
 </main>
 
+
 <script>
 const qtyInput = document.getElementById('quantityInput');
 const decreaseBtn = document.getElementById('decreaseQty');
@@ -373,6 +382,75 @@ if (qtyInput && decreaseBtn && increaseBtn) {
     qtyInput.addEventListener('input', clampQty);
     clampQty();
 }
+
+/* Add to cart without leaving the page: the cart count in the header goes up and a short note appears.
+   If anything unexpected comes back (e.g. the session expired), the form is sent the normal way. */
+(function () {
+    const form = document.getElementById('addToCartForm');
+    if (!form || !window.fetch) return;
+
+    const button = form.querySelector('.cpd-action');
+    function setCartCount(count) {
+        document.querySelectorAll('.cp-cart-count').forEach(function (el) {
+            el.textContent = count > 99 ? '99+' : count;
+            el.hidden = count <= 0;
+        });
+        document.querySelectorAll('.cp-cart').forEach(function (el) {
+            el.setAttribute('aria-label', 'Cart, ' + count + ' item' + (count === 1 ? '' : 's'));
+        });
+        document.querySelectorAll('.cp-sheet a[href="customer_cart.php"]').forEach(function (el) {
+            el.lastChild.textContent = 'Cart (' + count + ')';
+        });
+        const sub = document.getElementById('cartSubCount');
+        if (sub) sub.textContent = count;
+    }
+
+    form.addEventListener('submit', function (e) {
+        if (form.dataset.plainSubmit === '1') return;
+        e.preventDefault();
+        button.disabled = true;
+        button.textContent = 'Adding...';
+
+        // form.getAttribute, not form.action: the hidden field named "action" hides the property
+        fetch(form.getAttribute('action'), { method: 'POST', body: new FormData(form), headers: { 'X-Requested-With': 'fetch' }, credentials: 'same-origin' })
+            .then(function (res) {
+                const type = res.headers.get('Content-Type') || '';
+                if (type.indexOf('application/json') === -1) throw new Error('not json');
+                return res.json();
+            })
+            .then(function (data) {
+                setCartCount(data.cartCount);
+                if (data.ok) {
+                    cpToast(true, 'Added to cart', data.item);
+                } else {
+                    cpToast(false, data.message);
+                    return;
+                }
+
+                // What is left to add after this
+                const left = data.canAddMore;
+                document.getElementById('cartMax').textContent = left;
+                document.getElementById('cartInNote').textContent = '(' + data.inCart + ' in cart)';
+                if (left > 0) {
+                    qtyInput.max = left;
+                    qtyInput.value = 1;
+                    qtyInput.dispatchEvent(new Event('input'));
+                } else {
+                    form.hidden = true;
+                    document.getElementById('cartFull').hidden = false;
+                }
+            })
+            .catch(function () {
+                // Fall back to the normal form post (goes to the cart page, as before)
+                form.dataset.plainSubmit = '1';
+                form.submit();
+            })
+            .finally(function () {
+                button.disabled = false;
+                button.textContent = 'Add to cart';
+            });
+    });
+})();
 </script>
 
 <script src="../assets/js/offerings-carousel.js?v=<?= filemtime(__DIR__ . '/../assets/js/offerings-carousel.js') ?>"></script>

@@ -2691,23 +2691,18 @@ a.sp-todo-item:hover {
     }
 }
 
-/* Invoice / receipt popup: show the whole document (no scroll box inside the popup).
-   The page behind scrolls instead, and the buttons stay pinned at the bottom of the screen. */
-.sp-dialog-box.is-doc {
-    max-height: none;
-    margin-bottom: 24px;
-}
-
+/* Invoice / receipt popup: the popup fits the screen and only the document scrolls inside it,
+   so the buttons sit in their own bar below the document (nothing shows underneath them). */
 .sp-dialog-box.is-doc .sp-dialog-body {
-    overflow: visible;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .sp-dialog-box.is-doc .cp-modal-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
+    flex-shrink: 0;
     background: var(--paper);
-    box-shadow: 0 -8px 18px rgba(38, 36, 31, 0.08);
 }
 
 @media (max-width: 600px) {

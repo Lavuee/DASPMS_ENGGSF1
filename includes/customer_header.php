@@ -42,9 +42,10 @@ if (can('shop.purchase')) {
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                 </a>
 
-                <a href="customer_cart.php" class="cp-cart<?= $currentPage === 'customer_cart.php' ? ' is-active' : '' ?>" aria-label="Cart, <?= intval($cartCount) ?> item<?= $cartCount == 1 ? '' : 's' ?>">
-                    <span class="cp-cart-label">Cart</span>
-                    <span class="cp-cart-count"><?= intval($cartCount) ?></span>
+                <?php // Cart icon with a red count badge (hidden while the cart is empty) ?>
+                <a href="customer_cart.php" class="cp-cart<?= $currentPage === 'customer_cart.php' ? ' is-active' : '' ?>" aria-label="Cart, <?= intval($cartCount) ?> item<?= $cartCount == 1 ? '' : 's' ?>" title="Cart">
+                    <svg class="cp-cart-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h2l2.4 11h11.2L21 7H6.2"/><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/></svg>
+                    <span class="cp-cart-count" aria-hidden="true"<?= intval($cartCount) > 0 ? '' : ' hidden' ?>><?= intval($cartCount) > 99 ? '99+' : intval($cartCount) ?></span>
                 </a>
             <?php endif; ?>
 
@@ -59,7 +60,7 @@ if (can('shop.purchase')) {
                         <strong><?= $cpFirstName ?></strong>
                         <span>Customer</span>
                     </p>
-                    <a href="<?= $dashLink ?>">My garage</a>
+                    <a href="<?= $dashLink ?>">My dashboard</a>
                     <?php if (can('shop.purchase')): ?>
                         <a href="customer_cart.php">My cart</a>
                         <a href="customer_service_requests.php">My service requests</a>

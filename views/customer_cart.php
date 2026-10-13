@@ -47,6 +47,7 @@ function partImagePath($image)
     ?>
 
     <?php cpFlash(); ?>
+    <?php cpToastQueued(); // cart updates show as a pop-up; checkout results stay as bars ?>
 
     <?php if (empty($cart)): ?>
         <div class="cp-empty">
@@ -97,7 +98,7 @@ function partImagePath($image)
                                         action="../controllers/CartController.php"
                                         method="POST"
                                         class="mt-2"
-                                        data-cp-confirm="Remove this item from your cart?"
+                                        data-cp-confirm="Remove <?php echo htmlspecialchars(html_entity_decode($item['name'], ENT_QUOTES, 'UTF-8'), ENT_QUOTES, 'UTF-8'); ?> from your cart?"
                                         data-cp-confirm-title="Remove item?"
                                         data-cp-confirm-yes="Remove"
                                         data-cp-confirm-no="Keep it"
@@ -265,7 +266,7 @@ function partImagePath($image)
                     action="../controllers/CartController.php"
                     method="POST"
                     class="mt-3 pt-3 border-top"
-                    data-cp-confirm="Clear all items from your cart?"
+                    data-cp-confirm="Remove all <?php echo count($cart); ?> item<?php echo count($cart) === 1 ? '' : 's'; ?> from your cart?"
                     data-cp-confirm-title="Clear cart?"
                     data-cp-confirm-yes="Clear cart"
                     data-cp-confirm-no="Keep items"

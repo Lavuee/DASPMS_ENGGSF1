@@ -114,6 +114,19 @@ function cpFlash() {
     }
 }
 
+// One pop-up message queued by a controller ($_SESSION['cp_toast'] = [ok, title, detail]); shown by cpToast in customer-portal.js
+function cpToastQueued() {
+    if (empty($_SESSION['cp_toast'])) {
+        return;
+    }
+
+    [$ok, $title, $detail] = array_pad((array) $_SESSION['cp_toast'], 3, '');
+    unset($_SESSION['cp_toast']);
+    ?>
+    <div data-cp-toast data-ok="<?= $ok ? '1' : '0' ?>" data-title="<?= cpEscape($title) ?>" data-detail="<?= cpEscape($detail) ?>" hidden></div>
+    <?php
+}
+
 // Standard page header: small label, big title, one line of description, buttons on the right.
 function cpPageHead($title, $lead, $actionsHtml = '') {
     ?>

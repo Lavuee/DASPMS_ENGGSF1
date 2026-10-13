@@ -228,45 +228,50 @@ html.cp-locked {
 }
 
 .cp-cart {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    padding: 0 14px;
-    border: 1px solid var(--ink);
-    color: var(--ink);
-    font-size: 0.78rem;
-    font-weight: 500;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    text-decoration: none;
-    transition: background 0.2s ease, color 0.2s ease;
-}
-
-.cp-cart:hover,
-.cp-cart.is-active {
-    background: var(--ink);
-    color: var(--sheet);
-}
-
-.cp-cart-count {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 22px;
-    height: 22px;
-    padding: 0 6px;
-    background: var(--ink);
-    color: var(--sheet);
-    font-family: var(--cp-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0;
+    width: 44px;
+    height: 44px;
+    border: 1px solid transparent;
+    color: var(--ink);
+    text-decoration: none;
+    transition: border-color 0.2s ease;
 }
 
-.cp-cart:hover .cp-cart-count,
-.cp-cart.is-active .cp-cart-count {
-    background: var(--sheet);
+.cp-cart:hover {
     color: var(--ink);
+    border-color: var(--line);
+}
+
+.cp-cart.is-active {
+    border-color: var(--ink);
+}
+
+/* Red count badge on the top right of the cart icon */
+.cp-cart-count {
+    position: absolute;
+    top: 3px;
+    right: 1px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 19px;
+    height: 19px;
+    padding: 0 5px;
+    border: 2px solid var(--paper);
+    border-radius: 999px;
+    background: var(--cp-red);
+    color: #fff;
+    font-family: var(--cp-mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.cp-cart-count[hidden] {
+    display: none;
 }
 
 .cp-user {
@@ -2605,23 +2610,6 @@ textarea.cp-input {
         display: none;
     }
 
-    .cp-cart {
-        padding: 0 10px;
-    }
-
-    .cp-cart-label {
-        display: none;
-    }
-
-    .cp-cart::before {
-        content: "";
-        width: 18px;
-        height: 18px;
-        background: currentColor;
-        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8'%3E%3Cpath d='M3 4h2l2.4 11h11.2L21 7H6.2'/%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3C/svg%3E") center / contain no-repeat;
-        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8'%3E%3Cpath d='M3 4h2l2.4 11h11.2L21 7H6.2'/%3E%3Ccircle cx='9' cy='20' r='1.4'/%3E%3Ccircle cx='18' cy='20' r='1.4'/%3E%3C/svg%3E") center / contain no-repeat;
-    }
-
     .cp-menu-btn {
         padding: 0 12px;
     }
@@ -3032,7 +3020,7 @@ textarea.cp-input {
     grid-template-columns: minmax(0, 520px) minmax(0, 460px);
     justify-content: center;
     gap: 2.5rem;
-    align-items: start;
+    align-items: center; /* photo sits level with the middle of the info box, like the public page */
     align-content: start;
 }
 
@@ -3800,4 +3788,96 @@ html:not(.js) .cpd-tabpanels > .offerings-panel {
     background: var(--tile);
     color: var(--ink-2);
     cursor: not-allowed;
+}
+
+/* Add to cart pop-up (Part Details): centred, fades in, closes by itself; clicks pass through */
+.cp-toast {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 2000;
+    width: max-content;
+    max-width: min(300px, calc(100vw - 48px));
+    padding: 22px 26px 20px;
+    background: rgba(38, 36, 31, 0.9);
+    color: #f8f6f1;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.cp-toast.is-shown {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+.cp-toast-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 10px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    font-size: 1.35rem;
+    line-height: 1;
+}
+
+.cp-toast.is-bad .cp-toast-icon {
+    color: #f1b7ad;
+}
+
+.cp-toast-title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.cp-toast-detail {
+    margin: 4px 0 0;
+    color: rgba(248, 246, 241, 0.75);
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.cp-toast-detail:empty {
+    display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cp-toast {
+        transition: none;
+    }
+}
+
+.cpd-cart-full {
+    margin: 0;
+    padding: 0.8rem 0;
+    color: var(--ink-2);
+    font-size: 0.9rem;
+}
+
+/* My Garage feature card: small notes under the money boxes */
+.cp-feature-note {
+    margin: 10px 0 0;
+    color: rgba(248, 246, 241, 0.7);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.cp-feature-note.is-warn {
+    padding: 10px 12px;
+    border-left: 3px solid var(--cp-amber);
+    background: rgba(248, 246, 241, 0.06);
+    color: #f8f6f1;
+}
+
+.cp-feature-note a {
+    color: #f8f6f1;
+    font-weight: 700;
+    white-space: nowrap;
 }

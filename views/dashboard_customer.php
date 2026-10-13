@@ -5,6 +5,7 @@ requirePermission('dashboard.customer');
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
+require_once __DIR__ . '/../includes/customer_ui.php'; // cpMoney() is used while working out the totals
 
 $db = (new Database())->getConnection();
 $serviceRequestModel = new ServiceRequest($db);
@@ -49,12 +50,26 @@ $stmtJO = $db->prepare("
         v.make,
         v.model,
         jo.status,
+        jo.description,
+        (SELECT GROUP_CONCAT(s.service_name ORDER BY jos.job_service_id SEPARATOR ', ')
+         FROM job_order_service jos JOIN service s ON s.service_id = jos.service_id
+         WHERE jos.job_order_id = jo.job_order_id) AS service_names,
+        jo.estimated_cost,
+        jo.final_cost,
+        COALESCE(parts.parts_total, 0) AS parts_total,
+        i.invoice_id,
         i.payment_status,
+        i.amount_paid,
         i.balance_due,
         jo.date_created
     FROM job_order jo
     JOIN vehicle v ON jo.vehicle_id = v.vehicle_id
-    LEFT JOIN invoice i ON jo.job_order_id = i.job_order_id
+    LEFT JOIN invoice i ON jo.job_order_id = i.job_order_id AND i.is_voided = 0
+    LEFT JOIN (
+        SELECT job_order_id, SUM(subtotal) AS parts_total
+        FROM job_order_part
+        GROUP BY job_order_id
+    ) parts ON parts.job_order_id = jo.job_order_id
     WHERE jo.customer_id = ?
     ORDER BY jo.date_created DESC
 ");
@@ -123,11 +138,12 @@ foreach ($jobOrders as $repair) {
         $activeRepairCount++;
     }
 
-    $paymentStatus = $repair['payment_status'] ?? 'Not Paid';
+    // Only a finished repair has a bill to settle; open jobs show an estimate, cancelled ones owe nothing
+    $repairMoney = customerRepairMoney($repair);
 
-    if ($paymentStatus !== 'Paid') {
+    if ($repairMoney['owes'] > 0) {
         $pendingPaymentCount++;
-        $pendingBalanceTotal += floatval($repair['balance_due'] ?? 0);
+        $pendingBalanceTotal += $repairMoney['owes'];
     }
 }
 
@@ -212,6 +228,55 @@ function getCustomerGcashBadge($status) {
         default:
             return 'st done';
     }
+}
+
+/*
+    What the customer sees about a repair's money, by stage:
+      open job, no payment yet     -> "Not billed yet"  + estimated total
+      open job with a down payment -> "Down payment paid" + amount paid and remaining
+      completed job with a bill    -> the bill's status  + balance due
+      completed, bill not made yet -> "Bill being prepared" + total
+      cancelled                    -> no payment badge
+    'owes' is what is actually due now (finished repairs only).
+*/
+function customerRepairMoney(array $job) {
+    $status = $job['status'] ?? '';
+    $finalCost = floatval($job['final_cost'] ?? 0);
+    $total = $finalCost > 0 ? $finalCost : floatval($job['estimated_cost'] ?? 0) + floatval($job['parts_total'] ?? 0);
+    $hasBill = !empty($job['invoice_id']);
+    $paid = floatval($job['amount_paid'] ?? 0);
+
+    if ($status === 'Cancelled') {
+        return ['badge' => '', 'badgeClass' => '', 'label' => 'Cancelled', 'amountLabel' => 'Amount', 'amount' => null, 'owes' => 0];
+    }
+
+    if ($status !== 'Completed') {
+        if ($hasBill && $paid > 0) {
+            return ['badge' => 'Down payment paid', 'badgeClass' => 'st prog', 'label' => 'Paid ' . cpMoney($paid),
+                    'amountLabel' => 'Remaining', 'amount' => max($total - $paid, 0), 'owes' => 0];
+        }
+
+        return ['badge' => 'Not billed yet', 'badgeClass' => 'st done', 'label' => 'Not billed yet',
+                'amountLabel' => 'Estimated cost', 'amount' => $total, 'owes' => 0];
+    }
+
+    if (!$hasBill) {
+        return ['badge' => 'Bill being prepared', 'badgeClass' => 'st pend', 'label' => 'Bill being prepared',
+                'amountLabel' => 'Total', 'amount' => $total, 'owes' => 0];
+    }
+
+    $paymentStatus = $job['payment_status'] ?? 'Not Paid';
+    $balance = floatval($job['balance_due'] ?? 0);
+
+    return ['badge' => $paymentStatus, 'badgeClass' => getCustomerPaymentBadge($paymentStatus), 'label' => $paymentStatus,
+            'amountLabel' => 'Balance due', 'amount' => $balance, 'owes' => $paymentStatus === 'Paid' ? 0 : $balance];
+}
+
+// Short repair title from the job description: the first phrase, up to a colon or full stop
+function customerRepairTitle($description) {
+    $line = trim(strtok(html_entity_decode((string) $description, ENT_QUOTES, 'UTF-8'), "\r\n"));
+    $line = trim(preg_split('/[:.]/', $line)[0]);
+    return mb_strlen($line) > 40 ? rtrim(mb_substr($line, 0, 38)) . '…' : $line;
 }
 
 function getCustomerPaymentBadge($paymentStatus) {
@@ -390,7 +455,7 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>My Garage - Norily's Customer Portal</title>
+<title>My Dashboard - Norily's Customer Portal</title>
 <link rel="icon" type="image/png" href="../assets/images/logo.png">
 <?php require_once __DIR__ . '/../includes/customer_ui.php'; cpHeadAssets(); ?>
 </head>
@@ -403,7 +468,7 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
     <header class="cp-garage-head">
         <div>
             <div class="cp-garage-meta">
-                <p class="cp-label">My garage</p>
+                <p class="cp-label">My dashboard</p>
                 <p class="cp-label cp-mono"><?php echo date('M d, Y'); ?></p>
             </div>
             <h1 class="cp-title">
@@ -429,8 +494,19 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
             <?php
                 $featureStatus = $featureJob['status'] ?? 'Pending';
                 $featureVehicle = trim(($featureJob['make'] ?? '') . ' ' . ($featureJob['model'] ?? ''));
-                $featurePayment = $featureJob['payment_status'] ?? 'Not Paid';
-                $featureService = $featureRequest['service_name'] ?? 'Vehicle repair';
+                $featureMoney = customerRepairMoney($featureJob);
+                $featureService = $featureRequest['service_name'] ?? ($featureJob['service_names'] ?? '');
+                if ($featureService === '') {
+                    $featureService = customerRepairTitle($featureJob['description'] ?? '') ?: 'Vehicle repair';
+                }
+
+                // Unpaid bills from other (finished) repairs, so they are not hidden behind this card
+                $otherOwed = 0;
+                foreach ($jobOrders as $otherJob) {
+                    if (($otherJob['job_order_number'] ?? '') !== ($featureJob['job_order_number'] ?? '')) {
+                        $otherOwed += customerRepairMoney($otherJob)['owes'];
+                    }
+                }
 
                 $stepIndex = [
                     'Pending' => 1,
@@ -486,13 +562,19 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
                 <div class="cp-feature-money">
                     <div>
                         <p class="cp-label">Payment</p>
-                        <strong><?php echo cpEscape($featurePayment); ?></strong>
+                        <strong><?php echo cpEscape($featureMoney['label']); ?></strong>
                     </div>
                     <div>
-                        <p class="cp-label">Balance due</p>
-                        <strong><?php echo cpMoney($featureJob['balance_due'] ?? 0); ?></strong>
+                        <p class="cp-label"><?php echo cpEscape($featureMoney['amountLabel']); ?></p>
+                        <strong><?php echo $featureMoney['amount'] !== null ? cpMoney($featureMoney['amount']) : '—'; ?></strong>
                     </div>
                 </div>
+                <?php if ($featureMoney['amountLabel'] === 'Estimated cost'): ?>
+                    <p class="cp-feature-note">The final bill is made when the repair is done and may change if parts are added.</p>
+                <?php endif; ?>
+                <?php if ($otherOwed > 0): ?>
+                    <p class="cp-feature-note is-warn">You also have <strong class="cp-mono"><?php echo cpMoney($otherOwed); ?></strong> unpaid from an earlier repair. <a href="#repairStatusSection">View →</a></p>
+                <?php endif; ?>
 
                 <div class="cp-feature-actions">
                     <a href="#repairStatusSection" class="cp-btn cp-btn-light">View my repairs</a>
@@ -754,7 +836,7 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
         <?php else: ?>
             <div class="cp-rows" data-cp-paginate="5" data-cp-noun="repair">
                 <?php foreach ($jobOrders as $job): ?>
-                    <?php $paymentStatus = $job['payment_status'] ?? 'Not Paid'; ?>
+                    <?php $jobMoney = customerRepairMoney($job); ?>
                     <div class="cp-row">
                         <div class="cp-row-main">
                             <span class="cp-row-title">
@@ -767,11 +849,15 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
                             </div>
                         </div>
                         <div class="cp-row-side">
-                            <span>Balance <span class="cp-mono"><?php echo cpMoney($job['balance_due'] ?? 0); ?></span></span>
+                            <?php if ($jobMoney['amount'] !== null): ?>
+                                <span><?php echo cpEscape($jobMoney['amountLabel'] === 'Balance due' ? 'Balance' : $jobMoney['amountLabel']); ?> <span class="cp-mono"><?php echo cpMoney($jobMoney['amount']); ?></span></span>
+                            <?php endif; ?>
                         </div>
                         <div class="cp-row-end">
                             <span class="<?php echo getCustomerRepairBadge($job['status'] ?? ''); ?>"><?php echo cpEscape($job['status'] ?? 'N/A'); ?></span>
-                            <span class="<?php echo getCustomerPaymentBadge($paymentStatus); ?>"><?php echo cpEscape($paymentStatus); ?></span>
+                            <?php if ($jobMoney['badge'] !== ''): ?>
+                                <span class="<?php echo $jobMoney['badgeClass']; ?>"><?php echo cpEscape($jobMoney['badge']); ?></span>
+                            <?php endif; ?>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -1036,16 +1122,6 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
             </div>
         <?php endif; ?>
     </section>
-
-    <footer class="cp-legend" aria-label="Status colours">
-        <p class="cp-label me-2">Status key</p>
-        <span class="st pend">Pending</span>
-        <span class="st prog">In progress</span>
-        <span class="st ready solid">Ready for pickup</span>
-        <span class="st ok">Active / verified</span>
-        <span class="st done">Completed / paid</span>
-        <span class="st bad">Cancelled / unpaid</span>
-    </footer>
 </main>
 
 <!-- REQUEST SERVICE MODAL -->
@@ -1136,7 +1212,7 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
 
             <div class="cp-modal-head">
                 <div>
-                    <p class="cp-label">My garage</p>
+                    <p class="cp-label">My vehicles</p>
                     <h2 class="cp-modal-title" id="addVehicleModalLabel">Add vehicle</h2>
                 </div>
                 <button type="button" class="cp-modal-x" data-bs-dismiss="modal" aria-label="Close">&times;</button>
@@ -1198,7 +1274,7 @@ $customerFirstName = $_SESSION['first_name'] ?? 'Customer';
 
             <div class="cp-modal-head">
                 <div>
-                    <p class="cp-label">My garage</p>
+                    <p class="cp-label">My vehicles</p>
                     <h2 class="cp-modal-title" id="editVehicleModalLabel">Edit vehicle</h2>
                 </div>
                 <button type="button" class="cp-modal-x" data-bs-dismiss="modal" aria-label="Close">&times;</button>
