@@ -16,6 +16,67 @@
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
 --
+-- Table structure for table `activity_log`
+--
+
+DROP TABLE IF EXISTS `activity_log`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `activity_log` (
+  `log_id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL COMMENT 'NULL = done automatically by the system',
+  `action` varchar(50) NOT NULL,
+  `entity_type` varchar(30) NOT NULL,
+  `entity_id` int(11) DEFAULT NULL,
+  `entity_ref` varchar(60) DEFAULT NULL,
+  `details` text DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`log_id`),
+  KEY `idx_activity_created` (`created_at`),
+  KEY `idx_activity_entity` (`entity_type`,`entity_id`),
+  KEY `idx_activity_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `activity_log`
+--
+
+LOCK TABLES `activity_log` WRITE;
+/*!40000 ALTER TABLE `activity_log` DISABLE KEYS */;
+/*!40000 ALTER TABLE `activity_log` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `cart_item`
+--
+
+DROP TABLE IF EXISTS `cart_item`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `cart_item` (
+  `customer_id` int(11) NOT NULL,
+  `part_id` int(11) NOT NULL,
+  `quantity` smallint(6) NOT NULL DEFAULT 1,
+  `added_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`customer_id`,`part_id`),
+  KEY `idx_cart_item_part` (`part_id`),
+  CONSTRAINT `fk_cart_item_customer` FOREIGN KEY (`customer_id`) REFERENCES `customer` (`customer_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_cart_item_part` FOREIGN KEY (`part_id`) REFERENCES `part` (`part_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `cart_item`
+--
+
+LOCK TABLES `cart_item` WRITE;
+/*!40000 ALTER TABLE `cart_item` DISABLE KEYS */;
+/*!40000 ALTER TABLE `cart_item` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `customer`
 --
 
@@ -42,7 +103,7 @@ CREATE TABLE `customer` (
   KEY `fk_customer_user` (`user_id`),
   KEY `idx_customer_user_status` (`user_id`,`status`),
   CONSTRAINT `fk_customer_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`user_id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -88,7 +149,7 @@ CREATE TABLE `invoice` (
   CONSTRAINT `fk_created_by_iv` FOREIGN KEY (`created_by`) REFERENCES `user` (`user_id`),
   CONSTRAINT `fk_customer_id_iv` FOREIGN KEY (`customer_id`) REFERENCES `customer` (`customer_id`),
   CONSTRAINT `fk_job_order_id_iv` FOREIGN KEY (`job_order_id`) REFERENCES `job_order` (`job_order_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=19 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -125,6 +186,7 @@ CREATE TABLE `job_order` (
   `completed_by` int(11) DEFAULT NULL,
   `cancellation_reason` text DEFAULT NULL,
   `cancelled_at` datetime DEFAULT NULL,
+  `cancelled_by` int(11) DEFAULT NULL,
   `requires_down_payment` tinyint(1) NOT NULL DEFAULT 0,
   `down_payment_amount` decimal(10,2) NOT NULL DEFAULT 0.00,
   PRIMARY KEY (`job_order_id`),
@@ -141,7 +203,7 @@ CREATE TABLE `job_order` (
   CONSTRAINT `fk_created_by_jo` FOREIGN KEY (`created_by`) REFERENCES `user` (`user_id`),
   CONSTRAINT `fk_customer_id_jo` FOREIGN KEY (`customer_id`) REFERENCES `customer` (`customer_id`),
   CONSTRAINT `fk_vehicle_id_jo` FOREIGN KEY (`vehicle_id`) REFERENCES `vehicle` (`vehicle_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -175,7 +237,7 @@ CREATE TABLE `job_order_part` (
   KEY `fk_part_id_jop` (`part_id`),
   CONSTRAINT `fk_job_order_id_jop` FOREIGN KEY (`job_order_id`) REFERENCES `job_order` (`job_order_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_part_id_jop` FOREIGN KEY (`part_id`) REFERENCES `part` (`part_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -207,7 +269,7 @@ CREATE TABLE `job_order_service` (
   KEY `fk_service_id_jos` (`service_id`),
   CONSTRAINT `fk_job_order_id_jos` FOREIGN KEY (`job_order_id`) REFERENCES `job_order` (`job_order_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_service_id_jos` FOREIGN KEY (`service_id`) REFERENCES `service` (`service_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -257,13 +319,49 @@ CREATE TABLE `part` (
 
 LOCK TABLES `part` WRITE;
 /*!40000 ALTER TABLE `part` DISABLE KEYS */;
-INSERT INTO `part` VALUES (2,'',NULL,'yig','Battery part',NULL,NULL,'piece',876.00,3,5,1,0,1,0,613.20,NULL,NULL);
-INSERT INTO `part` VALUES (3,'Electrical Parts & Supplies','Motolite','Capacitors','Common electrical supply used for motor, wiring, and repair support.','12V','Toyota','piece',500.00,3,4,3,0,1,1,300.00,'part-1777312816-ea5e6d58.png','Capacitors are electrical components commonly used to store and release electrical energy. In auto repair and electrical work, they may support motor operation, wiring repair, and other electrical maintenance needs.');
-INSERT INTO `part` VALUES (4,'Electrical Parts & Supplies','N/A','Switches','Selected switches used for automotive and electrical repair needs.','N/A','N/A','piece',200.00,3,4,3,0,1,1,100.00,'part-1777312876-eba2dd31.png','Automotive switches are used to control electrical circuits in vehicles. They may be used for lights, accessories, wipers, auxiliary controls, and other repair or replacement needs.');
-INSERT INTO `part` VALUES (5,'Electrical Parts &amp; Supplies','Motolite','Magnetic Wires','Supply item used for rewinding and related electrical repair work.','12V','Universal','piece',300.00,3,4,1,0,1,1,150.00,'part-1777312956-8a3f9b73.png','Magnetic wires are commonly used for rewinding motors, alternators, starters, and other electrical components. They support repair work that requires replacement or restoration of electrical coils.');
-INSERT INTO `part` VALUES (6,'Starter & Motor Parts','N/A','Starter Armatures','Starter-related component used for starter motor repair and replacement support.','N/A','N/A','piece',250.00,2,4,1,0,1,1,100.00,'part-1777313026-afdb8678.png','Starter armatures are internal starter motor components that help produce rotational force during engine starting. They are used when repairing or replacing damaged starter motor parts.');
-INSERT INTO `part` VALUES (7,'Steering & Suspension','555','Tie Rod End','Heavy-duty forged steel outer tie rod end replacement for Honda Civic 2006-2011. Restores steering precision.','Heavy duty steel','Honda Civic 2006-2011','pair',1850.00,3,4,3,0,1,1,1295.00,'part-1778936839-053e2e1a.webp','Premium aftermarket outer tie rod end manufactured by 555. Engineered with heavy-duty forged steel to restore precise steering response, eliminate steering wheel play, and prevent uneven tire wear. Designed to withstand harsh road conditions and heavy impacts. This assembly includes a pre-greased ball joint, durable weather-resistant dust boot, castle nut, and cotter pin for a complete, direct-fit OEM replacement. Highly recommended for vehicles frequently driven on rough or uneven terrain.');
+INSERT INTO `part` VALUES (3,'Electrical Parts & Supplies','Generic','Capacitors','Common electrical supply used for motor, wiring, and repair support.','Motor-start / run capacitor, 12V DC','Starter, alternator and blower motor repairs, most vehicles','piece',500.00,12,4,3,0,3,1,300.00,'part-capacitors.png','Capacitors are electrical components commonly used to store and release electrical energy. In auto repair and electrical work, they may support motor operation, wiring repair, and other electrical maintenance needs.');
+INSERT INTO `part` VALUES (4,'Electrical Parts & Supplies','Generic','Switches','Selected switches used for automotive and electrical repair needs.','12V DC rocker / toggle switch, 2-pin or 3-pin','Lights, horn, fog lamps and accessories, most vehicles','piece',200.00,15,5,3,0,3,1,100.00,'part-switches.png','Automotive switches are used to control electrical circuits in vehicles. They may be used for lights, accessories, wipers, auxiliary controls, and other repair or replacement needs.');
+INSERT INTO `part` VALUES (5,'Electrical Parts & Supplies','Generic','Magnetic Wires','Supply item used for rewinding and related electrical repair work.','Enamel-coated copper wire, sold by gauge (SWG)','Rewinding of starters, alternators and electric motors','roll',300.00,3,4,1,0,1,1,150.00,'part-magnetic-wires.png','Magnetic wires are commonly used for rewinding motors, alternators, starters, and other electrical components. They support repair work that requires replacement or restoration of electrical coils.');
+INSERT INTO `part` VALUES (6,'Starter & Motor Parts','Generic','Starter Armatures','Starter-related component used for starter motor repair and replacement support.','Replacement starter armature, sized per starter model','Toyota, Mitsubishi, Isuzu and similar starter motors; confirm the model at the shop','piece',250.00,2,3,1,0,1,1,100.00,'part-starter-armatures.png','Starter armatures are internal starter motor components that help produce rotational force during engine starting. They are used when repairing or replacing damaged starter motor parts. Bring the old armature or the vehicle model so the shop can match the size.');
+INSERT INTO `part` VALUES (7,'Steering & Suspension','555','Tie Rod End','Heavy-duty forged steel outer tie rod end replacement for Honda Civic 2006-2011. Restores steering precision.','Heavy duty steel','Honda Civic 2006-2011','pair',1850.00,6,2,2,0,2,1,1295.00,'part-tie-rod-end.png','Premium aftermarket outer tie rod end manufactured by 555. Engineered with heavy-duty forged steel to restore precise steering response, eliminate steering wheel play, and prevent uneven tire wear. Designed to withstand harsh road conditions and heavy impacts. This assembly includes a pre-greased ball joint, durable weather-resistant dust boot, castle nut, and cotter pin for a complete, direct-fit OEM replacement. Highly recommended for vehicles frequently driven on rough or uneven terrain.');
 /*!40000 ALTER TABLE `part` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `part_image`
+--
+
+DROP TABLE IF EXISTS `part_image`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `part_image` (
+  `part_image_id` int(11) NOT NULL AUTO_INCREMENT,
+  `part_id` int(11) NOT NULL,
+  `image` varchar(255) NOT NULL,
+  `sort_order` smallint(6) NOT NULL DEFAULT 0,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`part_image_id`),
+  KEY `idx_part_image_part` (`part_id`,`sort_order`),
+  CONSTRAINT `fk_part_image_part` FOREIGN KEY (`part_id`) REFERENCES `part` (`part_id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `part_image`
+--
+
+LOCK TABLES `part_image` WRITE;
+/*!40000 ALTER TABLE `part_image` DISABLE KEYS */;
+INSERT INTO `part_image` VALUES (1,3,'part-capacitors-2.png',1,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (2,3,'part-capacitors-3.png',2,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (3,4,'part-switches-2.png',1,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (4,4,'part-switches-3.png',2,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (5,5,'part-magnetic-wires-2.png',1,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (6,6,'part-starter-armatures-2.png',1,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (7,6,'part-starter-armatures-3.png',2,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (8,7,'part-tie-rod-end-2.png',1,'2026-10-05 12:00:00');
+INSERT INTO `part_image` VALUES (9,7,'part-tie-rod-end-3.png',2,'2026-10-05 12:00:00');
+/*!40000 ALTER TABLE `part_image` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -289,10 +387,13 @@ CREATE TABLE `part_order` (
   `payment_notes` text DEFAULT NULL,
   `total_amount` decimal(10,2) NOT NULL DEFAULT 0.00,
   `status` enum('Pending','Approved','Ready for Pickup','Completed','Cancelled') NOT NULL DEFAULT 'Pending',
+  `cancellation_reason` text DEFAULT NULL,
+  `cancelled_at` datetime DEFAULT NULL,
+  `cancelled_by` int(11) DEFAULT NULL,
   PRIMARY KEY (`order_id`),
   KEY `customer_id` (`customer_id`),
   CONSTRAINT `part_order_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `customer` (`customer_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -322,7 +423,7 @@ CREATE TABLE `part_order_item` (
   KEY `part_id` (`part_id`),
   CONSTRAINT `part_order_item_ibfk_1` FOREIGN KEY (`order_id`) REFERENCES `part_order` (`order_id`) ON DELETE CASCADE,
   CONSTRAINT `part_order_item_ibfk_2` FOREIGN KEY (`part_id`) REFERENCES `part` (`part_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -353,7 +454,7 @@ CREATE TABLE `password_reset` (
   UNIQUE KEY `idx_password_reset_token` (`token_hash`),
   KEY `idx_password_reset_user` (`user_id`),
   CONSTRAINT `fk_password_reset_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`user_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -387,7 +488,7 @@ CREATE TABLE `payment` (
   KEY `fk_received_by_pm` (`received_by`),
   CONSTRAINT `fk_invoice_id_pm` FOREIGN KEY (`invoice_id`) REFERENCES `invoice` (`invoice_id`),
   CONSTRAINT `fk_received_by_pm` FOREIGN KEY (`received_by`) REFERENCES `user` (`user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -486,7 +587,7 @@ CREATE TABLE `pos_item` (
   KEY `fk_part_id_pi` (`part_id`),
   CONSTRAINT `fk_part_id_pi` FOREIGN KEY (`part_id`) REFERENCES `part` (`part_id`),
   CONSTRAINT `fk_pos_id_pi` FOREIGN KEY (`pos_id`) REFERENCES `pos_transaction` (`pos_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -521,6 +622,9 @@ CREATE TABLE `pos_transaction` (
   `status` enum('Pending','Completed','Cancelled') NOT NULL DEFAULT 'Completed',
   `payment_method` enum('Cash','Bank','Bank Transfer','Cheque','GCash') NOT NULL,
   `reference_number` varchar(50) DEFAULT NULL,
+  `void_reason` text DEFAULT NULL,
+  `voided_at` datetime DEFAULT NULL,
+  `voided_by` int(11) DEFAULT NULL,
   PRIMARY KEY (`pos_id`),
   KEY `fk_invoice_id_pt` (`invoice_id`),
   KEY `fk_customer_id_pt` (`customer_id`),
@@ -530,7 +634,7 @@ CREATE TABLE `pos_transaction` (
   CONSTRAINT `fk_invoice_id_pt` FOREIGN KEY (`invoice_id`) REFERENCES `invoice` (`invoice_id`),
   CONSTRAINT `fk_processed_by_pt` FOREIGN KEY (`processed_by`) REFERENCES `user` (`user_id`),
   CONSTRAINT `fk_vehicle_id_pt` FOREIGN KEY (`vehicle_id`) REFERENCES `vehicle` (`vehicle_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -588,7 +692,7 @@ CREATE TABLE `service` (
   `features` text DEFAULT NULL,
   PRIMARY KEY (`service_id`),
   KEY `idx_service_category_active` (`category`,`is_active`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -597,12 +701,47 @@ CREATE TABLE `service` (
 
 LOCK TABLES `service` WRITE;
 /*!40000 ALTER TABLE `service` DISABLE KEYS */;
-INSERT INTO `service` VALUES (1,'Alternator Repair','Rewinding Services',900.00,0,0,'Checks and repairs alternators to help ensure the vehicle battery charges properly while the engine is running.',1,'service-1777313156-beede1ed.png','Alternator repair helps restore proper charging performance for the vehicle battery and electrical system. This service may include inspection, diagnosis, component repair, and testing to ensure the alternator is working correctly.','Inspection\r\nAlternator component repair\r\nPost-maintenance testing');
-INSERT INTO `service` VALUES (2,'Starter Repair','Rewinding Services',1500.00,0,0,'Resolves starter-related problems that prevent the engine from starting properly.',1,'service-1777313219-75673d7f.png','Starter repair focuses on diagnosing and fixing starter motor problems that may prevent the engine from starting. The service may include inspection, replacement of faulty parts, cleaning, repair, and final function testing.','Starter inspection\r\nRepair or replacement of faulty parts\r\nFunction testing');
-INSERT INTO `service` VALUES (3,'Radiator Repair','Rewinding Services',3000.00,0,0,'Handles radiator leaks and overheating issues to help maintain stable engine temperature.',1,'service-1777313287-e1a38bf9.png','Radiator repair helps address cooling system issues such as leaks, overheating, and reduced cooling performance. The service may include leak detection, repair, and cooling performance checks.','Leak detection\r\nRadiator repair\r\nCooling performance check');
-INSERT INTO `service` VALUES (4,'Engine Overhaul','Other Services',3000.00,0,0,'Checks and repairs major engine-related issues to restore performance and reliability.',1,'service-1777313350-5f9ca8af.png','Engine overhaul involves inspecting and repairing major engine components to help restore performance, reliability, and safe operation. Actual recommendations depend on the vehicle condition after inspection.\r\nFeatures:','Engine inspection\r\nRepair recommendations\r\nMechanical checking');
-INSERT INTO `service` VALUES (5,'rtj','Rewinding Serivces',3462.00,1,2,'vsr',1,'','sgr','srg');
+INSERT INTO `service` VALUES (1,'Alternator Repair','Rewinding Services',900.00,0,0,'Checks and repairs alternators to help ensure the vehicle battery charges properly while the engine is running.',1,'service-alternator-repair.jpg','Alternator repair helps restore proper charging performance for the vehicle battery and electrical system. This service may include inspection, diagnosis, component repair, and testing to ensure the alternator is working correctly.','Inspection\r\nAlternator component repair\r\nPost-maintenance testing');
+INSERT INTO `service` VALUES (2,'Starter Repair','Rewinding Services',1500.00,0,0,'Resolves starter-related problems that prevent the engine from starting properly.',1,'service-starter-repair.jpg','Starter repair focuses on diagnosing and fixing starter motor problems that may prevent the engine from starting. The service may include inspection, replacement of faulty parts, cleaning, repair, and final function testing.','Starter inspection\r\nRepair or replacement of faulty parts\r\nFunction testing');
+INSERT INTO `service` VALUES (3,'Radiator Repair','Rewinding Services',3000.00,0,0,'Handles radiator leaks and overheating issues to help maintain stable engine temperature.',1,'service-radiator-repair.jpg','Radiator repair helps address cooling system issues such as leaks, overheating, and reduced cooling performance. The service may include leak detection, repair, and cooling performance checks.','Leak detection\r\nRadiator repair\r\nCooling performance check');
+INSERT INTO `service` VALUES (4,'Engine Overhaul','Other Services',3000.00,0,0,'Checks and repairs major engine-related issues to restore performance and reliability.',1,'service-engine-overhaul.jpg','Engine overhaul involves inspecting and repairing major engine components to help restore performance, reliability, and safe operation. Actual recommendations depend on the vehicle condition after inspection.\r\nFeatures:','Engine inspection\r\nRepair recommendations\r\nMechanical checking');
 /*!40000 ALTER TABLE `service` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_image`
+--
+
+DROP TABLE IF EXISTS `service_image`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `service_image` (
+  `service_image_id` int(11) NOT NULL AUTO_INCREMENT,
+  `service_id` int(11) NOT NULL,
+  `image` varchar(255) NOT NULL,
+  `sort_order` smallint(6) NOT NULL DEFAULT 0,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`service_image_id`),
+  KEY `idx_service_image_service` (`service_id`,`sort_order`),
+  CONSTRAINT `fk_service_image_service` FOREIGN KEY (`service_id`) REFERENCES `service` (`service_id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_image`
+--
+
+LOCK TABLES `service_image` WRITE;
+/*!40000 ALTER TABLE `service_image` DISABLE KEYS */;
+INSERT INTO `service_image` VALUES (1,1,'service-alternator-repair-2.jpg',1,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (2,1,'service-alternator-repair-3.jpg',2,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (3,2,'service-starter-repair-2.jpg',1,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (4,2,'service-starter-repair-3.jpg',2,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (5,3,'service-radiator-repair-2.jpg',1,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (6,3,'service-radiator-repair-3.jpg',2,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (7,4,'service-engine-overhaul-2.jpg',1,'2026-10-05 12:00:00');
+INSERT INTO `service_image` VALUES (8,4,'service-engine-overhaul-3.jpg',2,'2026-10-05 12:00:00');
+/*!40000 ALTER TABLE `service_image` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -649,7 +788,7 @@ CREATE TABLE `service_request` (
   CONSTRAINT `fk_sr_reviewed_by` FOREIGN KEY (`reviewed_by`) REFERENCES `user` (`user_id`) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_sr_service` FOREIGN KEY (`service_id`) REFERENCES `service` (`service_id`) ON UPDATE CASCADE,
   CONSTRAINT `fk_sr_vehicle` FOREIGN KEY (`vehicle_id`) REFERENCES `vehicle` (`vehicle_id`) ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -720,9 +859,9 @@ CREATE TABLE `supplier` (
 
 LOCK TABLES `supplier` WRITE;
 /*!40000 ALTER TABLE `supplier` DISABLE KEYS */;
-INSERT INTO `supplier` VALUES (1,'test','Lav.lee','leelav.viin@gmail.com','91435544','',1);
-INSERT INTO `supplier` VALUES (2,'dalig','Lav ash Ash','leela090104@gmail.com','12341234','baguio',1);
-INSERT INTO `supplier` VALUES (3,'Castroil Car Workshop','Lav ash Ash','20236455@s.ubaguio.edu','09260432900','La Union',1);
+INSERT INTO `supplier` VALUES (1,'Ilocos Auto Electrical Supply','Lorna Agustin','leelav.viin@gmail.com','09171230001','San Fernando City, La Union',1);
+INSERT INTO `supplier` VALUES (2,'Northern Luzon Motor Parts','Danilo Cruz','leela090104@gmail.com','09281230002','Baguio City, Benguet',1);
+INSERT INTO `supplier` VALUES (3,'La Union Auto Parts Trading','Celia Ramos','20236455@s.ubaguio.edu','09391230003','Agoo, La Union',1);
 /*!40000 ALTER TABLE `supplier` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -745,6 +884,7 @@ CREATE TABLE `user` (
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `is_verified` tinyint(1) NOT NULL DEFAULT 0,
   `verification_token` varchar(255) DEFAULT NULL,
+  `verification_code` varchar(64) DEFAULT NULL,
   `verification_expires_at` datetime DEFAULT NULL,
   `email_verified_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
@@ -753,7 +893,7 @@ CREATE TABLE `user` (
   PRIMARY KEY (`user_id`),
   UNIQUE KEY `idx_user_username` (`username`),
   UNIQUE KEY `idx_user_email` (`email`)
-) ENGINE=InnoDB AUTO_INCREMENT=20 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -793,7 +933,7 @@ CREATE TABLE `vehicle` (
   UNIQUE KEY `idx_vehicle_vin` (`vin`),
   KEY `fk_customer_id` (`customer_id`),
   CONSTRAINT `fk_customer_id` FOREIGN KEY (`customer_id`) REFERENCES `customer` (`customer_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --

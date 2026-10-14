@@ -1,5 +1,60 @@
 <?php
 $basePath = '../';
+$activePage = '';
+$lastUpdated = 'October 2026';
+
+// Each section: a title and either 'text' (a paragraph) or 'list' (bullet points).
+$sections = [
+    [
+        'title' => 'What we collect',
+        'list' => [
+            'Your name and account details.',
+            'Email address, phone number and other contact details.',
+            'Vehicle information needed for requests and repair records.',
+            'Service requests, schedules and status records.',
+            'Parts reservation and payment details, when applicable.',
+        ],
+    ],
+    [
+        'title' => 'How we use it',
+        'list' => [
+            'To create and manage your account.',
+            'To process service requests and parts reservations.',
+            'To keep your vehicle repair and maintenance records.',
+            'To show you request updates and repair status, and to send account emails such as verification and password resets.',
+            'To improve the website, customer service and shop operations.',
+        ],
+    ],
+    [
+        'title' => 'Service records',
+        'text' => 'Request history, vehicle service details and repair records are kept so you and authorized shop staff can track requests, follow repair progress and plan future maintenance.',
+    ],
+    [
+        'title' => 'Protection',
+        'text' => 'The shop uses reasonable security practices to protect your information from unauthorized access, misuse, change or disclosure. Only authorized staff can see customer and service records.',
+    ],
+    [
+        'title' => 'Sharing',
+        'text' => 'Your information is never sold. It is shared only when needed to run the system, process a service, follow the law, or resolve a concern about your request, repair or order.',
+    ],
+    [
+        'title' => 'Your part',
+        'text' => 'Give accurate information and keep your password private. Report suspicious account activity or wrong records as soon as possible.',
+    ],
+    [
+        'title' => 'Corrections',
+        'text' => 'You can ask the shop to correct personal, contact, vehicle or service information that is wrong.',
+    ],
+    [
+        'title' => 'Changes',
+        'text' => 'This policy may change when the system, services or data handling change. Using the website after an update means you accept the latest version.',
+    ],
+];
+
+function e($value)
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
 ?>
 
 <!DOCTYPE html>
@@ -8,76 +63,145 @@ $basePath = '../';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Privacy Policy | Norily's Vehicle Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
+    <script>document.documentElement.classList.add('js');window.__motionFallback=setTimeout(function(){document.documentElement.classList.add('reveal-all');},3000);</script>
+    <script src="../assets/js/motion.js?v=<?= filemtime(__DIR__ . '/../assets/js/motion.js') ?>" defer></script>
 
     <style>
-        .legal-page {
-            background: var(--white);
-            border-top: 1px solid var(--border-light);
+        .terms-page {
+            background: var(--paper);
+            padding-bottom: 6rem;
         }
 
-        .legal-wrapper {
-            max-width: 980px;
-            margin: 0 auto;
-            padding: 3.5rem 1rem 5rem;
+        .terms-wrap {
+            max-width: 1000px;
         }
 
-        .legal-title {
-            color: var(--black);
-            font-size: clamp(1.5rem, 2vw, 1rem);
-            font-weight: 900;
-            letter-spacing: 4px;
+        .terms-crumbs {
+            display: flex;
+            gap: 0.6rem;
+            list-style: none;
+            padding: 0;
+            margin: 1.5rem 0 3rem;
+            color: var(--ink-2);
+            font-size: var(--fs-crumb);
+            letter-spacing: 0.14em;
             text-transform: uppercase;
-            text-align: center;
-            margin-bottom: 4rem;
         }
 
-        .legal-intro,
-        .legal-section p,
-        .legal-section li {
-            color: var(--black);
-            font-size: 1rem;
-            line-height: 1.8;
+        .terms-crumbs a {
+            color: var(--ink-2);
+            text-decoration: none;
         }
 
-        .legal-intro {
-            margin-bottom: 2.5rem;
+        .terms-crumbs a:hover {
+            color: var(--ink);
         }
 
-        .legal-section {
-            margin-bottom: 2.2rem;
+        .terms-crumbs li + li::before {
+            content: "/";
+            margin-right: 0.6rem;
         }
 
-        .legal-section h2 {
-            color: var(--black);
-            font-size: 1rem;
-            font-weight: 900;
+        .wide-heading {
+            color: var(--ink);
+            font-weight: 400;
+            font-stretch: 125%;
             text-transform: uppercase;
-            letter-spacing: 2px;
+            line-height: 0.95;
+            margin: 0;
+        }
+
+        /* ---------- Hero ---------- */
+        .terms-hero {
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--ink);
+        }
+
+        .terms-hero h1 {
+            font-size: var(--fs-page-title);
+            overflow-wrap: anywhere;
+        }
+
+        /* Sits on its own line under the title, with clear space above it */
+        .terms-updated {
+            display: block;
+            color: var(--ink-2);
+            font-size: 0.75rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            text-align: right;
+            margin: 2rem 0 0;
+        }
+
+        /* ---------- Body ---------- */
+        .terms-body {
+            max-width: 640px;
+            margin: 2.5rem auto 0;
+        }
+
+        .terms-intro {
+            color: var(--ink);
+            font-size: 1.15rem;
+            line-height: 1.6;
+            margin-bottom: 0.5rem;
+        }
+
+        .terms-section {
+            padding: 2.25rem 0 2.5rem;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .terms-section h2 {
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            color: var(--ink);
+            font-size: clamp(1.15rem, 2vw, 1.35rem);
+            font-weight: 400;
+            font-stretch: 125%;
+            text-transform: uppercase;
             margin-bottom: 1rem;
         }
 
-        .legal-section ul {
-            margin: 0.5rem 0 0;
-            padding-left: 1.4rem;
+        .terms-number {
+            color: var(--ink-2);
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 0.75rem;
+            font-stretch: normal;
         }
 
-        .legal-updated {
-            color: var(--muted-gray);
-            font-size: 0.9rem;
-            margin-top: 3rem;
-            text-align: center;
+        .terms-section p,
+        .terms-section li {
+            color: var(--ink);
+            font-size: 0.95rem;
+            line-height: 1.65;
+        }
+
+        .terms-section p {
+            margin: 0;
+        }
+
+        .terms-section ul {
+            margin: 0;
+            padding-left: 1.1rem;
+        }
+
+        .terms-section li + li {
+            margin-top: 0.5rem;
         }
 
         @media (max-width: 575.98px) {
-            .legal-wrapper {
-                padding: 2.5rem 1rem 4rem;
+            .terms-updated {
+                text-align: left;
+                margin-top: 1.25rem;
             }
 
-            .legal-title {
-                margin-bottom: 2rem;
+            .terms-intro {
+                font-size: 1.05rem;
             }
         }
     </style>
@@ -86,100 +210,46 @@ $basePath = '../';
 
 <?php include '../partials/public-navbar.php'; ?>
 
-<main class="legal-page">
-    <section class="legal-wrapper">
-        <h1 class="legal-title">Privacy Policy</h1>
+<main class="terms-page">
+    <div class="container terms-wrap">
+        <nav aria-label="Breadcrumb">
+            <ol class="terms-crumbs">
+                <li><a href="../" class="link-grow">Home</a></li>
+                <li aria-current="page">Privacy policy</li>
+            </ol>
+        </nav>
 
-        <p class="legal-intro">
-            Your privacy is important to Norily's Vehicle Repair Shop. This Privacy Policy explains how the
-            Digital Auto Services and Parts Management System collects, uses, stores, and protects user
-            information when customers browse services, register an account, book repair services, or manage
-            related vehicle service records.
-        </p>
+        <header class="terms-hero">
+            <h1 class="wide-heading">Privacy<br>Policy</h1>
+            <p class="terms-updated">Last updated &middot; <?= e($lastUpdated) ?></p>
+        </header>
 
-        <div class="legal-section">
-            <h2>Information We Collect</h2>
-            <p>We may collect the following information when you use the website:</p>
-            <ul>
-                <li>Name and account details.</li>
-                <li>Email address, phone number, and other contact information.</li>
-                <li>Vehicle information needed for service booking and repair records.</li>
-                <li>Service booking details, repair requests, schedules, and service status records.</li>
-                <li>Parts or supply-related transaction details, when applicable.</li>
-                <li>Messages, inquiries, or support requests submitted through the system.</li>
-            </ul>
-        </div>
-
-        <div class="legal-section">
-            <h2>Use of Personal Information</h2>
-            <p>Collected information may be used for the following purposes:</p>
-            <ul>
-                <li>Creating and managing customer accounts.</li>
-                <li>Processing service booking requests.</li>
-                <li>Managing vehicle repair and maintenance records.</li>
-                <li>Communicating booking updates, service status, and shop notifications.</li>
-                <li>Supporting parts and supplies management.</li>
-                <li>Improving system functionality, customer service, and shop operations.</li>
-            </ul>
-        </div>
-
-        <div class="legal-section">
-            <h2>Booking and Service Records</h2>
-            <p>
-                The system may store booking history, vehicle service details, and repair-related records to help
-                customers and authorized shop personnel track service requests, monitor repair progress, and manage
-                future maintenance needs.
+        <div class="terms-body">
+            <p class="terms-intro">
+                This explains how the shop's website collects, uses, stores and protects your information
+                when you browse, register, request a service or manage your vehicle records.
             </p>
-        </div>
 
-        <div class="legal-section">
-            <h2>Data Protection</h2>
-            <p>
-                We apply reasonable security practices to help protect user information against unauthorized access,
-                misuse, alteration, or disclosure. Access to customer and service records should be limited to
-                authorized users and personnel only.
-            </p>
-        </div>
+            <?php foreach ($sections as $index => $section): ?>
+                <section class="terms-section" data-reveal id="term-<?= $index + 1 ?>">
+                    <h2>
+                        <span class="terms-number"><?= str_pad($index + 1, 2, '0', STR_PAD_LEFT) ?></span>
+                        <?= e($section['title']) ?>
+                    </h2>
 
-        <div class="legal-section">
-            <h2>Information Sharing</h2>
-            <p>
-                Personal information is not sold to third parties. User information may only be shared when necessary
-                for system operation, service processing, legal compliance, or when required to resolve customer
-                concerns related to bookings, repairs, or parts transactions.
-            </p>
+                    <?php if (!empty($section['list'])): ?>
+                        <ul>
+                            <?php foreach ($section['list'] as $item): ?>
+                                <li><?= e($item) ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php else: ?>
+                        <p><?= e($section['text']) ?></p>
+                    <?php endif; ?>
+                </section>
+            <?php endforeach; ?>
         </div>
-
-        <div class="legal-section">
-            <h2>User Responsibility</h2>
-            <p>
-                Users are responsible for providing accurate information and protecting their login credentials.
-                Customers should avoid sharing account passwords and should report suspicious account activity or
-                incorrect records as soon as possible.
-            </p>
-        </div>
-
-        <div class="legal-section">
-            <h2>Data Updates and Correction</h2>
-            <p>
-                Users may request correction of inaccurate personal, contact, vehicle, booking, or service-related
-                information. Keeping records accurate helps the shop provide better service and avoid booking or
-                communication issues.
-            </p>
-        </div>
-
-        <div class="legal-section">
-            <h2>Changes to This Policy</h2>
-            <p>
-                This Privacy Policy may be updated when the system, services, or data handling practices change.
-                Continued use of the website means that the user acknowledges the latest version of this policy.
-            </p>
-        </div>
-
-        <p class="legal-updated">
-            Last updated: April 2026
-        </p>
-    </section>
+    </div>
 </main>
 
 <?php include '../partials/public-footer.php'; ?>

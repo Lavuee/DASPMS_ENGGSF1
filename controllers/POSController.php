@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../models/POS.php';
+require_once '../includes/activity_log.php';
 
 requirePermission('pos.use', '../views/login.php');
 
@@ -110,6 +111,28 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action']) && $_POST['
 
     } catch (Exception $e) {
         $_SESSION['error_message'] = "System Error: " . $e->getMessage();
+    }
+
+    header("Location: ../views/pos.php");
+    exit;
+}
+
+// Void a sale entered by mistake (SRS: Owner only). Keeps the sale number, restores stock, logs it.
+if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_POST['action'] ?? '') === 'void') {
+    if (!can('pos.void')) {
+        $_SESSION['error_message'] = "Only the Owner can void a sale.";
+    } else {
+        $posId = intval($_POST['pos_id'] ?? 0);
+        $reason = trim($_POST['void_reason'] ?? '');
+        $result = $pos->void($posId, intval($_SESSION['user_id']), $reason);
+
+        if ($result['success']) {
+            $receiptNo = 'POS-' . str_pad($posId, 5, '0', STR_PAD_LEFT);
+            logActivity($db, 'Voided sale', 'POS sale', $posId, $receiptNo, 'Amount ₱' . number_format($result['total_amount'], 2) . '. Reason: ' . $reason);
+            $_SESSION['success_message'] = $receiptNo . ' voided. The parts are back in stock.';
+        } else {
+            $_SESSION['error_message'] = $result['message'];
+        }
     }
 
     header("Location: ../views/pos.php");

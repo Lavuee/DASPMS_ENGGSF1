@@ -4,8 +4,16 @@ require_once __DIR__ . '/../includes/auth.php';
 requirePermission('dashboard.owner');
 
 require_once '../config/Database.php';
+require_once '../includes/business_rules.php';
+require_once '../includes/staff_ui.php';
 
 $db = (new Database())->getConnection();
+
+// Release unpaid web-order reservations older than RESERVATION_HOLD_DAYS (SRS)
+require_once '../models/PartOrder.php';
+$partOrderModel = new PartOrder($db);
+$partOrderModel->expireStaleReservations();
+$expiringOrders = $partOrderModel->listExpiringSoon(24);
 
 $activeJobs = $db->query("
     SELECT COUNT(*)
@@ -70,22 +78,60 @@ $cancelledJobs = $db->query("
     WHERE status = 'Cancelled'
 ")->fetchColumn() ?: 0;
 
-$totalStatusJobs = $pendingJobs + $inProgressJobs + $readyForPickupJobs + $completedToday + $cancelledJobs;
+$cancelledToday = $db->query("
+    SELECT COUNT(*)
+    FROM job_order
+    WHERE status = 'Cancelled'
+    AND DATE(cancelled_at) = CURDATE()
+")->fetchColumn() ?: 0;
 
-function getStatusPercent($value, $total) {
-    return ($total > 0) ? round(($value / $total) * 100) : 0;
-}
+$lastCompletedAt = $db->query("
+    SELECT MAX(date_completed)
+    FROM job_order
+    WHERE status = 'Completed'
+    AND DATE(date_completed) = CURDATE()
+")->fetchColumn();
 
-/* Recent / Active Job Orders */
-$stmtJobs = $db->query("
-    SELECT jo.*, c.first_name, c.last_name, v.plate_number, v.make, v.model
-    FROM job_order jo
-    JOIN customer c ON jo.customer_id = c.customer_id
-    JOIN vehicle v ON jo.vehicle_id = v.vehicle_id
-    WHERE jo.status != 'Completed'
-    ORDER BY jo.date_created DESC
-    LIMIT 5
+/* Collected today, split by payment method (invoice payments + completed POS sales) */
+$collectedByMethod = [];
+$stmtCollected = $db->query("
+    SELECT method, SUM(amount) AS total
+    FROM (
+        SELECT payment_method AS method, amount
+        FROM payment
+        WHERE DATE(payment_date) = CURDATE()
+        UNION ALL
+        SELECT payment_method AS method, total_amount AS amount
+        FROM pos_transaction
+        WHERE status = 'Completed'
+        AND DATE(transaction_date) = CURDATE()
+    ) collected
+    GROUP BY method
 ");
+foreach ($stmtCollected->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    // 'Bank' and 'Bank Transfer' are the same method stored two ways.
+    $method = $row['method'] === 'Bank' ? 'Bank Transfer' : $row['method'];
+    $collectedByMethod[$method] = ($collectedByMethod[$method] ?? 0) + floatval($row['total']);
+}
+$collectedToday = array_sum($collectedByMethod);
+$methodOrder = ['Cash', 'GCash', 'Bank Transfer', 'Cheque'];
+$methodTone = ['Cash' => 'cash', 'GCash' => 'gcash', 'Bank Transfer' => 'bank', 'Cheque' => 'cheque'];
+
+/* Needs your attention: overdue repair bills, low stock, and requests waiting for approval */
+$overdueBills = $db->query("
+    SELECT i.invoice_number, i.balance_due, i.due_date, jo.job_order_number, c.first_name, c.last_name
+    FROM invoice i
+    LEFT JOIN job_order jo ON jo.job_order_id = i.job_order_id
+    LEFT JOIN customer c ON c.customer_id = i.customer_id
+    WHERE i.invoice_type = 'Service'
+    AND i.payment_status <> 'Paid'
+    AND i.is_voided = 0
+    AND i.due_date IS NOT NULL
+    AND i.due_date < CURDATE()
+    ORDER BY i.due_date ASC
+    LIMIT 5
+")->fetchAll(PDO::FETCH_ASSOC);
+$overdueCount = countOverdueServiceInvoices($db);
 
 /* Low Stock Alerts */
 $stmtStock = $db->query("
@@ -95,1027 +141,398 @@ $stmtStock = $db->query("
     ORDER BY quantity_on_hand ASC
     LIMIT 5
 ");
+$lowStockParts = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
+
+$pendingWebOrders = $db->query("
+    SELECT po.order_id, po.preferred_pickup_date, c.first_name, c.last_name,
+           GROUP_CONCAT(CONCAT(p.part_name, ' × ', poi.quantity) ORDER BY poi.order_item_id SEPARATOR ', ') AS items
+    FROM part_order po
+    LEFT JOIN customer c ON c.customer_id = po.customer_id
+    LEFT JOIN part_order_item poi ON poi.order_id = po.order_id
+    LEFT JOIN part p ON p.part_id = poi.part_id
+    WHERE po.status = 'Pending'
+    GROUP BY po.order_id
+    ORDER BY po.order_date ASC
+    LIMIT 3
+")->fetchAll(PDO::FETCH_ASSOC);
+
+$pendingRequests = $db->query("
+    SELECT sr.request_number, sr.preferred_appointment_date, c.first_name, c.last_name, s.service_name
+    FROM service_request sr
+    LEFT JOIN customer c ON c.customer_id = sr.customer_id
+    LEFT JOIN service s ON s.service_id = sr.service_id
+    WHERE sr.status = 'Pending'
+    ORDER BY sr.created_at ASC
+    LIMIT 3
+")->fetchAll(PDO::FETCH_ASSOC);
+
+$attentionCount = count($overdueBills) + count($lowStockParts) + count($pendingWebOrders) + count($pendingRequests) + count($expiringOrders);
+
+/* Recent / Active Job Orders, with the invoice (if any) for the payment columns */
+$stmtJobs = $db->query("
+    SELECT jo.*, c.first_name, c.last_name, v.plate_number, v.make, v.model,
+           i.payment_status AS invoice_status, i.balance_due AS invoice_balance,
+           COALESCE(parts.parts_total, 0) AS parts_total
+    FROM job_order jo
+    JOIN customer c ON jo.customer_id = c.customer_id
+    JOIN vehicle v ON jo.vehicle_id = v.vehicle_id
+    LEFT JOIN invoice i ON i.job_order_id = jo.job_order_id AND i.is_voided = 0
+    LEFT JOIN (
+        SELECT job_order_id, SUM(subtotal) AS parts_total
+        FROM job_order_part
+        GROUP BY job_order_id
+    ) parts ON parts.job_order_id = jo.job_order_id
+    WHERE jo.status != 'Completed'
+    ORDER BY jo.date_created DESC
+    LIMIT 5
+");
+$recentJobs = $stmtJobs->fetchAll(PDO::FETCH_ASSOC);
+
+/* Collected this week: the last 7 days, today last */
+$weekDays = [];
+for ($i = 6; $i >= 0; $i--) {
+    $day = date('Y-m-d', strtotime("-$i days"));
+    $weekDays[$day] = ['total' => 0, 'service' => 0, 'parts' => 0];
+}
+$weekStart = array_key_first($weekDays);
+
+$stmtWeek = $db->prepare("
+    SELECT DATE(p.payment_date) AS day, i.invoice_type, SUM(p.amount) AS total
+    FROM payment p
+    JOIN invoice i ON i.invoice_id = p.invoice_id
+    WHERE DATE(p.payment_date) >= ?
+    GROUP BY DATE(p.payment_date), i.invoice_type
+");
+$stmtWeek->execute([$weekStart]);
+foreach ($stmtWeek->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    if (!isset($weekDays[$row['day']])) continue;
+    $key = $row['invoice_type'] === 'Service' ? 'service' : 'parts';
+    $weekDays[$row['day']][$key] += floatval($row['total']);
+    $weekDays[$row['day']]['total'] += floatval($row['total']);
+}
+
+$stmtWeekPos = $db->prepare("
+    SELECT DATE(transaction_date) AS day, SUM(total_amount) AS total
+    FROM pos_transaction
+    WHERE status = 'Completed'
+    AND DATE(transaction_date) >= ?
+    GROUP BY DATE(transaction_date)
+");
+$stmtWeekPos->execute([$weekStart]);
+foreach ($stmtWeekPos->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    if (!isset($weekDays[$row['day']])) continue;
+    $weekDays[$row['day']]['parts'] += floatval($row['total']);
+    $weekDays[$row['day']]['total'] += floatval($row['total']);
+}
+
+$weekTotal = array_sum(array_column($weekDays, 'total'));
+$weekService = array_sum(array_column($weekDays, 'service'));
+$weekMax = max(array_column($weekDays, 'total')) ?: 1;
+$servicePercent = $weekTotal > 0 ? round($weekService / $weekTotal * 100) : 0;
 
 $adminName = $_SESSION['first_name'] ?? 'Admin';
+$hour = intval(date('H'));
+$greeting = $hour < 12 ? 'Morning' : ($hour < 18 ? 'Afternoon' : 'Evening');
+
+// Payment column for a job: the invoice status once billed, otherwise not billed yet.
+function dashJobPayment(array $job) {
+    if (!empty($job['invoice_status'])) {
+        return cpBadge($job['invoice_status']);
+    }
+
+    return '<span class="st done">Not billed yet</span>';
+}
+
+// Balance for a job: the invoice balance once billed, otherwise the current estimate.
+function dashJobBalance(array $job) {
+    if ($job['invoice_balance'] !== null) {
+        return floatval($job['invoice_balance']);
+    }
+
+    if (floatval($job['final_cost'] ?? 0) > 0) {
+        return floatval($job['final_cost']);
+    }
+
+    return floatval($job['estimated_cost'] ?? 0) + floatval($job['parts_total'] ?? 0);
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard - Norily's Repair Shop</title>
+    <title>Owner Dashboard - Norily's Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="../assets/css/style.css">
-
-    <style>
-        .main-content {
-            overflow-x: hidden;
-        }
-
-        .owner-dashboard {
-            width: 100%;
-            max-width: 100%;
-            display: flex;
-            flex-direction: column;
-            gap: 1.25rem;
-        }
-
-        .dashboard-topbar {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 0.2rem;
-        }
-
-        .dashboard-title-block h2 {
-            font-size: 2rem;
-            font-weight: 900;
-            margin-bottom: 0.25rem;
-            color: var(--dashboard-text-main);
-            line-height: 1.1;
-        }
-
-        .dashboard-title-block p {
-            margin-bottom: 0;
-            color: var(--dashboard-text-muted);
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-
-        .dashboard-tools {
-            display: flex;
-            align-items: center;
-            gap: 0.65rem;
-            flex-wrap: wrap;
-            justify-content: flex-end;
-        }
-
-        .dashboard-search {
-            min-width: 270px;
-            height: 44px;
-            background: rgba(255, 255, 255, 0.62);
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 999px;
-            padding: 0.58rem 0.95rem;
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
-            color: var(--dashboard-text-muted);
-            box-shadow: none;
-        }
-
-        .dashboard-search input {
-            border: none;
-            outline: none;
-            background: transparent;
-            width: 100%;
-            font-size: 0.9rem;
-            color: var(--dashboard-text-main);
-        }
-
-        .dashboard-search:focus-within {
-            border-color: rgba(245, 197, 24, 0.65);
-            box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.12);
-            background: rgba(255, 255, 255, 0.90);
-        }
-
-        .dashboard-date-pill {
-            height: 44px;
-            background: rgba(255, 255, 255, 0.56);
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 999px;
-            padding: 0.58rem 0.95rem;
-            color: var(--dashboard-text-muted);
-            font-size: 0.9rem;
-            font-weight: 800;
-            white-space: nowrap;
-            display: inline-flex;
-            align-items: center;
-            box-shadow: none;
-        }
-
-        .dashboard-main-btn,
-        .dashboard-outline-btn {
-            min-height: 44px;
-            border-radius: 12px;
-            font-size: 0.9rem;
-            font-weight: 900;
-            padding: 0.55rem 0.9rem;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.4rem;
-            text-decoration: none;
-            transition: all 0.2s ease;
-            white-space: nowrap;
-        }
-
-        .dashboard-main-btn {
-            background: var(--dashboard-primary);
-            border: 1px solid var(--dashboard-primary);
-            color: var(--black);
-        }
-
-        .dashboard-main-btn:hover {
-            background: var(--black);
-            border-color: var(--black);
-            color: var(--white);
-        }
-
-        .dashboard-outline-btn {
-            background: transparent;
-            border: 1px solid var(--dashboard-primary);
-            color: var(--black);
-        }
-
-        .dashboard-outline-btn:hover {
-            background: var(--dashboard-primary);
-            border-color: var(--dashboard-primary);
-            color: var(--black);
-        }
-
-        .stat-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 0.9rem;
-        }
-
-        .dashboard-stat-card {
-            min-height: 112px;
-            background: rgba(255, 255, 255, 0.42);
-            border: 1px solid rgba(15, 23, 42, 0.06);
-            border-radius: 16px;
-            padding: 1.05rem 1.1rem;
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-            box-shadow: none;
-            position: relative;
-        }
-
-        .dashboard-stat-card::before {
-            content: "";
-            position: absolute;
-            left: 0;
-            top: 12px;
-            bottom: 12px;
-            width: 3px;
-            border-radius: 999px;
-            background: rgba(245, 197, 24, 0.85);
-        }
-
-        .stat-title {
-            color: var(--dashboard-text-muted);
-            font-size: 0.88rem;
-            font-weight: 700;
-            margin-bottom: 0.35rem;
-        }
-
-        .stat-value {
-            font-size: 1.55rem;
-            font-weight: 900;
-            color: var(--dashboard-text-main);
-            line-height: 1.1;
-            margin-bottom: 0.35rem;
-        }
-
-        .stat-caption {
-            color: var(--dashboard-text-muted);
-            font-size: 0.78rem;
-            margin-bottom: 0;
-            line-height: 1.35;
-        }
-
-        .stat-icon {
-            width: 42px;
-            height: 42px;
-            border-radius: 13px;
-            background: rgba(245, 197, 24, 0.16);
-            color: var(--black);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.12rem;
-            flex-shrink: 0;
-        }
-
-        .dashboard-main-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.8fr);
-            gap: 1rem;
-            align-items: start;
-        }
-
-        .panel-card {
-            background: rgba(255, 255, 255, 0.34);
-            border: 1px solid rgba(15, 23, 42, 0.05);
-            border-radius: 16px;
-            box-shadow: none;
-            overflow: hidden;
-        }
-
-        .panel-card-body {
-            padding: 1.15rem;
-        }
-
-        .panel-header {
-            padding: 1.1rem 1.15rem;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-        }
-
-        .panel-header h5 {
-            font-size: 1rem;
-            font-weight: 900;
-            margin: 0;
-            color: var(--dashboard-text-main);
-        }
-
-        .panel-header p {
-            margin: 0.2rem 0 0 0;
-            color: var(--dashboard-text-muted);
-            font-size: 0.86rem;
-        }
-
-        .section-link {
-            color: var(--dashboard-text-muted);
-            text-decoration: none;
-            font-weight: 800;
-            font-size: 0.86rem;
-            white-space: nowrap;
-            transition: color 0.2s ease;
-        }
-
-        .section-link:hover {
-            color: var(--black);
-        }
-
-        .status-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.95rem;
-        }
-
-        .status-row {
-            display: grid;
-            grid-template-columns: 135px minmax(0, 1fr) 38px;
-            gap: 0.9rem;
-            align-items: center;
-        }
-
-        .status-name {
-            font-weight: 800;
-            color: var(--dashboard-text-main);
-            font-size: 0.9rem;
-        }
-
-        .status-count {
-            text-align: right;
-            font-size: 1.05rem;
-            font-weight: 900;
-            color: var(--dashboard-text-main);
-        }
-
-        .progress {
-            height: 8px;
-            border-radius: 999px;
-            background: rgba(15, 23, 42, 0.06);
-            overflow: hidden;
-        }
-
-        .progress-bar-yellow {
-            background: var(--dashboard-primary);
-        }
-
-        .progress-bar-dark {
-            background: #111827;
-        }
-
-        .progress-bar-green {
-            background: #10b981;
-        }
-
-        .progress-bar-red {
-            background: #ef4444;
-        }
-
-        .alert-item {
-            padding: 0.95rem 1.15rem;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.05);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-        }
-
-        .alert-item:last-child {
-            border-bottom: none;
-        }
-
-        .alert-left {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            min-width: 0;
-        }
-
-        .alert-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 12px;
-            background: rgba(239, 68, 68, 0.10);
-            color: #b91c1c;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-            flex-shrink: 0;
-        }
-
-        .alert-title {
-            margin: 0;
-            font-weight: 900;
-            font-size: 0.9rem;
-            color: var(--dashboard-text-main);
-            max-width: 170px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .alert-subtitle {
-            margin: 0.15rem 0 0 0;
-            color: var(--dashboard-text-muted);
-            font-size: 0.76rem;
-        }
-
-        .stock-left {
-            color: #b91c1c;
-            font-weight: 900;
-            font-size: 0.84rem;
-            white-space: nowrap;
-        }
-
-        .reminder-card {
-            background: rgba(245, 197, 24, 0.08);
-            border: 1px solid rgba(245, 197, 24, 0.18);
-            border-radius: 16px;
-            padding: 1.15rem;
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-        }
-
-        .reminder-card h6 {
-            font-size: 0.98rem;
-            font-weight: 900;
-            margin-bottom: 0.4rem;
-            color: var(--dashboard-text-main);
-        }
-
-        .reminder-card p {
-            color: var(--dashboard-text-muted);
-            margin-bottom: 0.9rem;
-            font-size: 0.88rem;
-            line-height: 1.55;
-        }
-
-        .reminder-icon {
-            width: 48px;
-            height: 48px;
-            border-radius: 14px;
-            background: rgba(245, 197, 24, 0.18);
-            color: var(--black);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.15rem;
-            flex-shrink: 0;
-        }
-
-        .recent-table-wrap {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .recent-table {
-            width: 100%;
-            min-width: 980px;
-            margin-bottom: 0;
-            border-collapse: collapse;
-            background: transparent;
-        }
-
-        .recent-table th {
-            background: transparent;
-            color: var(--dashboard-text-muted);
-            font-size: 0.8rem;
-            font-weight: 900;
-            text-transform: uppercase;
-            letter-spacing: 0.35px;
-            padding: 0.85rem 1rem;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-            white-space: nowrap;
-        }
-
-        .recent-table td {
-            padding: 0.95rem 1rem;
-            color: var(--dashboard-text-main);
-            vertical-align: middle;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.055);
-            font-size: 0.92rem;
-            white-space: nowrap;
-            background: transparent;
-        }
-
-        .recent-table tbody tr:hover td {
-            background: rgba(245, 197, 24, 0.03);
-        }
-
-        .job-main {
-            font-weight: 900;
-            margin-bottom: 0.15rem;
-        }
-
-        .job-sub {
-            color: var(--dashboard-text-muted);
-            font-size: 0.78rem;
-        }
-
-        .empty-state {
-            padding: 2rem;
-            text-align: center;
-            color: var(--dashboard-text-muted);
-            font-size: 0.92rem;
-        }
-
-        .quick-actions-section {
-            margin-top: 0.25rem;
-        }
-
-        .quick-actions-title {
-            font-size: 1rem;
-            font-weight: 900;
-            margin-bottom: 0.15rem;
-            color: var(--dashboard-text-main);
-        }
-
-        .quick-actions-subtitle {
-            color: var(--dashboard-text-muted);
-            font-size: 0.88rem;
-            margin-bottom: 0;
-        }
-
-        .quick-actions-grid {
-            display: grid;
-            grid-template-columns: repeat(6, minmax(0, 1fr));
-            gap: 0.85rem;
-        }
-
-        .quick-action-card {
-            min-height: 102px;
-            background: rgba(255, 255, 255, 0.34);
-            border: 1px solid rgba(15, 23, 42, 0.05);
-            border-radius: 16px;
-            padding: 0.95rem;
-            text-decoration: none;
-            color: var(--dashboard-text-main);
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            gap: 0.75rem;
-            box-shadow: none;
-            transition: all 0.2s ease;
-        }
-
-        .quick-action-card:hover {
-            color: var(--dashboard-text-main);
-            transform: translateY(-2px);
-            background: rgba(255, 255, 255, 0.58);
-            border-color: rgba(245, 197, 24, 0.45);
-        }
-
-        .quick-action-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 12px;
-            background: rgba(245, 197, 24, 0.16);
-            color: var(--black);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.15rem;
-        }
-
-        .quick-action-title {
-            font-size: 0.9rem;
-            font-weight: 900;
-            margin: 0 0 0.22rem 0;
-            line-height: 1.2;
-        }
-
-        .quick-action-subtitle {
-            color: var(--dashboard-text-muted);
-            font-size: 0.75rem;
-            margin: 0;
-            line-height: 1.35;
-        }
-
-        .dashboard-small-btn {
-            border-radius: 10px;
-            font-size: 0.82rem;
-            font-weight: 900;
-            padding: 0.45rem 0.7rem;
-        }
-
-        @media (max-width: 1399.98px) {
-            .quick-actions-grid {
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-            }
-        }
-
-        @media (max-width: 1199.98px) {
-            .stat-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .dashboard-main-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 991.98px) {
-            .dashboard-topbar {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .dashboard-tools {
-                justify-content: flex-start;
-            }
-
-            .dashboard-search {
-                min-width: 100%;
-            }
-        }
-
-        @media (max-width: 767.98px) {
-            .dashboard-title-block h2 {
-                font-size: 1.75rem;
-            }
-
-            .quick-actions-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .status-row {
-                grid-template-columns: 1fr;
-                gap: 0.45rem;
-            }
-
-            .status-count {
-                text-align: left;
-            }
-
-            .dashboard-main-btn,
-            .dashboard-outline-btn {
-                width: 100%;
-            }
-
-            .dashboard-tools {
-                width: 100%;
-            }
-
-            .dashboard-date-pill {
-                width: 100%;
-                justify-content: center;
-            }
-        }
-
-        @media (max-width: 575.98px) {
-            .stat-grid,
-            .quick-actions-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .reminder-card {
-                flex-direction: column;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
 <body>
 
 <div class="app-wrapper">
     <?php include '../includes/sidebar.php'; ?>
 
-    <main class="main-content">
-        <div class="owner-dashboard">
+    <main class="main-content sp-page" id="spMain">
 
-            <div class="dashboard-topbar">
-                <div class="dashboard-title-block">
-                    <h2>
-                        Good <?php echo (date('H') < 12) ? 'Morning' : ((date('H') < 18) ? 'Afternoon' : 'Evening'); ?>,
-                        <?php echo htmlspecialchars($adminName); ?>!
-                    </h2>
-                    <p>Here's what's happening at the shop today.</p>
-                </div>
+        <?php
+        spPageHead(
+            strtoupper(date('l')) . ' · ' . strtoupper(date('d M Y')),
+            'Good ' . $greeting . ', ' . $adminName,
+            "Here's the shop today. Start with what needs your attention.",
+            '<a href="job_orders.php?new=1" class="cp-btn cp-btn-dark">+ New job order</a>'
+            . '<a href="reports.php" class="cp-btn cp-btn-line">View reports</a>'
+        );
+        ?>
 
-                <div class="dashboard-tools">
-                    <div class="dashboard-search">
-                        <i class="bi bi-search"></i>
-                        <input type="text" id="dashboardSearch" placeholder="Search recent job orders...">
-                    </div>
+        <!-- 01 Today at a glance -->
+        <section class="sp-sec" aria-labelledby="glanceTitle">
+            <?php spSectionHead('01', 'Today at a glance'); ?>
 
-                    <div class="dashboard-date-pill">
-                        <i class="bi bi-calendar3 me-2"></i>
-                        <?php echo date('F d, Y'); ?>
-                    </div>
-
-                    <a href="job_orders.php" class="dashboard-main-btn">
-                        <i class="bi bi-plus-circle"></i>
-                        New Job
-                    </a>
-
-                    <a href="pos.php" class="dashboard-outline-btn">
-                        <i class="bi bi-calculator"></i>
-                        POS
-                    </a>
-                </div>
-            </div>
-
-            <div class="stat-grid">
-                <div class="dashboard-stat-card">
-                    <div>
-                        <p class="stat-title">Active Jobs</p>
-                        <h3 class="stat-value"><?php echo $activeJobs; ?></h3>
-                        <p class="stat-caption">Ongoing repair records</p>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-wrench"></i>
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-card">
-                    <div>
-                        <p class="stat-title">Completed Today</p>
-                        <h3 class="stat-value"><?php echo $completedToday; ?></h3>
-                        <p class="stat-caption">Jobs finished today</p>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-check-circle"></i>
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-card">
-                    <div>
-                        <p class="stat-title">Total Revenue</p>
-                        <h3 class="stat-value">₱<?php echo number_format($totalRevenue, 2); ?></h3>
-                        <p class="stat-caption">Payments, POS, and completed web orders</p>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-cash-stack"></i>
-                    </div>
-                </div>
-
-                <div class="dashboard-stat-card">
-                    <div>
-                        <p class="stat-title">Pending Payments</p>
-                        <h3 class="stat-value">₱<?php echo number_format($pendingPayments, 2); ?></h3>
-                        <p class="stat-caption">Unpaid or partial balances</p>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-receipt"></i>
-                    </div>
-                </div>
-            </div>
-
-            <div class="dashboard-main-grid">
-
-                <div class="panel-card">
-                    <div class="panel-header">
-                        <div>
-                            <h5>Job Status Overview</h5>
-                            <p>Current repair workflow summary</p>
+            <div class="sp-glance">
+                <div class="sp-glance-cell">
+                    <p class="cp-label">Collected today</p>
+                    <strong class="sp-figure"><?= spPeso($collectedToday) ?></strong>
+                    <?php if ($collectedToday > 0): ?>
+                        <div class="sp-split" aria-hidden="true">
+                            <?php foreach ($methodOrder as $method): ?>
+                                <?php if (!empty($collectedByMethod[$method])): ?>
+                                    <span class="sp-split-<?= $methodTone[$method] ?>" style="width: <?= round($collectedByMethod[$method] / $collectedToday * 100, 2) ?>%"></span>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
                         </div>
-
-                        <a href="job_orders.php" class="section-link">
-                            Manage <i class="bi bi-arrow-right"></i>
-                        </a>
-                    </div>
-
-                    <div class="panel-card-body">
-                        <div class="status-list">
-                            <div class="status-row">
-                                <div class="status-name">Pending</div>
-                                <div class="progress">
-                                    <div class="progress-bar progress-bar-yellow" style="width: <?php echo getStatusPercent($pendingJobs, $totalStatusJobs); ?>%;"></div>
-                                </div>
-                                <div class="status-count"><?php echo $pendingJobs; ?></div>
-                            </div>
-
-                            <div class="status-row">
-                                <div class="status-name">In Progress</div>
-                                <div class="progress">
-                                    <div class="progress-bar progress-bar-dark" style="width: <?php echo getStatusPercent($inProgressJobs, $totalStatusJobs); ?>%;"></div>
-                                </div>
-                                <div class="status-count"><?php echo $inProgressJobs; ?></div>
-                            </div>
-
-                            <div class="status-row">
-                                <div class="status-name">Ready for Pickup</div>
-                                <div class="progress">
-                                    <div class="progress-bar progress-bar-green" style="width: <?php echo getStatusPercent($readyForPickupJobs, $totalStatusJobs); ?>%;"></div>
-                                </div>
-                                <div class="status-count"><?php echo $readyForPickupJobs; ?></div>
-                            </div>
-
-                            <div class="status-row">
-                                <div class="status-name">Completed Today</div>
-                                <div class="progress">
-                                    <div class="progress-bar progress-bar-green" style="width: <?php echo getStatusPercent($completedToday, $totalStatusJobs); ?>%;"></div>
-                                </div>
-                                <div class="status-count"><?php echo $completedToday; ?></div>
-                            </div>
-
-                            <div class="status-row">
-                                <div class="status-name">Cancelled</div>
-                                <div class="progress">
-                                    <div class="progress-bar progress-bar-red" style="width: <?php echo getStatusPercent($cancelledJobs, $totalStatusJobs); ?>%;"></div>
-                                </div>
-                                <div class="status-count"><?php echo $cancelledJobs; ?></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="d-flex flex-column gap-3">
-
-                    <div class="panel-card">
-                        <div class="panel-header">
-                            <div>
-                                <h5>Low Stock Alerts</h5>
-                                <p>Parts needing attention</p>
-                            </div>
-
-                            <a href="inventory.php" class="section-link">
-                                Manage <i class="bi bi-arrow-right"></i>
-                            </a>
-                        </div>
-
-                        <div>
-                            <?php if ($stmtStock->rowCount() > 0): ?>
-                                <?php while ($stock = $stmtStock->fetch(PDO::FETCH_ASSOC)): ?>
-                                    <div class="alert-item">
-                                        <div class="alert-left">
-                                            <div class="alert-icon">
-                                                <i class="bi bi-exclamation-triangle"></i>
-                                            </div>
-
-                                            <div class="min-w-0">
-                                                <p class="alert-title" title="<?php echo htmlspecialchars($stock['part_name']); ?>">
-                                                    <?php echo htmlspecialchars($stock['part_name']); ?>
-                                                </p>
-                                                <p class="alert-subtitle">
-                                                    <?php echo htmlspecialchars($stock['category']); ?>
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <div class="stock-left">
-                                            <?php echo htmlspecialchars($stock['quantity_on_hand']); ?> left
-                                        </div>
-                                    </div>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <div class="empty-state">
-                                    <i class="bi bi-check-circle fs-3 d-block mb-2"></i>
-                                    Inventory levels look good.
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <div class="reminder-card">
-                        <div>
-                            <h6>Daily Monitoring</h6>
-                            <p>
-                                Review job progress, pending balances, and low-stock items before closing the shop.
-                            </p>
-
-                            <div class="d-flex flex-wrap gap-2">
-                                <a href="billing.php" class="btn btn-primary btn-sm dashboard-small-btn">
-                                    <i class="bi bi-receipt me-1"></i>
-                                    Billing
-                                </a>
-
-                                <a href="reports.php" class="btn btn-outline-primary btn-sm dashboard-small-btn">
-                                    <i class="bi bi-bar-chart me-1"></i>
-                                    Reports
-                                </a>
-                            </div>
-                        </div>
-
-                        <div class="reminder-icon">
-                            <i class="bi bi-clipboard-data"></i>
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-
-            <div class="panel-card">
-                <div class="panel-header">
-                    <div>
-                        <h5>Recent Job Orders</h5>
-                        <p>Latest repair records that still need monitoring</p>
-                    </div>
-
-                    <a href="job_orders.php" class="section-link">
-                        View All <i class="bi bi-arrow-right"></i>
-                    </a>
-                </div>
-
-                <div class="recent-table-wrap">
-                    <table class="recent-table" id="recentJobsTable">
-                        <thead>
-                            <tr>
-                                <th>Job Order</th>
-                                <th>Customer</th>
-                                <th>Vehicle</th>
-                                <th>Plate No.</th>
-                                <th>Status</th>
-                                <th>Date Created</th>
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            <?php if ($stmtJobs->rowCount() > 0): ?>
-                                <?php while ($job = $stmtJobs->fetch(PDO::FETCH_ASSOC)):
-                                    $badgeClass = 'badge-soft-warning';
-
-                                    if ($job['status'] == 'In Progress') {
-                                        $badgeClass = 'badge-soft-primary';
-                                    }
-
-                                    if ($job['status'] == 'Ready for Pickup') {
-                                        $badgeClass = 'badge-soft-success';
-                                    }
-
-                                    if ($job['status'] == 'Cancelled') {
-                                        $badgeClass = 'badge-soft-danger';
-                                    }
-                                ?>
-                                    <tr>
-                                        <td>
-                                            <div class="job-main">
-                                                <?php echo htmlspecialchars($job['job_order_number']); ?>
-                                            </div>
-                                            <div class="job-sub">
-                                                Repair record
-                                            </div>
-                                        </td>
-
-                                        <td>
-                                            <?php echo htmlspecialchars($job['first_name'] . ' ' . $job['last_name']); ?>
-                                        </td>
-
-                                        <td>
-                                            <?php echo htmlspecialchars(trim(($job['make'] ?? '') . ' ' . ($job['model'] ?? ''))); ?>
-                                        </td>
-
-                                        <td>
-                                            <?php echo htmlspecialchars($job['plate_number']); ?>
-                                        </td>
-
-                                        <td>
-                                            <span class="<?php echo $badgeClass; ?>">
-                                                <?php echo htmlspecialchars($job['status']); ?>
-                                            </span>
-                                        </td>
-
-                                        <td>
-                                            <?php echo date('M d, Y', strtotime($job['date_created'])); ?>
-                                        </td>
-                                    </tr>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <tr>
-                                    <td colspan="6">
-                                        <div class="empty-state">
-                                            No active job orders right now.
-                                        </div>
-                                    </td>
-                                </tr>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="quick-actions-section">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <div>
-                        <h5 class="quick-actions-title">Quick Actions</h5>
-                        <p class="quick-actions-subtitle">
-                            Shortcuts for common owner and shop operations
+                        <p class="sp-glance-note">
+                            <?php
+                            $parts = [];
+                            foreach ($methodOrder as $method) {
+                                if (!empty($collectedByMethod[$method])) {
+                                    $parts[] = '<span class="sp-key sp-key-' . $methodTone[$method] . '"></span>' . cpEscape($method) . ' ' . number_format($collectedByMethod[$method], 0);
+                                }
+                            }
+                            echo implode(' · ', $parts);
+                            ?>
                         </p>
-                    </div>
+                    <?php else: ?>
+                        <div class="sp-split is-empty" aria-hidden="true"></div>
+                        <p class="sp-glance-note">No payments recorded yet today</p>
+                    <?php endif; ?>
                 </div>
 
-                <div class="quick-actions-grid">
-                    <a href="job_orders.php" class="quick-action-card">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-plus-circle"></i>
-                        </div>
-                        <div>
-                            <p class="quick-action-title">New Job Order</p>
-                            <p class="quick-action-subtitle">Create repair record</p>
-                        </div>
-                    </a>
+                <div class="sp-glance-cell">
+                    <p class="cp-label">Active jobs</p>
+                    <strong class="sp-figure"><?= str_pad((string) intval($activeJobs), 2, '0', STR_PAD_LEFT) ?></strong>
+                    <p class="sp-glance-note"><?= intval($readyForPickupJobs) ?> ready for pickup</p>
+                </div>
 
-                    <a href="customers.php" class="quick-action-card">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-person-plus"></i>
-                        </div>
-                        <div>
-                            <p class="quick-action-title">Add Customer</p>
-                            <p class="quick-action-subtitle">Register customer info</p>
-                        </div>
-                    </a>
+                <div class="sp-glance-cell">
+                    <p class="cp-label">Completed today</p>
+                    <strong class="sp-figure"><?= str_pad((string) intval($completedToday), 2, '0', STR_PAD_LEFT) ?></strong>
+                    <p class="sp-glance-note">
+                        <?= $lastCompletedAt ? 'Last at ' . date('g:i A', strtotime($lastCompletedAt)) : 'None finished yet today' ?>
+                    </p>
+                </div>
 
-                    <a href="vehicles.php" class="quick-action-card">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-car-front"></i>
-                        </div>
-                        <div>
-                            <p class="quick-action-title">Register Vehicle</p>
-                            <p class="quick-action-subtitle">Link vehicle to customer</p>
-                        </div>
-                    </a>
-
-                    <a href="pos.php" class="quick-action-card">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-calculator"></i>
-                        </div>
-                        <div>
-                            <p class="quick-action-title">Open POS</p>
-                            <p class="quick-action-subtitle">Process parts sale</p>
-                        </div>
-                    </a>
-
-                    <a href="inventory.php" class="quick-action-card">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-box-seam"></i>
-                        </div>
-                        <div>
-                            <p class="quick-action-title">Add Inventory</p>
-                            <p class="quick-action-subtitle">Manage auto parts</p>
-                        </div>
-                    </a>
-
-                    <a href="reports.php" class="quick-action-card">
-                        <div class="quick-action-icon">
-                            <i class="bi bi-bar-chart"></i>
-                        </div>
-                        <div>
-                            <p class="quick-action-title">Generate Report</p>
-                            <p class="quick-action-subtitle">View summaries</p>
-                        </div>
-                    </a>
+                <div class="sp-glance-cell">
+                    <p class="cp-label">Unpaid balance</p>
+                    <strong class="sp-figure"><?= spPeso($pendingPayments) ?></strong>
+                    <?php if ($overdueCount > 0): ?>
+                        <p class="sp-glance-note is-bad"><?= $overdueCount ?> past the <?= SERVICE_CREDIT_DAYS ?>-day limit</p>
+                    <?php else: ?>
+                        <p class="sp-glance-note">Finished jobs not yet fully paid</p>
+                    <?php endif; ?>
                 </div>
             </div>
+        </section>
 
+        <div class="sp-two">
+            <!-- 02 Needs your attention -->
+            <section class="sp-sec" aria-label="Needs your attention">
+                <?php spSectionHead('02', 'Needs your attention', '<span class="sp-sec-meta">' . $attentionCount . ' item' . ($attentionCount === 1 ? '' : 's') . '</span>'); ?>
+
+                <?php if ($attentionCount === 0): ?>
+                    <div class="cp-empty">
+                        <strong>All clear</strong>
+                        No overdue bills, low stock or waiting requests right now.
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($overdueBills)): ?>
+                    <div class="sp-att-group">
+                        <p class="cp-label">Overdue balances <span class="sp-att-count"><?= $overdueCount ?></span></p>
+                        <?php foreach ($overdueBills as $bill): ?>
+                            <a href="billing.php?q=<?= rawurlencode($bill['job_order_number'] ?: $bill['invoice_number']) ?>" class="sp-att-item">
+                                <span>
+                                    <strong><?= cpEscape(trim($bill['first_name'] . ' ' . $bill['last_name'])) ?> · <?= cpMoney($bill['balance_due']) ?></strong>
+                                    <small><?= cpEscape($bill['job_order_number'] ?: $bill['invoice_number']) ?> · was due <?= date('d M', strtotime($bill['due_date'])) ?></small>
+                                </span>
+                                <span class="st bad solid">Overdue</span>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($lowStockParts)): ?>
+                    <div class="sp-att-group">
+                        <p class="cp-label">Low stock <span class="sp-att-count"><?= count($lowStockParts) ?></span></p>
+                        <?php foreach ($lowStockParts as $stock): ?>
+                            <?php $qty = intval($stock['quantity_on_hand']); ?>
+                            <a href="inventory.php?q=<?= rawurlencode($stock['part_name']) ?>" class="sp-att-item">
+                                <span>
+                                    <strong><?= cpEscape($stock['part_name']) ?></strong>
+                                    <small><?= $qty ?> left<?= $qty > 0 ? ' · alert at ' . intval($stock['low_stock_threshold']) : '' ?><?= cpHasValue($stock['category']) ? ' · ' . cpEscape($stock['category']) : '' ?></small>
+                                </span>
+                                <?= $qty <= 0 ? cpBadge('Out of stock') : cpBadge('Low stock') ?>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($expiringOrders)): ?>
+                    <div class="sp-att-group">
+                        <p class="cp-label">Reservations expiring <span class="sp-att-count"><?= count($expiringOrders) ?></span></p>
+                        <?php foreach ($expiringOrders as $order): ?>
+                            <a href="online_orders.php?q=<?= rawurlencode('PO-' . $order['order_id']) ?>" class="sp-att-item">
+                                <span>
+                                    <strong>Web order PO-<?= intval($order['order_id']) ?> · <?= cpEscape(trim($order['first_name'] . ' ' . $order['last_name'])) ?></strong>
+                                    <small>Unpaid · <?= cpMoney($order['total_amount']) ?> · parts go back on sale <?= date('d M, g:i A', strtotime($order['expires_at'])) ?></small>
+                                </span>
+                                <span class="st pend">Expires soon</span>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!empty($pendingWebOrders) || !empty($pendingRequests)): ?>
+                    <div class="sp-att-group">
+                        <p class="cp-label">Waiting for approval <span class="sp-att-count"><?= count($pendingWebOrders) + count($pendingRequests) ?></span></p>
+                        <?php foreach ($pendingWebOrders as $order): ?>
+                            <a href="online_orders.php?q=<?= rawurlencode('#' . $order['order_id']) ?>" class="sp-att-item">
+                                <span>
+                                    <strong>Web order #<?= intval($order['order_id']) ?> · <?= cpEscape(trim($order['first_name'] . ' ' . $order['last_name'])) ?></strong>
+                                    <small><?= cpEscape($order['items'] ?: 'Parts order') ?><?= $order['preferred_pickup_date'] ? ' · pickup ' . date('d M', strtotime($order['preferred_pickup_date'])) : '' ?></small>
+                                </span>
+                                <?= cpBadge('Pending') ?>
+                            </a>
+                        <?php endforeach; ?>
+                        <?php foreach ($pendingRequests as $request): ?>
+                            <a href="service_requests.php?q=<?= rawurlencode($request['request_number']) ?>" class="sp-att-item">
+                                <span>
+                                    <strong>Service request <?= cpEscape($request['request_number']) ?> · <?= cpEscape(trim($request['first_name'] . ' ' . $request['last_name'])) ?></strong>
+                                    <small><?= cpEscape($request['service_name'] ?: 'Service') ?><?= $request['preferred_appointment_date'] ? ' · prefers ' . date('d M', strtotime($request['preferred_appointment_date'])) : '' ?></small>
+                                </span>
+                                <?= cpBadge('Pending') ?>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
+
+            <!-- 03 Workshop right now -->
+            <section class="sp-sec" aria-label="Workshop right now">
+                <?php spSectionHead('03', 'Workshop right now', '<a href="job_orders.php" class="sp-arrow-link">Job orders ↗</a>'); ?>
+
+                <div class="sp-ws">
+                    <a href="job_orders.php" class="sp-ws-row is-pend">
+                        <span><strong>Pending</strong><small>Waiting to be started</small></span>
+                        <b><?= intval($pendingJobs) ?></b>
+                    </a>
+                    <a href="job_orders.php" class="sp-ws-row is-prog">
+                        <span><strong>In progress</strong><small>Being repaired now</small></span>
+                        <b><?= intval($inProgressJobs) ?></b>
+                    </a>
+                    <a href="job_orders.php" class="sp-ws-row is-ready">
+                        <span><strong>Ready for pickup</strong><small>Customer can claim the vehicle</small></span>
+                        <b><?= intval($readyForPickupJobs) ?></b>
+                    </a>
+                    <a href="job_orders.php" class="sp-ws-row is-done">
+                        <span><strong>Completed today</strong><small>Released to the customer</small></span>
+                        <b><?= intval($completedToday) ?></b>
+                    </a>
+                    <a href="job_orders.php" class="sp-ws-row is-bad">
+                        <span><strong>Cancelled today</strong><small><?= intval($cancelledJobs) ?> cancelled in total, each with a reason</small></span>
+                        <b><?= intval($cancelledToday) ?></b>
+                    </a>
+                </div>
+            </section>
         </div>
+
+        <!-- 04 Recent job orders -->
+        <section class="sp-sec" aria-label="Recent job orders">
+            <?php spSectionHead('04', 'Recent job orders', '<a href="job_orders.php" class="sp-arrow-link">All job orders ↗</a>'); ?>
+
+            <table class="cp-table sp-table" id="recentJobsTable">
+                <thead>
+                    <tr>
+                        <th scope="col">Job no.</th>
+                        <th scope="col">Customer / vehicle</th>
+                        <th scope="col">Plate</th>
+                        <th scope="col">Job status</th>
+                        <th scope="col">Payment</th>
+                        <th scope="col" class="cp-num">Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($recentJobs)): ?>
+                        <?php foreach ($recentJobs as $job): ?>
+                            <tr>
+                                <td data-label="Job no." class="sp-mono"><?= cpEscape($job['job_order_number']) ?></td>
+                                <td data-label="Customer"><div>
+                                    <span class="cp-cell-title"><?= cpEscape($job['first_name'] . ' ' . $job['last_name']) ?></span>
+                                    <span class="cp-cell-sub">
+                                        <?= cpEscape(trim(($job['make'] ?? '') . ' ' . ($job['model'] ?? ''))) ?>
+                                        <?php if (cpHasValue($job['description'] ?? '')): ?>
+                                            · <?= cpEscape(mb_strimwidth(plainText($job['description']), 0, 48, '…')) ?>
+                                        <?php endif; ?>
+                                    </span>
+                                </div></td>
+                                <td data-label="Plate"><span class="sp-plate"><?= cpEscape($job['plate_number'] ?: '—') ?></span></td>
+                                <td data-label="Job status"><?= cpBadge($job['status']) ?></td>
+                                <td data-label="Payment"><?= dashJobPayment($job) ?></td>
+                                <td data-label="Balance" class="cp-num sp-mono"><?= number_format(dashJobBalance($job), 2) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr class="cp-table-empty">
+                            <td colspan="6">No active job orders right now.</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- 05 Collected this week -->
+        <section class="sp-sec" aria-label="Collected this week">
+            <?php spSectionHead('05', 'Collected this week', '<a href="reports.php" class="sp-arrow-link">Sales report ↗</a>'); ?>
+
+            <div class="sp-week" role="img" aria-label="Amount collected per day for the last 7 days, <?= cpMoney($weekTotal) ?> in total">
+                <?php foreach ($weekDays as $day => $data): ?>
+                    <?php
+                    $isToday = $day === date('Y-m-d');
+                    $isSunday = date('w', strtotime($day)) === '0';
+                    $height = $data['total'] > 0 ? max(4, round($data['total'] / $weekMax * 100)) : 0;
+                    ?>
+                    <div class="sp-week-day<?= $isSunday ? ' is-closed' : '' ?>">
+                        <span class="sp-week-amount"><?= $data['total'] > 0 ? spPeso($data['total']) : '' ?></span>
+                        <span class="sp-week-bar" style="height: <?= $height ?>%"></span>
+                        <span class="sp-week-label"><?= $isToday ? 'Today' : strtoupper(date('D', strtotime($day))) ?></span>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <div class="sp-week-foot">
+                <span>Sunday closed<?= $weekTotal <= 0 ? ' · No payments recorded in the last 7 days' : '' ?></span>
+                <span class="sp-mono">
+                    Week <?= cpMoney($weekTotal) ?>
+                    <?php if ($weekTotal > 0): ?>
+                        · repairs <?= $servicePercent ?>% · parts <?= 100 - $servicePercent ?>%
+                    <?php endif; ?>
+                    · all-time <?= cpMoney($totalRevenue) ?>
+                </span>
+            </div>
+        </section>
     </main>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
-<script>
-    const dashboardSearch = document.getElementById('dashboardSearch');
-    const recentJobsTable = document.getElementById('recentJobsTable');
-
-    if (dashboardSearch && recentJobsTable) {
-        dashboardSearch.addEventListener('keyup', function () {
-            const keyword = this.value.toLowerCase();
-            const rows = recentJobsTable.querySelectorAll('tbody tr');
-
-            rows.forEach(function (row) {
-                const rowText = row.textContent.toLowerCase();
-                row.style.display = rowText.includes(keyword) ? '' : 'none';
-            });
-        });
-    }
-</script>
 
 </body>
 </html>

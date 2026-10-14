@@ -1,5 +1,17 @@
 <?php
 $basePath = '../';
+$activePage = '';
+
+// Same number as the footer and contact page; change them together.
+$shopPhone = '0912-345-6789';
+$mapQuery = 'Vila Rosario, La Union';
+$mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode($mapQuery);
+
+$tips = [
+    ['title' => 'For repairs', 'text' => 'Describe the problem clearly: when it happens, any sounds or warning lights, and what was fixed before.'],
+    ['title' => 'For parts', 'text' => 'Check the parts page or call first. Bring the old part or its number if you can.'],
+    ['title' => 'For follow-ups', 'text' => 'Log in to see your repair status, or call the shop to ask about an update.'],
+];
 ?>
 
 <!DOCTYPE html>
@@ -8,244 +20,317 @@ $basePath = '../';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Store Location | Norily's Vehicle Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
+    <script>document.documentElement.classList.add('js');window.__motionFallback=setTimeout(function(){document.documentElement.classList.add('reveal-all');},3000);</script>
+    <script src="../assets/js/motion.js?v=<?= filemtime(__DIR__ . '/../assets/js/motion.js') ?>" defer></script>
 
     <style>
-        /* Page background */
-        .location-page {
-            background: var(--white);
+        .loc-page {
+            background: var(--paper);
+            padding-bottom: 6rem;
         }
 
-        /* Main location section */
-        .location-main {
-            padding: 5rem 0 3rem;
+        .loc-wrap {
+            max-width: 1000px;
         }
 
-        /* Top title */
-        .location-title {
-            color: var(--yellow-dark);
-            font-size: clamp(2.2rem, 5vw, 4rem);
-            font-weight: 900;
-            letter-spacing: 4px;
-            text-transform: uppercase;
-            line-height: 1;
-            margin-bottom: 3rem;
-        }
-
-        /* Two-column address and map layout */
-        .location-top-grid {
-            display: grid;
-            grid-template-columns: 0.8fr 1.2fr;
-            gap: 4rem;
-            align-items: start;
-            margin-bottom: 5rem;
-        }
-
-        /* Section label */
-        .location-label {
-            color: var(--black);
-            font-size: 1rem;
-            font-weight: 900;
-            margin-bottom: 1rem;
-        }
-
-        /* Body text */
-        .location-text {
-            color: var(--muted-gray);
-            font-size: 1rem;
-            line-height: 1.8;
-            margin-bottom: 1.5rem;
-        }
-
-        /* Address block */
-        .location-address {
-            color: var(--black);
-            font-size: 1.1rem;
-            font-weight: 800;
-            line-height: 1.7;
-            margin-bottom: 2rem;
-        }
-
-        /* Small action buttons */
-        .location-actions {
+        .loc-crumbs {
             display: flex;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-        }
-
-        /* Map container */
-        .location-map-box {
-            min-height: 320px;
-            background: var(--light-gray);
-            border: 1px solid var(--border-light);
-            overflow: hidden;
+            gap: 0.6rem;
+            list-style: none;
             padding: 0;
+            margin: 1.5rem 0 3rem;
+            color: var(--ink-2);
+            font-size: var(--fs-crumb);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
         }
 
-        /* Google map iframe */
-        .location-map-box iframe {
+        .loc-crumbs a {
+            color: var(--ink-2);
+            text-decoration: none;
+        }
+
+        .loc-crumbs a:hover {
+            color: var(--ink);
+        }
+
+        .loc-crumbs li + li::before {
+            content: "/";
+            margin-right: 0.6rem;
+        }
+
+        .wide-heading {
+            color: var(--ink);
+            font-weight: 400;
+            font-stretch: 125%;
+            text-transform: uppercase;
+            line-height: 0.95;
+            margin: 0;
+        }
+
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+
+        /* ---------- Hero ---------- */
+        .loc-hero {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1.75rem 2.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--ink);
+        }
+
+        .loc-hero h1 {
+            font-size: var(--fs-page-title);
+        }
+
+
+
+
+        .loc-hero p {
+            flex: 0 1 340px;
+            color: var(--ink-2);
+            font-size: var(--fs-lead);
+            line-height: 1.6;
+            margin: 0 0 0.5rem auto;
+        }
+
+        /* ---------- Map + details ---------- */
+        .loc-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+            gap: 3rem;
+            align-items: start;
+            padding-top: 1.75rem;
+        }
+
+        .loc-map {
+            position: relative;
+            aspect-ratio: 4 / 3;
+            border: 1px solid var(--ink);
+            background: var(--sheet);
+            overflow: hidden;
+        }
+
+        /* Greyscale map so it matches the page */
+        .loc-map iframe {
+            display: block;
             width: 100%;
             height: 100%;
-            min-height: 320px;
-            display: block;
             border: 0;
-        }
-        .location-map-box h3 {
-            color: var(--black);
-            font-size: 1.25rem;
-            font-weight: 900;
-            margin-bottom: 0.5rem;
+            filter: grayscale(1) contrast(0.95);
         }
 
-        .location-map-box p {
-            color: var(--muted-gray);
+        .loc-details {
+            list-style: none;
+            padding: 0;
             margin: 0;
+            border-top: 1px solid var(--ink);
         }
 
-        /* Visit information section */
-        .visit-info-section {
-            padding: 2rem 0 5rem;
+        .loc-detail {
+            padding: 1.05rem 0 1.1rem;
+            border-bottom: 1px solid var(--line);
         }
 
-        /* Visit section grid */
-        .visit-info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
-            align-items: start;
-        }
-
-        /* Shop photo placeholder */
-        .shop-photo-box {
-            min-height: 420px;
-            background: var(--light-gray);
-            border: 1px dashed var(--border-light);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 2rem;
-        }
-
-        .shop-photo-box h3 {
-            color: var(--black);
-            font-size: 1.25rem;
-            font-weight: 900;
-            margin-bottom: 0.5rem;
-        }
-
-        .shop-photo-box p {
-            color: var(--muted-gray);
-            margin: 0;
-        }
-
-        /* Visit detail list */
-        .visit-details {
-            display: grid;
-            gap: 2rem;
-        }
-
-        /* Individual visit item */
-        .visit-detail-item {
-            display: grid;
-            grid-template-columns: 80px 1fr;
-            gap: 1.5rem;
-            padding-bottom: 2rem;
-            border-bottom: 1px solid var(--border-light);
-        }
-
-        .visit-detail-item:last-child {
-            border-bottom: 0;
-        }
-
-        .visit-icon {
-            width: 48px;
-            height: 48px;
-            border: 1px solid var(--border-light);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--yellow-dark);
-            font-weight: 900;
-        }
-
-        .visit-detail-item h3 {
-            color: var(--black);
-            font-size: 1.1rem;
-            font-weight: 900;
+        .loc-label {
+            display: block;
+            color: var(--ink-2);
+            font-size: var(--fs-label);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
             margin-bottom: 0.45rem;
         }
 
-        .visit-detail-item p {
-            color: var(--muted-gray);
-            line-height: 1.75;
+        .loc-value {
+            color: var(--ink);
+            font-size: 1.05rem;
+            font-stretch: 112%;
+            text-transform: uppercase;
             margin: 0;
         }
 
-        /* Bottom reminder */
-        .location-reminder {
-            padding: 3rem 0 6rem;
-            border-top: 1px solid var(--border-light);
+        .loc-sub {
+            color: var(--ink);
+            font-size: 0.85rem;
+            margin: 0.35rem 0 0;
         }
 
-        .reminder-grid {
+        .loc-phone {
+            color: var(--ink);
+            font-size: 1.15rem;
+            text-decoration: none;
+        }
+
+        .loc-phone:hover {
+            color: var(--ink);
+        }
+
+        .loc-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-top: 1.25rem;
+        }
+
+        .loc-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 48px;
+            padding: 0 1.3rem;
+            border: 1px solid var(--ink);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            text-decoration: none;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .loc-btn-solid {
+            background: var(--ink);
+            color: var(--sheet);
+        }
+
+        .loc-btn-solid:hover {
+            background: #3a372f;
+            color: var(--sheet);
+        }
+
+        .loc-btn-outline {
+            background: transparent;
+            color: var(--ink);
+        }
+
+        .loc-btn-outline:hover {
+            background: var(--ink);
+            color: var(--sheet);
+        }
+
+        /* ---------- We moved ---------- */
+        .loc-moved {
+            display: grid;
+            grid-template-columns: 9rem minmax(0, 1fr);
+            gap: 1.5rem;
+            margin-top: 3.5rem;
+            padding: 1.25rem 1.5rem;
+            background: var(--sheet);
+            border: 1px solid var(--ink);
+        }
+
+        .loc-moved p {
+            color: var(--ink);
+            font-size: 0.92rem;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        /* ---------- Before you visit ---------- */
+        .loc-section {
+            margin-top: 6rem;
+        }
+
+        .loc-section-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1.25rem 2.5rem;
+            padding-bottom: 1.25rem;
+            margin-bottom: 1.1rem;
+            border-bottom: 1px solid var(--ink);
+        }
+
+        .loc-section-head h2 {
+            font-size: var(--fs-section-title);
+        }
+
+        .loc-section-head p {
+            flex: 0 1 380px;
+            color: var(--ink-2);
+            font-size: var(--fs-lead);
+            line-height: 1.55;
+            margin: 0 0 0.3rem auto;
+        }
+
+        .loc-tips {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 2rem;
+            border-top: 1px solid var(--ink);
+            padding-top: 1.25rem;
         }
 
-        .reminder-item {
-            display: grid;
-            grid-template-columns: 48px 1fr;
-            gap: 1rem;
-            align-items: start;
+        .loc-tip {
+            padding-right: 1.5rem;
         }
 
-        .reminder-item h4 {
-            color: var(--black);
-            font-size: 1rem;
-            font-weight: 900;
-            margin-bottom: 0.35rem;
+        .loc-tip + .loc-tip {
+            padding-left: 1.5rem;
+            border-left: 1px solid var(--line);
         }
 
-        .reminder-item p {
-            color: var(--muted-gray);
-            font-size: 0.95rem;
-            line-height: 1.7;
+        .loc-tip h3 {
+            color: var(--ink);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 0.6rem;
+        }
+
+        .loc-tip p {
+            color: var(--ink-2);
+            font-size: 0.88rem;
+            line-height: 1.6;
             margin: 0;
         }
 
-        @media (max-width: 991.98px) {
-            .location-top-grid,
-            .visit-info-grid,
-            .reminder-grid {
+        @media (max-width: 860px) {
+            .loc-grid {
                 grid-template-columns: 1fr;
-                gap: 2.5rem;
+                gap: 2rem;
+            }
+
+            .loc-hero p,
+            .loc-section-head p {
+                flex-basis: 100%;
+                margin-left: 0;
+            }
+
+            .loc-moved {
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
+            }
+
+            .loc-tips {
+                grid-template-columns: 1fr;
+                gap: 1.25rem;
+            }
+
+            .loc-tip,
+            .loc-tip + .loc-tip {
+                padding: 0;
+                border-left: 0;
+            }
+
+            .loc-tip + .loc-tip {
+                padding-top: 1.25rem;
+                border-top: 1px solid var(--line);
             }
         }
 
         @media (max-width: 575.98px) {
-            .location-main {
-                padding: 3.5rem 0 2rem;
-            }
 
-            .location-title {
-                font-size: 2.45rem;
-                letter-spacing: 2px;
-                margin-bottom: 2rem;
-            }
-
-            .location-map-box,
-            .shop-photo-box {
-                min-height: 260px;
-            }
-
-            .visit-detail-item,
-            .reminder-item {
-                grid-template-columns: 1fr;
-                gap: 0.75rem;
+            .loc-btn {
+                width: 100%;
             }
         }
     </style>
@@ -254,118 +339,87 @@ $basePath = '../';
 
 <?php include '../partials/public-navbar.php'; ?>
 
-<main class="location-page">
+<main class="loc-page">
+    <div class="container loc-wrap">
+        <nav aria-label="Breadcrumb">
+            <ol class="loc-crumbs">
+                <li><a href="../" class="link-grow">Home</a></li>
+                <li aria-current="page">Store location</li>
+            </ol>
+        </nav>
 
-    <section class="location-main">
-        <div class="container">
-            <h1 class="location-title">Store Location</h1>
+        <section class="loc-hero">
+            <h1 class="wide-heading">
+                Find the<br>
+                <span class="title-band">Shop</span>
+            </h1>
 
-            <div class="location-top-grid">
-                <div>
-                    <h2 class="location-label">Address</h2>
+            <p>Walk-ins are welcome for repairs, rewinding, wiring concerns and parts.</p>
+        </section>
 
-                    <p class="location-address">
-                        Vila Rosario, La Union
-                    </p>
+        <div class="loc-grid">
+            <div class="loc-map" data-reveal>
+                <iframe
+                    src="https://www.google.com/maps?q=<?= rawurlencode($mapQuery) ?>&output=embed"
+                    title="Map of Vila Rosario, La Union"
+                    loading="lazy"
+                    referrerpolicy="no-referrer-when-downgrade"
+                    allowfullscreen
+                ></iframe>
+            </div>
 
-                    <p class="location-text">
-                        Norily’s Vehicle Repair Shop accepts walk-in customers for repair services,
-                        rewinding work, electrical wiring concerns, and parts-related transactions.
-                    </p>
+            <div>
+                <ul class="loc-details">
+                    <li class="loc-detail">
+                        <span class="loc-label">Address</span>
+                        <p class="loc-value">Vila Rosario, La Union</p>
+                    </li>
 
-                    <div class="location-actions">
-                        <a href="contact.php" class="btn btn-dark-custom">Contact Shop</a>
-                        <a href="services.php" class="btn btn-outline-dark-custom">View Services</a>
-                    </div>
-                </div>
+                    <li class="loc-detail">
+                        <span class="loc-label">Hours</span>
+                        <p class="loc-value">Mon &ndash; Sat &middot; 8:00 AM &ndash; 5:00 PM</p>
+                        <p class="loc-sub">Sunday closed</p>
+                    </li>
 
-                <div class="location-map-box">
-                    <iframe
-                        src="https://www.google.com/maps?q=Vila%20Rosario%20La%20Union&output=embed"
-                        allowfullscreen=""
-                        loading="lazy"
-                        referrerpolicy="no-referrer-when-downgrade">
-                    </iframe>
+                    <li class="loc-detail">
+                        <span class="loc-label">Phone</span>
+                        <a href="tel:<?= preg_replace('/\D/', '', $shopPhone) ?>" class="loc-phone mono"><?= $shopPhone ?></a>
+                    </li>
+                </ul>
+
+                <div class="loc-actions">
+                    <a href="<?= htmlspecialchars($mapsUrl, ENT_QUOTES, 'UTF-8') ?>" class="loc-btn loc-btn-solid" target="_blank" rel="noopener">
+                        Open in Google Maps <span class="arrow" aria-hidden="true">&nbsp;&#8599;</span>
+                    </a>
+                    <a href="contact.php" class="loc-btn loc-btn-outline">Contact the shop</a>
                 </div>
             </div>
         </div>
-    </section>
 
-    <section class="visit-info-section">
-        <div class="container">
-            <div class="visit-info-grid">
-                <div class="shop-photo-box">
-                    <div>
-                        <h3>Shop Photo</h3>
-                        <p>A store photo can be added here to help customers recognize the shop before visiting.</p>
-                    </div>
-                </div>
+        <aside class="loc-moved" data-reveal>
+            <span class="loc-label">We moved</span>
+            <p>
+                Looking for the old shop on MacArthur Highway or Rivera Street? Norily's is now in
+                Vila Rosario, a little farther from the town center, on the family's own property.
+            </p>
+        </aside>
 
-                <div class="visit-details">
-                    <div class="visit-detail-item">
-                        <div class="visit-icon">01</div>
-                        <div>
-                            <h3>Walk-in Services</h3>
-                            <p>
-                                Repair services and parts assistance are available for visiting customers.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div class="visit-detail-item">
-                        <div class="visit-icon">02</div>
-                        <div>
-                            <h3>Before Visiting</h3>
-                            <p>
-                                Contact the shop first for parts availability or service updates.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div class="visit-detail-item">
-                        <div class="visit-icon">03</div>
-                        <div>
-                            <h3>What to Prepare</h3>
-                            <p>
-                                Prepare your vehicle concern, service request, or specific parts inquiry.
-                            </p>
-                        </div>
-                    </div>
-                </div>
+        <section class="loc-section" aria-labelledby="visitHeading">
+            <div class="loc-section-head" data-reveal>
+                <h2 class="wide-heading" id="visitHeading">Before<br>you visit</h2>
+                <p>A little preparation helps the shop assess your vehicle faster.</p>
             </div>
-        </div>
-    </section>
 
-    <section class="location-reminder">
-        <div class="container">
-            <div class="reminder-grid">
-                <div class="reminder-item">
-                    <div class="visit-icon">04</div>
-                    <div>
-                        <h4>For repair visits</h4>
-                        <p>Describe the vehicle issue clearly so the shop can assess the service needed.</p>
+            <div class="loc-tips" data-reveal-group>
+                <?php foreach ($tips as $tip): ?>
+                    <div class="loc-tip">
+                        <h3><?= htmlspecialchars($tip['title'], ENT_QUOTES, 'UTF-8') ?></h3>
+                        <p><?= htmlspecialchars($tip['text'], ENT_QUOTES, 'UTF-8') ?></p>
                     </div>
-                </div>
-
-                <div class="reminder-item">
-                    <div class="visit-icon">05</div>
-                    <div>
-                        <h4>For parts inquiries</h4>
-                        <p>Ask first if the specific part or supply is currently available.</p>
-                    </div>
-                </div>
-
-                <div class="reminder-item">
-                    <div class="visit-icon">06</div>
-                    <div>
-                        <h4>For follow-ups</h4>
-                        <p>Use the contact page to ask about repair status or service-related updates.</p>
-                    </div>
-                </div>
+                <?php endforeach; ?>
             </div>
-        </div>
-    </section>
-
+        </section>
+    </div>
 </main>
 
 <?php include '../partials/public-footer.php'; ?>

@@ -4,9 +4,10 @@ require_once '../includes/passwords.php';
 require_once '../includes/rate_limit.php';
 require_once '../includes/email_verification.php';
 require_once '../includes/password_reset.php';
+require_once '../includes/cart_store.php';
 
 // Login throttling: per account+IP, and a looser per-IP limit.
-const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_MAX_ATTEMPTS = 3; // SRS UC01: lock the account after 3 failed attempts
 const LOGIN_IP_MAX_ATTEMPTS = 30;
 const LOGIN_WINDOW_SECONDS = 900;
 const LOGIN_LOCK_SECONDS = 900;
@@ -14,6 +15,11 @@ const LOGIN_LOCK_SECONDS = 900;
 // Email-sending actions (reset/resend/register) per IP and per address.
 const EMAIL_ACTION_MAX_ATTEMPTS = 5;
 const EMAIL_ACTION_WINDOW_SECONDS = 3600;
+
+// Wrong verification codes allowed per address and per IP before a 15-minute lock.
+const VERIFY_CODE_MAX_ATTEMPTS = 5;
+const VERIFY_CODE_IP_MAX_ATTEMPTS = 20;
+const VERIFY_CODE_WINDOW_SECONDS = 900;
 
 function cleanInput($value) {
     return trim((string)($value ?? ''));
@@ -175,7 +181,8 @@ function handleLogin(PDO $db) {
 
     if (requiresEmailVerification($user)) {
         $_SESSION['show_resend_verification'] = true;
-        throw new Exception("Your email is not verified yet. Please use the link we emailed you, or request a new one.");
+        $_SESSION['verify_email'] = $user['email'];
+        throw new Exception("Your email is not verified yet. Please use the link or code we emailed you, or request a new one.");
     }
 
     $customerId = null;
@@ -191,6 +198,11 @@ function handleLogin(PDO $db) {
     $db->prepare("UPDATE user SET last_login_at = NOW() WHERE user_id = ?")->execute([intval($user['user_id'])]);
 
     loginUser($user, $customerId);
+
+    // Bring back the cart this customer had before logging out.
+    if ($customerId) {
+        cartRestoreFromDb($db, $customerId);
+    }
 
     redirectTo("../views/" . dashboardForRole($user['role']));
 }
@@ -262,16 +274,17 @@ function handleRegister(PDO $db) {
     ");
     $stmtCust->execute([$user_id, $first_name, $last_name, $email, $phone]);
 
-    $token = issueVerificationToken($db, $user_id);
+    $verification = issueVerificationToken($db, $user_id);
 
     $db->commit();
 
-    if (sendVerificationEmail($email, $first_name, $token)) {
-        redirectTo("../views/login.php", 'success_message', "Account created! Please check your email and verify your address before logging in.");
+    $_SESSION['verify_email'] = $email;
+
+    if (sendVerificationEmail($email, $first_name, $verification)) {
+        redirectTo("../views/verify_code.php", 'success_message', "Account created! We emailed a 6-digit code to $email. Enter it below, or click the link in the email.");
     }
 
-    $_SESSION['show_resend_verification'] = true;
-    redirectTo("../views/login.php", 'error_message', "Account created, but we could not send the verification email. Please request a new link below.");
+    redirectTo("../views/verify_code.php", 'error_message', "Account created, but we could not send the verification email. Please use \"Send a new code\" below.");
 }
 
 function handleResendVerification(PDO $db) {
@@ -285,7 +298,41 @@ function handleResendVerification(PDO $db) {
         resendVerificationEmail($db, $email);
     }
 
-    redirectTo("../views/login.php", 'success_message', "If that email belongs to an unverified account, a new verification link has been sent.");
+    $_SESSION['verify_email'] = $email;
+    redirectTo("../views/verify_code.php", 'success_message', "If that email belongs to an unverified account, a new code and link have been sent. Codes from earlier emails no longer work.");
+}
+
+function handleVerifyCode(PDO $db) {
+    $email = strtolower(cleanInput($_POST['email'] ?? ''));
+    $code = preg_replace('/\D/', '', (string)($_POST['code'] ?? ''));
+
+    $_SESSION['verify_email'] = $email;
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($code) !== 6) {
+        redirectTo("../views/verify_code.php", 'error_message', "Please enter your email and the 6-digit code from the email.");
+    }
+
+    // Per address and per IP, so the 1,000,000 possible codes cannot be guessed.
+    $keys = [rateLimitKey('verify_code_email', $email), rateLimitKey('verify_code_ip', clientIp())];
+    $limits = [[VERIFY_CODE_MAX_ATTEMPTS, VERIFY_CODE_WINDOW_SECONDS], [VERIFY_CODE_IP_MAX_ATTEMPTS, VERIFY_CODE_WINDOW_SECONDS]];
+
+    foreach ($keys as $i => $key) {
+        if (isRateLimited($db, $key, $limits[$i][0], $limits[$i][1])) {
+            redirectTo("../views/verify_code.php", 'error_message', "Too many incorrect codes. Please wait 15 minutes and try again.");
+        }
+    }
+
+    if (verifyEmailCode($db, $email, $code)) {
+        clearRateLimit($db, $keys[0]);
+        unset($_SESSION['verify_email']);
+        redirectTo("../views/login.php", 'success_message', "Your email has been verified! You can now log in.");
+    }
+
+    foreach ($keys as $i => $key) {
+        recordRateLimitAttempt($db, $key, $limits[$i][0], $limits[$i][1], VERIFY_CODE_WINDOW_SECONDS);
+    }
+
+    redirectTo("../views/verify_code.php", 'error_message', "That code is incorrect or has expired. Check the latest email, or send a new code.");
 }
 
 function handleConfirmEmail(PDO $db) {
@@ -363,6 +410,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
                 break;
             case 'confirm_email':
                 handleConfirmEmail($db);
+                break;
+            case 'verify_code':
+                handleVerifyCode($db);
                 break;
             case 'request_password_reset':
                 handleRequestPasswordReset($db);

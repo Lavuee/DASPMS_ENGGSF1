@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 
 require_once '../config/Database.php';
 require_once '../models/User.php';
@@ -109,6 +110,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             $user->user_id = $userId;
 
             if ($user->deactivate()) {
+                logActivity($db, 'Deactivated staff account', 'Staff account', $userId, activityRef($db, 'Staff account', $userId));
                 $_SESSION['success_message'] = "Staff account deactivated successfully.";
             } else {
                 $_SESSION['error_message'] = "Failed to deactivate account. Owner account cannot be deactivated.";
@@ -127,6 +129,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             $user->user_id = $userId;
 
             if ($user->reactivate()) {
+                logActivity($db, 'Reactivated staff account', 'Staff account', $userId, activityRef($db, 'Staff account', $userId));
                 $_SESSION['success_message'] = "Staff account reactivated successfully.";
             } else {
                 $_SESSION['error_message'] = "Failed to reactivate account. Owner account cannot be modified here.";

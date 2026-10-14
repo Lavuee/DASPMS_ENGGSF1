@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
+require_once __DIR__ . '/../includes/cart_store.php';
 
 requirePermission('shop.purchase', '../views/login.php');
 
@@ -12,6 +13,24 @@ if (!isset($_SESSION['cart'])) {
 }
 
 $action = $_POST['action'] ?? '';
+
+// Part Details sends Add to cart in the background (X-Requested-With: fetch) so the customer stays on the page
+$wantsJson = ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'fetch';
+
+function cartItemCount() {
+    $count = 0;
+    foreach ($_SESSION['cart'] ?? [] as $item) {
+        $count += intval($item['qty'] ?? 0);
+    }
+    return $count;
+}
+
+function cartJson(array $data, $status = 200) {
+    http_response_code($status);
+    header('Content-Type: application/json');
+    echo json_encode($data);
+    exit;
+}
 
 try {
     if ($action === 'add') {
@@ -64,7 +83,20 @@ try {
             'image' => $part['image']
         ];
 
-        $_SESSION['success_message'] = "Item added to cart.";
+        cartSaveToDb($db);
+
+        if ($wantsJson) {
+            cartJson([
+                'ok' => true,
+                'message' => 'Added ' . $quantity . ' × ' . html_entity_decode($part['part_name'], ENT_QUOTES, 'UTF-8') . ' to your cart.',
+                'item' => $quantity . ' × ' . html_entity_decode($part['part_name'], ENT_QUOTES, 'UTF-8'),
+                'cartCount' => cartItemCount(),
+                'inCart' => $newQty,
+                'canAddMore' => max(intval($part['quantity_on_hand']) - $newQty, 0),
+            ]);
+        }
+
+        $_SESSION['cp_toast'] = [true, 'Added to cart', $quantity . ' × ' . html_entity_decode($part['part_name'], ENT_QUOTES, 'UTF-8')];
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -93,7 +125,7 @@ try {
 
         if ($quantity <= 0) {
             unset($_SESSION['cart'][$part_id]);
-            $_SESSION['success_message'] = "Item removed from cart.";
+            $_SESSION['cp_toast'] = [true, 'Item removed from cart'];
         } else {
             if ($quantity > intval($stock)) {
                 throw new Exception("Quantity exceeds available stock.");
@@ -102,9 +134,10 @@ try {
             $_SESSION['cart'][$part_id]['qty'] = $quantity;
             $_SESSION['cart'][$part_id]['stock'] = intval($stock);
 
-            $_SESSION['success_message'] = "Cart updated.";
+            $_SESSION['cp_toast'] = [true, 'Cart updated'];
         }
 
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -116,7 +149,8 @@ try {
             unset($_SESSION['cart'][$part_id]);
         }
 
-        $_SESSION['success_message'] = "Item removed from cart.";
+        $_SESSION['cp_toast'] = [true, 'Item removed from cart'];
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -124,7 +158,8 @@ try {
     if ($action === 'clear') {
         unset($_SESSION['cart']);
 
-        $_SESSION['success_message'] = "Cart cleared.";
+        $_SESSION['cp_toast'] = [true, 'Cart cleared'];
+        cartSaveToDb($db);
         header("Location: ../views/customer_cart.php");
         exit;
     }
@@ -132,7 +167,11 @@ try {
     throw new Exception("Invalid cart action.");
 
 } catch (Exception $e) {
-    $_SESSION['error_message'] = $e->getMessage();
+    if ($wantsJson) {
+        cartJson(['ok' => false, 'message' => $e->getMessage(), 'cartCount' => cartItemCount()], 422);
+    }
+
+    $_SESSION['cp_toast'] = [false, $e->getMessage()];
     header("Location: ../views/customer_cart.php");
     exit;
 }

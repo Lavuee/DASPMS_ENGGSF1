@@ -13,3 +13,11 @@ function plainText($value, $fallback = '') {
 function displayText($value, $fallback = 'N/A') {
     return htmlspecialchars(plainText($value, $fallback), ENT_QUOTES, 'UTF-8');
 }
+
+// Short part category label: "Electrical Parts & Supplies" -> "Electrical", "Starter & Motor Parts" -> "Starter & motor".
+function partCategoryLabel($category) {
+    $category = plainText($category);
+    $label = preg_replace('/\s+(parts|supplies)(\s*&\s*(parts|supplies))?\s*$/i', '', $category);
+
+    return ucfirst(strtolower($label !== '' ? $label : $category));
+}

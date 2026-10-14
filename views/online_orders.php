@@ -5,8 +5,12 @@ requirePermission('online_orders.manage');
 
 require_once '../config/Database.php';
 require_once '../models/PartOrder.php';
+require_once '../includes/staff_ui.php';
 
 $db = (new Database())->getConnection();
+
+// Release unpaid web-order reservations older than RESERVATION_HOLD_DAYS (SRS)
+(new PartOrder($db))->expireStaleReservations();
 $stmtOrders = (new PartOrder($db))->getAllOrders();
 $orders = $stmtOrders->fetchAll(PDO::FETCH_ASSOC);
 
@@ -136,1032 +140,333 @@ function cleanDisplay($value, $fallback = 'N/A') {
 
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
-?>
 
+// Cancellation reasons for cancelled orders (read-only; shown in the order popup)
+$cancelInfo = [];
+$cancelledIds = array_map('intval', array_column(array_filter($orders, function ($o) {
+    return ($o['status'] ?? '') === 'Cancelled';
+}), 'order_id'));
+if (!empty($cancelledIds)) {
+    $stmtCancel = $db->prepare(sprintf("
+        SELECT order_id, cancellation_reason, cancelled_at
+        FROM part_order
+        WHERE order_id IN (%s)
+    ", implode(',', array_fill(0, count($cancelledIds), '?'))));
+    $stmtCancel->execute($cancelledIds);
+    foreach ($stmtCancel->fetchAll(PDO::FETCH_ASSOC) as $c) {
+        $cancelInfo[$c['order_id']] = $c;
+    }
+}
+
+// "Capacitors x1<br>Switches x2" (from the model) -> ["Capacitors × 1", "Switches × 2"], as plain text
+function webOrderItems($raw) {
+    $parts = preg_split('/<br\s*\/?>/i', (string) $raw);
+    $items = [];
+    foreach ($parts as $part) {
+        $part = trim(html_entity_decode(strip_tags($part), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($part === '') continue;
+        $items[] = preg_replace('/\sx(\d+)$/', ' × $1', $part);
+    }
+    return $items;
+}
+
+function webOrderStatusKey($status) {
+    return strtolower(str_replace(' ', '', (string) $status));
+}
+
+$statusChips = [
+    'Pending' => 'is-pend',
+    'Approved' => 'is-prog',
+    'Ready for Pickup' => 'is-ok',
+    'Completed' => 'is-done',
+    'Cancelled' => 'is-bad',
+];
+$gcashLabels = [
+    'Pending Verification' => 'GCash to verify',
+    'Awaiting Payment' => 'Awaiting GCash payment',
+    'Verified' => 'GCash verified',
+    'Rejected' => 'GCash rejected',
+];
+$gcashTone = [
+    'Pending Verification' => 'pend',
+    'Awaiting Payment' => 'pend',
+    'Verified' => 'done',
+    'Rejected' => 'bad',
+];
+$orderDialogs = '';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Web Orders - Norily's Repair Shop</title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
-
-<style>
-    .main-content {
-        overflow-x: hidden;
-    }
-
-    .web-orders-page {
-        width: 100%;
-        max-width: 100%;
-    }
-
-    .wo-header {
-        margin-bottom: 1.5rem;
-    }
-
-    .wo-header h2 {
-        font-size: 2rem;
-        font-weight: 900;
-        color: var(--dashboard-text-main);
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
-    }
-
-    .wo-count-text {
-        color: var(--dashboard-text-muted);
-        font-size: 0.95rem;
-        font-weight: 500;
-        margin-bottom: 0;
-    }
-
-    .wo-filter-area {
-        display: grid;
-        grid-template-columns: minmax(260px, 1fr) 240px 105px;
-        gap: 0.85rem;
-        align-items: end;
-        margin-bottom: 1.5rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid #e5e7eb;
-    }
-
-    .wo-filter-label {
-        display: block;
-        color: var(--dashboard-text-muted);
-        font-size: 0.76rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        margin-bottom: 0.35rem;
-    }
-
-    .wo-search-bar {
-        min-height: 44px;
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        background: #fff;
-        border: 1px solid #e5e7eb;
-        border-radius: 14px;
-        padding: 0.65rem 0.9rem;
-        box-shadow: 0 4px 12px rgba(17, 17, 17, 0.035);
-    }
-
-    .wo-search-bar i {
-        font-size: 1.05rem;
-        color: var(--dashboard-text-muted);
-        flex-shrink: 0;
-    }
-
-    .wo-search-bar input {
-        width: 100%;
-        border: none;
-        outline: none;
-        background: transparent;
-        color: var(--dashboard-text-main);
-        font-size: 0.92rem;
-    }
-
-    .wo-search-bar input::placeholder {
-        color: #6b7280;
-    }
-
-    .wo-filter-select {
-        height: 44px;
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
-        padding: 0.55rem 0.85rem;
-        font-size: 0.92rem;
-        color: var(--dashboard-text-main);
-        box-shadow: none;
-    }
-
-    .wo-filter-select:focus {
-        border-color: var(--dashboard-primary);
-        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.18);
-    }
-
-    .wo-clear-btn {
-        height: 44px;
-        border-radius: 999px;
-        padding: 0.55rem 0.85rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-        color: var(--dashboard-text-main);
-        transition: 0.2s ease;
-    }
-
-    .wo-clear-btn:hover {
-        background: #f8fafc;
-        color: var(--black);
-    }
-
-    .wo-table-wrap {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-
-    .wo-table {
-        width: 100%;
-        min-width: 1240px;
-        border-collapse: collapse;
-        background: transparent;
-        margin-bottom: 0;
-    }
-
-    .wo-table thead th {
-        color: var(--dashboard-text-muted);
-        font-size: 0.82rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        padding: 0.9rem 0.75rem;
-        border-bottom: 1px solid #dcdfe4;
-        background: transparent;
-        white-space: nowrap;
-    }
-
-    .wo-table tbody td {
-        padding: 1rem 0.75rem;
-        border-bottom: 1px solid #e8ebef;
-        vertical-align: middle;
-        color: var(--dashboard-text-main);
-        font-size: 0.95rem;
-        background: transparent;
-    }
-
-    .wo-table tbody tr:hover td {
-        background: rgba(245, 197, 24, 0.035);
-    }
-
-    .wo-table th:last-child,
-    .wo-table td:last-child {
-        min-width: 175px;
-    }
-
-    .wo-order-id,
-    .wo-customer,
-    .order-items,
-    .pickup-schedule {
-        color: var(--dashboard-text-main);
-        font-weight: 900;
-    }
-
-    .wo-order-id,
-    .pickup-schedule,
-    .wo-total {
-        white-space: nowrap;
-    }
-
-    .wo-order-date,
-    .wo-order-sub,
-    .pickup-time,
-    .payment-meta,
-    .order-note {
-        display: block;
-        color: var(--dashboard-text-muted);
-        font-size: 0.78rem;
-        font-weight: 600;
-        line-height: 1.45;
-        margin-top: 0.25rem;
-    }
-
-    .wo-customer {
-        margin-top: 0.35rem;
-        max-width: 190px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .order-items {
-        max-width: 250px;
-        line-height: 1.45;
-    }
-
-    .pickup-note,
-    .payment-detail-note,
-    .verification-note {
-        display: block;
-        margin-top: 0.35rem;
-        color: var(--dashboard-text-muted);
-        font-size: 0.78rem;
-        line-height: 1.45;
-        max-width: 260px;
-        white-space: normal;
-    }
-
-    .wo-total {
-        color: #047857;
-        font-size: 0.95rem;
-        font-weight: 900;
-    }
-
-    .badge-soft-danger,
-    .badge-soft-primary,
-    .badge-soft-warning,
-    .badge-soft-success,
-    .badge-soft-secondary {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 999px;
-        padding: 0.42rem 0.72rem;
-        font-size: 0.78rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .badge-soft-danger {
-        background: #fee2e2;
-        color: #b91c1c;
-    }
-
-    .badge-soft-primary {
-        background: #e9f2ff;
-        color: #1d4ed8;
-    }
-
-    .badge-soft-warning {
-        background: #fef3c7;
-        color: #92400e;
-    }
-
-    .badge-soft-success {
-        background: #dcfce7;
-        color: #047857;
-    }
-
-    .badge-soft-secondary {
-        background: #f1f5f9;
-        color: #475569;
-    }
-
-    .payment-details-box {
-        min-width: 310px;
-        max-width: 370px;
-    }
-
-    .payment-summary-title {
-        color: var(--dashboard-text-muted);
-        font-size: 0.7rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-        margin-bottom: 0.42rem;
-    }
-
-    .payment-badge-row {
-        display: flex;
-        align-items: center;
-        gap: 0.45rem;
-        flex-wrap: wrap;
-        margin-bottom: 0.6rem;
-    }
-
-    .payment-status-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.28rem;
-        border-radius: 999px;
-        padding: 0.42rem 0.72rem;
-        font-size: 0.76rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .payment-chip-label {
-        opacity: 0.82;
-        font-size: 0.68rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.2px;
-    }
-
-    .payment-section {
-        margin-top: 0.65rem;
-        padding-top: 0.65rem;
-        border-top: 1px solid #edf0f4;
-    }
-
-    .payment-label {
-        display: block;
-        color: var(--dashboard-text-muted);
-        font-size: 0.7rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-        margin-bottom: 0.18rem;
-    }
-
-    .payment-value {
-        color: var(--dashboard-text-main);
-        font-size: 0.86rem;
-        font-weight: 900;
-        line-height: 1.35;
-    }
-
-    .payment-amount-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.45rem;
-        margin-top: 0.45rem;
-    }
-
-    .payment-mini-box {
-        border: 1px solid #edf0f4;
-        border-radius: 12px;
-        padding: 0.45rem 0.55rem;
-        background: rgba(248, 250, 252, 0.65);
-    }
-
-    .payment-mini-label {
-        color: var(--dashboard-text-muted);
-        font-size: 0.66rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.25px;
-        line-height: 1.15;
-    }
-
-    .payment-mini-value {
-        color: var(--dashboard-text-main);
-        font-size: 0.78rem;
-        font-weight: 900;
-        white-space: nowrap;
-        margin-top: 0.15rem;
-    }
-
-    .gcash-verification-form {
-        margin: 0.7rem 0 0;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 0.45rem;
-        max-width: 300px;
-    }
-
-    .gcash-verification-select,
-    .order-action-select {
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
-        font-size: 0.84rem;
-        padding: 0.48rem 0.65rem;
-        box-shadow: none;
-    }
-
-    .gcash-verification-select:focus,
-    .order-action-select:focus {
-        border-color: var(--dashboard-primary);
-        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.18);
-    }
-
-    .gcash-verification-btn,
-    .order-update-btn {
-        border-radius: 999px;
-        background: var(--dashboard-primary);
-        border: 1px solid var(--dashboard-primary);
-        color: var(--black);
-        font-size: 0.82rem;
-        padding: 0.48rem 0.75rem;
-        font-weight: 900;
-        transition: 0.2s ease;
-        white-space: nowrap;
-    }
-
-    .gcash-verification-btn:hover,
-    .order-update-btn:hover {
-        background: var(--black);
-        border-color: var(--black);
-        color: var(--white);
-    }
-
-    .order-action-form {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 0.45rem;
-        margin: 0;
-    }
-
-    .order-action-select,
-    .order-update-btn {
-        width: 160px;
-    }
-
-    .order-no-action,
-    .order-completed-text,
-    .order-cancelled-text {
-        display: block;
-        color: var(--dashboard-text-muted);
-        font-size: 0.85rem;
-        font-weight: 800;
-        white-space: nowrap;
-    }
-
-    .order-completed-text {
-        color: #047857;
-        font-style: normal;
-    }
-
-    .order-cancelled-text {
-        color: #6b7280;
-        font-style: normal;
-    }
-
-    .wo-empty-state {
-        text-align: center;
-        color: var(--dashboard-text-muted);
-        padding: 3rem 1rem;
-    }
-
-    .wo-pagination-wrap {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.35rem;
-        margin-top: 1rem;
-        flex-wrap: wrap;
-    }
-
-    .wo-page-btn {
-        min-width: 38px;
-        min-height: 38px;
-        border: 1px solid #e5e7eb;
-        background: #fff;
-        color: var(--dashboard-text-muted);
-        border-radius: 999px;
-        font-size: 0.82rem;
-        font-weight: 900;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.45rem 0.75rem;
-        transition: 0.2s ease;
-    }
-
-    .wo-page-btn:hover:not(:disabled) {
-        border-color: var(--dashboard-primary);
-        background: #fffaf0;
-        color: var(--black);
-    }
-
-    .wo-page-btn.active {
-        background: var(--dashboard-primary);
-        border-color: var(--dashboard-primary);
-        color: var(--black);
-    }
-
-    .wo-page-btn:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-    }
-
-    .alert {
-        border-radius: 16px;
-    }
-
-    @media (max-width: 991.98px) {
-        .wo-filter-area {
-            grid-template-columns: 1fr;
-        }
-
-        .wo-clear-btn {
-            width: 100%;
-        }
-
-        .order-action-form {
-            align-items: stretch;
-        }
-
-        .order-action-select,
-        .order-update-btn,
-        .gcash-verification-form {
-            width: 100%;
-            max-width: 100%;
-        }
-
-        .gcash-verification-form {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media (max-width: 767.98px) {
-        .wo-header h2 {
-            font-size: 1.75rem;
-        }
-
-        .wo-search-bar,
-        .wo-filter-select,
-        .wo-clear-btn {
-            height: 42px;
-        }
-
-        .wo-pagination-wrap {
-            justify-content: center;
-        }
-    }
-</style>
+<link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
-
 <body>
 
 <div class="app-wrapper">
-<?php include '../includes/sidebar.php'; ?>
+    <?php include '../includes/sidebar.php'; ?>
 
-<main class="main-content">
-    <div class="web-orders-page">
+    <main class="main-content sp-page" id="spMain">
 
-        <div class="wo-header">
-            <h2>Customer Web Orders</h2>
-            <p class="wo-count-text">
-                <?php echo $counts['All']; ?> total web orders from the customer portal
-            </p>
-        </div>
+        <?php
+        spPageHead(
+            spPortalLabel() . ' · Workshop',
+            'Web Orders',
+            'Parts customers reserved online. Approve them, check GCash references, and release them at pickup.'
+        );
+        cpFlash();
+        ?>
 
-        <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success alert-dismissible fade show mb-4">
-                <i class="bi bi-check-circle-fill me-2"></i>
-                <?php echo htmlspecialchars($_SESSION['success_message'], ENT_QUOTES, 'UTF-8'); unset($_SESSION['success_message']); ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
-
-        <?php if (isset($_SESSION['error_message'])): ?>
-            <div class="alert alert-danger alert-dismissible fade show mb-4">
-                <i class="bi bi-exclamation-circle-fill me-2"></i>
-                <?php echo htmlspecialchars($_SESSION['error_message'], ENT_QUOTES, 'UTF-8'); unset($_SESSION['error_message']); ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
-
-        <div class="wo-filter-area">
-            <div>
-                <label class="wo-filter-label">Search</label>
-                <div class="wo-search-bar">
-                    <i class="bi bi-search"></i>
-                    <input type="text" id="orderSearch" placeholder="Search order, customer, part, pickup date, payment method, status...">
+        <div data-sp-filter="#orderRows">
+            <div class="sp-toolbar">
+                <div class="sp-search-field-inline">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                    <input type="search" id="orderSearch" class="cp-input" data-sp-search placeholder="Search order no. or customer" aria-label="Search order no. or customer" autocomplete="off">
                 </div>
             </div>
 
-            <div>
-                <label class="wo-filter-label">Status</label>
-                <select id="statusFilter" class="form-select wo-filter-select">
-                    <option value="All">All (<?php echo $counts['All']; ?>)</option>
-                    <option value="Pending">Pending (<?php echo $counts['Pending']; ?>)</option>
-                    <option value="Approved">Approved (<?php echo $counts['Approved']; ?>)</option>
-                    <option value="Ready for Pickup">Ready for Pickup (<?php echo $counts['Ready for Pickup']; ?>)</option>
-                    <option value="Completed">Completed (<?php echo $counts['Completed']; ?>)</option>
-                    <option value="Cancelled">Cancelled (<?php echo $counts['Cancelled']; ?>)</option>
-                </select>
+            <div class="sp-chips" role="group" aria-label="Filter by status">
+                <button type="button" class="sp-chip" data-sp-chip="all" aria-pressed="true">All <span class="sp-chip-count"><?= $counts['All'] ?></span></button>
+                <?php foreach ($statusChips as $label => $tone): ?>
+                    <button type="button" class="sp-chip <?= $tone ?>" data-sp-chip="<?= webOrderStatusKey($label) ?>" aria-pressed="false"><span class="sp-chip-dot"></span><?= cpEscape($label) ?> <span class="sp-chip-count"><?= $counts[$label] ?></span></button>
+                <?php endforeach; ?>
             </div>
 
-            <button type="button" id="clearFilters" class="wo-clear-btn">Clear</button>
+            <p class="sp-showing" data-sp-showing aria-live="polite">Showing <?= count($orders) ?> of <?= count($orders) ?></p>
         </div>
 
-        <div class="wo-table-wrap">
-            <table class="wo-table" id="onlineOrdersTable">
-                <thead>
-                    <tr>
-                        <th>Order / Customer</th>
-                        <th>Item Details</th>
-                        <th>Pickup Schedule</th>
-                        <th>Total Cost</th>
-                        <th>Order Status</th>
-                        <th>Payment Details</th>
-                        <th class="text-end">Action</th>
+        <table class="cp-table sp-table" id="onlineOrdersTable">
+            <thead>
+                <tr>
+                    <th scope="col">Order / customer</th>
+                    <th scope="col">Items</th>
+                    <th scope="col">Pickup</th>
+                    <th scope="col">Total</th>
+                    <th scope="col">Order status</th>
+                    <th scope="col">Payment</th>
+                    <th scope="col"><span class="visually-hidden">Update</span></th>
+                </tr>
+            </thead>
+            <tbody id="orderRows" data-cp-paginate="10" data-cp-noun="order">
+                <?php foreach ($orders as $row): ?>
+                    <?php
+                    $orderId = intval($row['order_id']);
+                    $orderNo = 'PO-' . $orderId;
+                    $status = trim($row['status'] ?? 'Pending');
+                    $paymentStatus = trim($row['payment_status'] ?? 'No Invoice');
+                    $amountPaid = floatval($row['amount_paid'] ?? 0);
+                    $customerName = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+                    $items = webOrderItems($row['items'] ?? '');
+                    $pickupDate = trim($row['preferred_pickup_date'] ?? '');
+                    $pickupTime = trim($row['preferred_pickup_time'] ?? '');
+                    $pickupNotes = trim($row['pickup_notes'] ?? '');
+                    $pickupText = $pickupDate !== '' ? date('d M', strtotime($pickupDate)) . ($pickupTime !== '' ? ' · ' . date('g:i A', strtotime($pickupTime)) : '') : 'No pickup schedule';
+                    $paymentMethod = trim($row['payment_method'] ?? '') ?: 'Cash on Pickup';
+                    $gcashReference = trim($row['gcash_reference'] ?? '');
+                    $gcashAmount = floatval($row['gcash_payment_amount'] ?? 0);
+                    $paymentNotes = trim($row['payment_notes'] ?? '');
+                    $isGcash = isGcashOrder($paymentMethod);
+                    $gcashVerificationStatus = trim($row['gcash_verification_status'] ?? '');
+                    if ($gcashVerificationStatus === '') {
+                        $gcashVerificationStatus = $isGcash ? 'Pending Verification' : 'Not Required';
+                    }
+                    $gcashVerifierName = trim(($row['gcash_verifier_first_name'] ?? '') . ' ' . ($row['gcash_verifier_last_name'] ?? ''));
+                    $shopPaidAmount = $isGcash ? max($amountPaid - $gcashAmount, 0) : $amountPaid;
+                    $allowedNextStatuses = getAllowedNextStatuses($status, $paymentStatus, $paymentMethod, $gcashVerificationStatus, $amountPaid);
+                    $canVerifyGcash = $isGcash && !in_array($status, ['Completed', 'Cancelled'], true) && !in_array($gcashVerificationStatus, ['Verified', 'Awaiting Payment'], true);
+                    $hasActions = !empty($allowedNextStatuses) || $canVerifyGcash;
+                    $gcashBadge = $isGcash ? '<span class="st ' . ($gcashTone[$gcashVerificationStatus] ?? 'done') . '">' . cpEscape($gcashLabels[$gcashVerificationStatus] ?? $gcashVerificationStatus) . '</span>' : '';
+
+                    // Short note on what's blocking the next step
+                    $orderNote = '';
+                    if ($isGcash && $gcashVerificationStatus !== 'Verified' && $status === 'Pending') {
+                        $orderNote = $gcashVerificationStatus === 'Awaiting Payment' ? 'Waiting for the online GCash payment (confirmed automatically by PayMongo).' : 'Verify the GCash reference before approving.';
+                    } elseif ($status === 'Ready for Pickup' && $paymentStatus === 'Paid') {
+                        $orderNote = 'Paid. Complete it once the customer claims the parts.';
+                    } elseif ($status === 'Ready for Pickup' && $paymentStatus === 'Partial') {
+                        $orderNote = 'Partly paid, so it can no longer be cancelled. The rest is paid in Billing.';
+                    } elseif ($status === 'Ready for Pickup') {
+                        $orderNote = 'The remaining payment is recorded in Billing.';
+                    }
+
+                    $searchText = strtolower('#' . $orderId . ' ' . $orderNo . ' ' . $customerName . ' ' . implode(' ', $items) . ' ' . $pickupText . ' ' . $pickupNotes . ' ' . $paymentMethod . ' ' . $gcashReference . ' ' . $gcashVerificationStatus . ' ' . $status . ' ' . $paymentStatus);
+                    ?>
+                    <tr data-status="<?= webOrderStatusKey($status) ?>" data-search="<?= cpEscape($searchText) ?>">
+                        <td data-label="Order">
+                            <div>
+                                <span class="sp-ref"><?= cpEscape($orderNo) ?></span>
+                                <span class="cp-cell-sub"><?= cpEscape($customerName) ?></span>
+                            </div>
+                        </td>
+                        <td data-label="Items"><?= cpEscape(implode(', ', $items) ?: '—') ?></td>
+                        <td data-label="Pickup" class="sp-nowrap"><?= cpEscape($pickupText) ?></td>
+                        <td data-label="Total" class="sp-mono"><?= cpMoney($row['total_amount'] ?? 0) ?></td>
+                        <td data-label="Order status"><?= cpBadge($status) ?></td>
+                        <td data-label="Payment">
+                            <div>
+                                <span class="sp-cell-line"><?= cpEscape($paymentMethod) ?></span>
+                                <?php if ($gcashReference !== ''): ?>
+                                    <span class="cp-cell-sub">Ref <?= cpEscape($gcashReference) ?></span>
+                                <?php endif; ?>
+                                <?php if ($gcashBadge !== ''): ?><div class="sp-badge-gap"><?= $gcashBadge ?></div><?php endif; ?>
+                            </div>
+                        </td>
+                        <td class="cp-num">
+                            <button type="button" class="cp-btn <?= $hasActions ? 'cp-btn-dark' : 'cp-btn-line' ?> cp-btn-sm" data-sp-open="#orderDialog<?= $orderId ?>"><?= $hasActions ? 'Update' : 'View' ?></button>
+                        </td>
                     </tr>
-                </thead>
 
-                <tbody>
-                    <?php if (count($orders) > 0): ?>
-                        <?php foreach ($orders as $row): ?>
-                            <?php
-                                $status = trim($row['status'] ?? 'Pending');
-                                $badge = getOrderStatusBadgeClass($status);
+                    <?php ob_start(); ?>
+                    <div class="sp-dialog" id="orderDialog<?= $orderId ?>" role="dialog" aria-modal="true" aria-labelledby="orderTitle<?= $orderId ?>" hidden>
+                        <div class="sp-dialog-box">
+                            <div class="cp-modal-head">
+                                <div>
+                                    <p class="cp-label"><span class="sp-mono"><?= cpEscape($orderNo) ?></span> · <?= cpEscape($customerName) ?></p>
+                                    <h2 class="cp-modal-title" id="orderTitle<?= $orderId ?>"><?= $hasActions ? 'Update web order' : 'Web order' ?></h2>
+                                </div>
+                                <button type="button" class="cp-modal-x" data-sp-close aria-label="Close">&times;</button>
+                            </div>
 
-                                $paymentStatus = trim($row['payment_status'] ?? 'No Invoice');
-                                $paymentBadge = getPaymentBadgeClass($paymentStatus);
-                                $amountPaid = floatval($row['amount_paid'] ?? 0);
-
-                                $customerName = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
-                                $itemsRaw = $row['items'] ?? '';
-                                $itemsPlain = strip_tags(str_replace('<br>', ' ', $itemsRaw));
-
-                                $pickupDate = trim($row['preferred_pickup_date'] ?? '');
-                                $pickupTime = trim($row['preferred_pickup_time'] ?? '');
-                                $pickupNotes = trim($row['pickup_notes'] ?? '');
-
-                                $pickupDateDisplay = $pickupDate !== '' ? date('M d, Y', strtotime($pickupDate)) : 'No pickup schedule';
-                                $pickupTimeDisplay = $pickupTime !== '' ? date('h:i A', strtotime($pickupTime)) : '';
-
-                                $paymentMethod = trim($row['payment_method'] ?? 'Cash on Pickup');
-                                $gcashReference = trim($row['gcash_reference'] ?? '');
-                                $gcashAmount = floatval($row['gcash_payment_amount'] ?? 0);
-                                $paymentNotes = trim($row['payment_notes'] ?? '');
-
-                                $gcashVerificationStatus = trim($row['gcash_verification_status'] ?? '');
-
-                                if ($gcashVerificationStatus === '' && isGcashOrder($paymentMethod)) {
-                                    $gcashVerificationStatus = 'Pending Verification';
-                                }
-
-                                if ($gcashVerificationStatus === '' && !isGcashOrder($paymentMethod)) {
-                                    $gcashVerificationStatus = 'Not Required';
-                                }
-
-                                $gcashVerificationBadge = getGcashVerificationBadgeClass($gcashVerificationStatus);
-                                $gcashVerifierName = trim(($row['gcash_verifier_first_name'] ?? '') . ' ' . ($row['gcash_verifier_last_name'] ?? ''));
-
-                                $shopPaidAmount = 0;
-
-                                if (isGcashOrder($paymentMethod)) {
-                                    $shopPaidAmount = max($amountPaid - $gcashAmount, 0);
-                                } else {
-                                    $shopPaidAmount = $amountPaid;
-                                }
-
-                                $allowedNextStatuses = getAllowedNextStatuses(
-                                    $status,
-                                    $paymentStatus,
-                                    $paymentMethod,
-                                    $gcashVerificationStatus,
-                                    $amountPaid
-                                );
-
-                                $searchText = strtolower(
-                                    '#' . ($row['order_id'] ?? '') . ' ' .
-                                    $customerName . ' ' .
-                                    $itemsPlain . ' ' .
-                                    $pickupDateDisplay . ' ' .
-                                    $pickupTimeDisplay . ' ' .
-                                    $pickupNotes . ' ' .
-                                    $paymentMethod . ' ' .
-                                    $gcashReference . ' ' .
-                                    $gcashVerificationStatus . ' ' .
-                                    $paymentNotes . ' ' .
-                                    $status . ' ' .
-                                    $paymentStatus
-                                );
-                            ?>
-
-                            <tr class="order-row" data-status="<?php echo htmlspecialchars($status, ENT_QUOTES, 'UTF-8'); ?>" data-search="<?php echo htmlspecialchars($searchText, ENT_QUOTES, 'UTF-8'); ?>">
-                                <td>
-                                    <div class="wo-order-id">#<?php echo intval($row['order_id']); ?></div>
-                                    <span class="wo-order-date">
-                                        <?php echo !empty($row['order_date']) ? date('M d, Y', strtotime($row['order_date'])) : 'N/A'; ?>
-                                    </span>
-                                    <div class="wo-customer" title="<?php echo cleanDisplay($customerName); ?>">
-                                        <?php echo cleanDisplay($customerName); ?>
-                                    </div>
-                                    <div class="wo-order-sub">Customer web order</div>
-                                </td>
-
-                                <td>
-                                    <div class="order-items"><?php echo $itemsRaw; ?></div>
-                                </td>
-
-                                <td>
-                                    <?php if ($pickupDate !== ''): ?>
-                                        <div class="pickup-schedule">
-                                            <?php echo htmlspecialchars($pickupDateDisplay, ENT_QUOTES, 'UTF-8'); ?>
-                                            <?php if ($pickupTimeDisplay !== ''): ?>
-                                                <span class="pickup-time"><?php echo htmlspecialchars($pickupTimeDisplay, ENT_QUOTES, 'UTF-8'); ?></span>
-                                            <?php endif; ?>
-                                        </div>
-
-                                        <?php if ($pickupNotes !== ''): ?>
-                                            <span class="pickup-note"><?php echo cleanDisplay($pickupNotes, ''); ?></span>
-                                        <?php endif; ?>
-                                    <?php else: ?>
-                                        <span class="order-note">No pickup schedule</span>
+                            <div class="sp-dialog-body">
+                                <dl class="sp-facts">
+                                    <div><dt>Items</dt><dd><?= cpEscape(implode(', ', $items) ?: '—') ?></dd></div>
+                                    <div><dt>Pickup</dt><dd><?= cpEscape($pickupText) ?></dd></div>
+                                    <div><dt>Total</dt><dd class="sp-mono"><?= cpMoney($row['total_amount'] ?? 0) ?></dd></div>
+                                    <div><dt>Payment</dt><dd><?= cpEscape($paymentMethod) ?></dd></div>
+                                    <div><dt>Reference</dt><dd class="sp-mono"><?= cpEscape($gcashReference !== '' ? $gcashReference : '—') ?></dd></div>
+                                    <div><dt>Order status</dt><dd><?= cpBadge($status) ?></dd></div>
+                                    <div><dt>Invoice</dt><dd><?= cpBadge($paymentStatus) ?></dd></div>
+                                    <div><dt><?= $isGcash ? 'Paid (GCash / shop)' : 'Paid at shop' ?></dt><dd class="sp-mono"><?= $isGcash ? cpMoney($gcashAmount) . ' / ' . cpMoney($shopPaidAmount) : cpMoney($shopPaidAmount) ?></dd></div>
+                                    <div><dt>Balance</dt><dd class="sp-mono"><?= cpMoney($row['balance_due'] ?? 0) ?></dd></div>
+                                    <?php if ($pickupNotes !== ''): ?>
+                                        <div class="is-wide"><dt>Pickup note</dt><dd class="sp-fact-text"><?= cpEscape($pickupNotes) ?></dd></div>
                                     <?php endif; ?>
-                                </td>
-
-                                <td>
-                                    <div class="wo-total">₱<?php echo number_format(floatval($row['total_amount'] ?? 0), 2); ?></div>
-                                </td>
-
-                                <td>
-                                    <span class="<?php echo $badge; ?>">
-                                        <?php echo htmlspecialchars($status, ENT_QUOTES, 'UTF-8'); ?>
-                                    </span>
-                                </td>
-
-                                <td>
-                                    <div class="payment-details-box">
-                                        <div class="payment-badge-row">
-                                            <span class="payment-status-chip <?php echo $paymentBadge; ?>">
-                                                <span class="payment-chip-label">Payment:</span>
-                                                <?php echo htmlspecialchars($paymentStatus, ENT_QUOTES, 'UTF-8'); ?>
-                                            </span>
-
-                                            <?php if (isGcashOrder($paymentMethod)): ?>
-                                                <span class="payment-status-chip <?php echo $gcashVerificationBadge; ?>">
-                                                    <span class="payment-chip-label">GCash:</span>
-                                                    <?php echo htmlspecialchars($gcashVerificationStatus, ENT_QUOTES, 'UTF-8'); ?>
-                                                </span>
-                                            <?php endif; ?>
-                                        </div>
-
-                                        <div class="payment-section">
-                                            <span class="payment-label">Payment Method</span>
-                                            <div class="payment-value">
-                                                <?php echo htmlspecialchars($paymentMethod, ENT_QUOTES, 'UTF-8'); ?>
-                                            </div>
-                                        </div>
-
-                                        <div class="payment-section">
-                                            <span class="payment-label">Amount Breakdown</span>
-
-                                            <div class="payment-amount-grid">
-                                                <?php if (isGcashOrder($paymentMethod)): ?>
-                                                    <div class="payment-mini-box">
-                                                        <div class="payment-mini-label">
-                                                            <?php echo $paymentMethod === 'GCash Full Payment' ? 'GCash Paid' : 'GCash Down Payment'; ?>
-                                                        </div>
-                                                        <div class="payment-mini-value">₱<?php echo number_format($gcashAmount, 2); ?></div>
-                                                    </div>
-
-                                                    <div class="payment-mini-box">
-                                                        <div class="payment-mini-label">Paid at Shop</div>
-                                                        <div class="payment-mini-value">₱<?php echo number_format($shopPaidAmount, 2); ?></div>
-                                                    </div>
-                                                <?php else: ?>
-                                                    <div class="payment-mini-box">
-                                                        <div class="payment-mini-label">Paid at Shop</div>
-                                                        <div class="payment-mini-value">₱<?php echo number_format($shopPaidAmount, 2); ?></div>
-                                                    </div>
-                                                <?php endif; ?>
-
-                                                <div class="payment-mini-box">
-                                                    <div class="payment-mini-label">Total Paid</div>
-                                                    <div class="payment-mini-value">₱<?php echo number_format($amountPaid, 2); ?></div>
-                                                </div>
-
-                                                <div class="payment-mini-box">
-                                                    <div class="payment-mini-label">Balance</div>
-                                                    <div class="payment-mini-value">₱<?php echo number_format(floatval($row['balance_due'] ?? 0), 2); ?></div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <?php if (isGcashOrder($paymentMethod)): ?>
-                                            <div class="payment-section">
-                                                <span class="payment-label">GCash Verification</span>
-
-                                                <div class="payment-meta">
-                                                    Reference No.: <?php echo $gcashReference !== '' ? htmlspecialchars($gcashReference, ENT_QUOTES, 'UTF-8') : 'N/A'; ?>
-                                                </div>
-
-                                                <?php if ($gcashVerificationStatus === 'Awaiting Payment'): ?>
-                                                    <span class="verification-note">Waiting for the customer to pay online through PayMongo. It is confirmed automatically.</span>
-                                                <?php elseif ($gcashVerificationStatus === 'Verified' && $gcashVerifierName === ''): ?>
-                                                    <span class="verification-note">Confirmed by PayMongo.</span>
-                                                <?php endif; ?>
-
+                                    <?php if ($paymentNotes !== ''): ?>
+                                        <div class="is-wide"><dt>Payment note</dt><dd class="sp-fact-text"><?= cpEscape($paymentNotes) ?></dd></div>
+                                    <?php endif; ?>
+                                    <?php if ($isGcash): ?>
+                                        <div class="is-wide">
+                                            <dt>GCash check</dt>
+                                            <dd class="sp-fact-text">
+                                                <?= $gcashBadge ?>
+                                                <?php if ($gcashVerificationStatus === 'Verified' && $gcashVerifierName === ''): ?> Confirmed by PayMongo.<?php endif; ?>
                                                 <?php if (!empty($row['gcash_verified_at'])): ?>
-                                                    <span class="verification-note">
-                                                        Checked: <?php echo date('M d, Y h:i A', strtotime($row['gcash_verified_at'])); ?>
-                                                        <?php if ($gcashVerifierName !== ''): ?>
-                                                            <br>Verified By: <?php echo cleanDisplay($gcashVerifierName, ''); ?>
-                                                        <?php endif; ?>
-                                                    </span>
+                                                    Checked <?= date('d M Y, g:i A', strtotime($row['gcash_verified_at'])) ?><?= $gcashVerifierName !== '' ? ' by ' . cpEscape($gcashVerifierName) : '' ?>.
                                                 <?php endif; ?>
-                                            </div>
+                                            </dd>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if ($status === 'Cancelled'): ?>
+                                        <?php $reason = trim($cancelInfo[$orderId]['cancellation_reason'] ?? ''); ?>
+                                        <div class="is-wide"><dt>Cancellation reason</dt><dd class="sp-fact-text sp-text-bad"><?= $reason !== '' ? nl2br(cpEscape($reason)) : 'No reason recorded (cancelled before reasons were required).' ?></dd></div>
+                                    <?php endif; ?>
+                                </dl>
 
-                                            <?php if (!in_array($status, ['Completed', 'Cancelled']) && !in_array($gcashVerificationStatus, ['Verified', 'Awaiting Payment'], true)): ?>
-                                                <form action="../controllers/ManageOrderController.php" method="POST" class="gcash-verification-form" onsubmit="return confirm('Update GCash verification status for this order?');">
-                                                    <?= csrfField() ?>
-                                                    <input type="hidden" name="action" value="update_gcash_verification">
-                                                    <input type="hidden" name="order_id" value="<?php echo intval($row['order_id']); ?>">
+                                <?php if ($canVerifyGcash): ?>
+                                    <form action="../controllers/ManageOrderController.php" method="POST" class="sp-inline-form"
+                                          data-cp-confirm="This updates the GCash check on this order." data-cp-confirm-title="Save the GCash check?"
+                                          data-cp-confirm-yes="Save" data-cp-confirm-no="Go back" data-cp-confirm-tone="dark">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="action" value="update_gcash_verification">
+                                        <input type="hidden" name="order_id" value="<?= $orderId ?>">
+                                        <div class="sp-field">
+                                            <label for="gcash<?= $orderId ?>">GCash reference check</label>
+                                            <select name="gcash_verification_status" id="gcash<?= $orderId ?>" class="cp-input" required>
+                                                <option value="" disabled selected>Choose a result</option>
+                                                <option value="Verified">Verified, the payment came in</option>
+                                                <option value="Rejected">Rejected, reference not found</option>
+                                                <option value="Pending Verification">Still checking</option>
+                                            </select>
+                                        </div>
+                                        <button type="submit" class="cp-btn cp-btn-line">Save check</button>
+                                    </form>
+                                <?php endif; ?>
 
-                                                    <select name="gcash_verification_status" class="form-select gcash-verification-select" required>
-                                                        <option value="" disabled selected>Verify GCash</option>
-                                                        <option value="Verified">Mark Verified</option>
-                                                        <option value="Rejected">Reject Reference</option>
-                                                        <option value="Pending Verification">Set Pending</option>
-                                                    </select>
-
-                                                    <button type="submit" class="gcash-verification-btn">Save</button>
-                                                </form>
-                                            <?php endif; ?>
-                                        <?php endif; ?>
-
-                                        <?php if ($paymentNotes !== ''): ?>
-                                            <span class="payment-detail-note"><?php echo cleanDisplay($paymentNotes, ''); ?></span>
-                                        <?php endif; ?>
-                                    </div>
-                                </td>
-
-                                <td class="text-end">
-                                    <?php if (!empty($allowedNextStatuses)): ?>
-                                        <form action="../controllers/ManageOrderController.php" method="POST" class="order-action-form" onsubmit="return confirm('Update this web order status?');">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="update_status">
-                                            <input type="hidden" name="order_id" value="<?php echo intval($row['order_id']); ?>">
-
-                                            <select name="status" class="form-select order-action-select" required>
-                                                <option value="" disabled selected>Select action</option>
+                                <?php if (!empty($allowedNextStatuses)): ?>
+                                    <form action="../controllers/ManageOrderController.php" method="POST" id="orderStatusForm<?= $orderId ?>" class="sp-order-status-form" data-order-status-form>
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="action" value="update_status">
+                                        <input type="hidden" name="order_id" value="<?= $orderId ?>">
+                                        <div class="sp-field" style="margin-top: 22px">
+                                            <label for="orderStatus<?= $orderId ?>">Order status</label>
+                                            <select name="status" id="orderStatus<?= $orderId ?>" class="cp-input" required>
+                                                <option value="" disabled selected>Select the next step</option>
                                                 <?php foreach ($allowedNextStatuses as $value => $label): ?>
-                                                    <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>">
-                                                        <?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?>
-                                                    </option>
+                                                    <option value="<?= cpEscape($value) ?>"><?= cpEscape($label) ?></option>
                                                 <?php endforeach; ?>
                                             </select>
+                                            <p class="cp-hint">Approve to hold the parts. Mark ready when they're packed.</p>
+                                        </div>
+                                        <div class="sp-field" data-cancel-reason hidden style="margin-top: 18px">
+                                            <label for="orderReason<?= $orderId ?>">Reason for cancelling <span class="sp-req">*</span></label>
+                                            <textarea name="cancellation_reason" id="orderReason<?= $orderId ?>" class="cp-input" rows="3" maxlength="500" placeholder="Shown on the order"></textarea>
+                                        </div>
+                                    </form>
+                                <?php endif; ?>
 
-                                            <button type="submit" class="order-update-btn">Update</button>
-                                        </form>
+                                <?php if ($orderNote !== ''): ?>
+                                    <p class="cp-hint" style="margin-top: 16px"><?= cpEscape($orderNote) ?></p>
+                                <?php endif; ?>
+                            </div>
 
-                                        <?php if (isGcashOrder($paymentMethod) && $gcashVerificationStatus !== 'Verified' && $status === 'Pending'): ?>
-                                            <span class="order-note"><?php echo $gcashVerificationStatus === 'Awaiting Payment' ? 'Waiting for online GCash payment.' : 'Verify GCash before approval.'; ?></span>
-                                        <?php elseif ($status === 'Ready for Pickup' && $paymentStatus !== 'Paid'): ?>
-                                            <span class="order-note">Remaining payment is handled in Billing.</span>
-                                        <?php endif; ?>
-                                    <?php else: ?>
-                                        <?php if ($status === 'Completed'): ?>
-                                            <span class="order-completed-text">Completed</span>
-                                        <?php elseif ($status === 'Cancelled'): ?>
-                                            <span class="order-cancelled-text">Cancelled</span>
-                                        <?php else: ?>
-                                            <span class="order-no-action">No action</span>
+                            <div class="cp-modal-foot">
+                                <button type="button" class="cp-btn cp-btn-line" data-sp-close><?= !empty($allowedNextStatuses) ? 'Cancel' : 'Close' ?></button>
+                                <?php if (!empty($allowedNextStatuses)): ?>
+                                    <button type="submit" class="cp-btn cp-btn-dark" form="orderStatusForm<?= $orderId ?>">Update</button>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <?php $orderDialogs .= ob_get_clean(); ?>
+                <?php endforeach; ?>
 
-                                            <?php if (isGcashOrder($paymentMethod) && $gcashVerificationStatus !== 'Verified' && $status === 'Pending'): ?>
-                                                <span class="order-note"><?php echo $gcashVerificationStatus === 'Awaiting Payment' ? 'Waiting for online GCash payment.' : 'Verify GCash before approval.'; ?></span>
-                                            <?php elseif ($status === 'Ready for Pickup' && $paymentStatus === 'Partial'): ?>
-                                                <span class="order-note">Cannot cancel after partial payment.</span>
-                                            <?php elseif ($status === 'Ready for Pickup' && $paymentStatus === 'Paid'): ?>
-                                                <span class="order-note">Paid. Complete once claimed.</span>
-                                            <?php endif; ?>
-                                        <?php endif; ?>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-
-                        <tr id="noOrderResults" style="display:none;">
-                            <td colspan="7">
-                                <div class="wo-empty-state">No orders match your search/filter.</div>
-                            </td>
-                        </tr>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="7">
-                                <div class="wo-empty-state">No web orders found.</div>
-                            </td>
-                        </tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="wo-pagination-wrap" id="onlineOrderPagination"></div>
-
-    </div>
-</main>
+                <tr class="sp-empty-row" data-sp-empty hidden>
+                    <td colspan="7">No web orders match your search or filter.</td>
+                </tr>
+                <?php if (empty($orders)): ?>
+                    <tr class="sp-empty-row"><td colspan="7">No web orders yet. Parts reserved on the website show up here.</td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </main>
 </div>
 
-<script>
-const ITEMS_PER_PAGE = 5;
-
-const orderSearch = document.getElementById('orderSearch');
-const statusFilter = document.getElementById('statusFilter');
-const clearFilters = document.getElementById('clearFilters');
-const rows = Array.from(document.querySelectorAll('.order-row'));
-const noResults = document.getElementById('noOrderResults');
-const pagination = document.getElementById('onlineOrderPagination');
-
-let currentPage = 1;
-
-function getFilteredRows() {
-    const searchValue = orderSearch ? orderSearch.value.trim().toLowerCase() : '';
-    const statusValue = statusFilter ? statusFilter.value : 'All';
-
-    return rows.filter(row => {
-        const rowSearch = row.dataset.search || '';
-        const rowStatus = row.dataset.status || '';
-
-        return rowSearch.includes(searchValue) && (statusValue === 'All' || rowStatus === statusValue);
-    });
-}
-
-function renderPagination(totalPages) {
-    if (!pagination) {
-        return;
-    }
-
-    pagination.innerHTML = '';
-
-    if (totalPages <= 1) {
-        pagination.style.display = 'none';
-        return;
-    }
-
-    pagination.style.display = 'flex';
-
-    const prevButton = document.createElement('button');
-    prevButton.type = 'button';
-    prevButton.className = 'wo-page-btn';
-    prevButton.innerHTML = '&laquo;';
-    prevButton.disabled = currentPage === 1;
-    prevButton.addEventListener('click', function () {
-        if (currentPage > 1) {
-            currentPage--;
-            applyOrderFilters();
-        }
-    });
-    pagination.appendChild(prevButton);
-
-    for (let page = 1; page <= totalPages; page++) {
-        const pageButton = document.createElement('button');
-        pageButton.type = 'button';
-        pageButton.className = 'wo-page-btn' + (page === currentPage ? ' active' : '');
-        pageButton.textContent = page;
-        pageButton.addEventListener('click', function () {
-            currentPage = page;
-            applyOrderFilters();
-        });
-        pagination.appendChild(pageButton);
-    }
-
-    const nextButton = document.createElement('button');
-    nextButton.type = 'button';
-    nextButton.className = 'wo-page-btn';
-    nextButton.innerHTML = '&raquo;';
-    nextButton.disabled = currentPage === totalPages;
-    nextButton.addEventListener('click', function () {
-        if (currentPage < totalPages) {
-            currentPage++;
-            applyOrderFilters();
-        }
-    });
-    pagination.appendChild(nextButton);
-}
-
-function applyOrderFilters() {
-    const filteredRows = getFilteredRows();
-    const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE) || 1;
-
-    if (currentPage > totalPages) {
-        currentPage = totalPages;
-    }
-
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    const end = start + ITEMS_PER_PAGE;
-
-    rows.forEach(row => {
-        row.style.display = 'none';
-    });
-
-    filteredRows.slice(start, end).forEach(row => {
-        row.style.display = '';
-    });
-
-    if (noResults) {
-        noResults.style.display = filteredRows.length === 0 && rows.length > 0 ? '' : 'none';
-    }
-
-    renderPagination(totalPages);
-}
-
-if (orderSearch) {
-    orderSearch.addEventListener('input', function () {
-        currentPage = 1;
-        applyOrderFilters();
-    });
-}
-
-if (statusFilter) {
-    statusFilter.addEventListener('change', function () {
-        currentPage = 1;
-        applyOrderFilters();
-    });
-}
-
-if (clearFilters) {
-    clearFilters.addEventListener('click', function () {
-        if (orderSearch) {
-            orderSearch.value = '';
-        }
-
-        if (statusFilter) {
-            statusFilter.value = 'All';
-        }
-
-        currentPage = 1;
-        applyOrderFilters();
-    });
-}
-
-applyOrderFilters();
-</script>
+<?= $orderDialogs ?>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Choosing "Cancel" asks for the reason (required, SRS UC16); other steps don't need one.
+document.querySelectorAll('[data-order-status-form]').forEach(function (form) {
+    const select = form.querySelector('select[name="status"]');
+    const reasonBox = form.querySelector('[data-cancel-reason]');
+    const reason = reasonBox.querySelector('textarea');
+
+    select.addEventListener('change', function () {
+        const cancelling = select.value === 'Cancelled';
+        reasonBox.hidden = !cancelling;
+        reason.required = cancelling;
+        if (cancelling) reason.focus();
+    });
+
+    form.addEventListener('submit', function (e) {
+        if (select.value === 'Cancelled') {
+            reason.value = reason.value.trim();
+            if (reason.value === '') {
+                e.preventDefault();
+                reason.focus();
+            }
+        } else {
+            reason.value = '';
+        }
+    });
+});
+</script>
 
 </body>
 </html>

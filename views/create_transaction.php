@@ -5,6 +5,8 @@ requirePermission('job_orders.manage');
 
 require_once '../config/Database.php';
 require_once '../controllers/RestockAlert.php';
+require_once '../includes/business_rules.php';
+require_once '../includes/staff_ui.php';
 
 $db = (new Database())->getConnection();
 $userId = intval($_SESSION['user_id']);
@@ -144,443 +146,284 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $services = $db->query("SELECT service_id, service_name, base_price FROM service WHERE is_active = 1 ORDER BY service_name")->fetchAll(PDO::FETCH_ASSOC);
 $parts = $db->query("SELECT part_id, part_name, brand, unit_price, quantity_on_hand FROM part WHERE is_active = 1 AND quantity_on_hand > 0 ORDER BY part_name")->fetchAll(PDO::FETCH_ASSOC);
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>New Walk-in - Norily's Repair Shop</title>
+    <title>Transaction Form - Norily's Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="../assets/css/style.css">
-    <style>
-        /* Container Layout */
-        .step-container {
-            max-width: 850px;
-            margin: 0 auto;
-            padding-bottom: 3rem;
-        }
-        
-        .dashboard-header {
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 2px solid #edf0f4;
-        }
-
-        /* Step Cards */
-        .section-card {
-            background: #fff;
-            border: 1px solid #e5e7eb;
-            border-radius: 16px;
-            padding: 2rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.02);
-            position: relative;
-        }
-        
-        .step-badge {
-            position: absolute;
-            top: -12px;
-            left: 2rem;
-            background: var(--dashboard-primary);
-            color: #000;
-            font-weight: 900;
-            font-size: 0.85rem;
-            padding: 0.35rem 1rem;
-            border-radius: 999px;
-            box-shadow: 0 4px 6px rgba(245, 197, 24, 0.3);
-        }
-
-        .section-title {
-            font-size: 1.25rem;
-            font-weight: 900;
-            color: var(--dashboard-text-main);
-            margin-bottom: 1.25rem;
-            margin-top: 0.5rem;
-        }
-
-        .form-label {
-            font-size: 0.82rem;
-            font-weight: 800;
-            color: var(--dashboard-text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .form-control, .form-select {
-            border-radius: 12px;
-            border: 1px solid #cfd6df;
-            padding: 0.75rem 1rem;
-            font-size: 0.95rem;
-            background: #f8fafc;
-        }
-
-        .form-control:focus, .form-select:focus {
-            background: #fff;
-            border-color: var(--dashboard-primary);
-            box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.15);
-        }
-
-        /* Custom Animated Checkbox Cards */
-        .custom-service-card input[type="checkbox"] {
-            display: none; /* Hide default input */
-        }
-        
-        .custom-service-card label {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            padding: 1rem 1.25rem;
-            border: 2px solid #edf0f4;
-            border-radius: 14px;
-            background: #fff;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            margin-bottom: 0.75rem;
-        }
-        
-        .custom-service-card label:hover {
-            border-color: #d1d5db;
-            transform: translateY(-2px);
-        }
-
-        /* Active/Checked State */
-        .custom-service-card input[type="checkbox"]:checked + label {
-            border-color: var(--dashboard-primary);
-            background: rgba(245, 197, 24, 0.08);
-            box-shadow: 0 4px 12px rgba(245, 197, 24, 0.15);
-        }
-
-        .check-circle {
-            width: 26px;
-            height: 26px;
-            border-radius: 50%;
-            border: 2px solid #cfd6df;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 1rem;
-            transition: all 0.2s ease;
-            background: #fff;
-        }
-
-        .custom-service-card input[type="checkbox"]:checked + label .check-circle {
-            background: var(--dashboard-primary);
-            border-color: var(--dashboard-primary);
-        }
-
-        .custom-service-card input[type="checkbox"]:checked + label .check-circle::after {
-            content: "\F26A"; /* Bootstrap Icon check-lg */
-            font-family: "bootstrap-icons";
-            color: #000;
-            font-size: 0.9rem;
-            font-weight: 900;
-        }
-
-        .service-name {
-            font-size: 1rem;
-            font-weight: 800;
-            color: var(--dashboard-text-main);
-        }
-
-        .service-price {
-            font-weight: 900;
-            font-size: 0.95rem;
-            color: var(--dashboard-text-muted);
-        }
-        
-        .custom-service-card input[type="checkbox"]:checked + label .service-price {
-            color: #000; /* Darken price when selected */
-        }
-
-        /* Parts Layout */
-        .part-row {
-            display: grid;
-            grid-template-columns: minmax(0, 2fr) 100px 120px auto;
-            gap: 1rem;
-            align-items: end;
-            margin-bottom: 1rem;
-            background: #fcfcfc;
-            padding: 1rem;
-            border-radius: 12px;
-            border: 1px dashed #d1d5db;
-        }
-
-        /* Action Footer */
-        .action-footer {
-            background: #fff;
-            border: 1px solid #e5e7eb;
-            border-radius: 16px;
-            padding: 1.5rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.04);
-            position: sticky;
-            bottom: 2rem;
-            z-index: 10;
-        }
-
-        .total-display {
-            font-size: 1.5rem;
-            font-weight: 900;
-            color: var(--dashboard-text-main);
-        }
-
-        .total-display span {
-            color: var(--dashboard-primary);
-            font-size: 1.8rem;
-        }
-
-        .btn-submit {
-            background: #000;
-            color: var(--dashboard-primary);
-            font-weight: 900;
-            padding: 0.8rem 2.5rem;
-            border-radius: 999px;
-            border: none;
-            font-size: 1.1rem;
-            transition: 0.3s;
-        }
-
-        .btn-submit:hover {
-            transform: scale(1.02);
-            box-shadow: 0 8px 15px rgba(0,0,0,0.2);
-        }
-        
-        @media (max-width: 768px) {
-            .part-row {
-                grid-template-columns: 1fr;
-                gap: 0.5rem;
-            }
-            .action-footer {
-                flex-direction: column;
-                gap: 1rem;
-                text-align: center;
-                padding: 1.5rem;
-            }
-            .btn-submit {
-                width: 100%;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
 <body>
 
 <div class="app-wrapper">
     <?php include '../includes/sidebar.php'; ?>
 
-    <main class="main-content">
-        <div class="container-fluid">
-            
-            <div class="step-container">
-                <div class="dashboard-header d-flex justify-content-between align-items-center">
-                    <div>
-                        <h2 class="fw-bold mb-0">Transaction Form</h2>
-                        <p class="text-muted mb-0">Complete all steps to seamlessly register a new job order.</p>
+    <main class="main-content sp-page" id="spMain">
+
+        <?php
+        spPageHead(
+            spPortalLabel() . ' · Counter',
+            'Transaction Form',
+            'Record a walk-in repair in one go: customer, vehicle, services and parts. It becomes a job order.',
+            '<a href="job_orders.php" class="cp-btn cp-btn-line">Cancel</a>'
+        );
+        ?>
+
+        <?php if ($error): ?>
+            <div class="cp-flash cp-flash-bad" role="alert">
+                <span><?= cpEscape($error) ?></span>
+                <button type="button" class="cp-flash-close" aria-label="Dismiss" onclick="this.parentElement.remove()">&times;</button>
+            </div>
+        <?php endif; ?>
+
+        <form action="" method="POST" id="unifiedForm" class="sp-form-layout"
+              data-cp-confirm="This registers the customer and the vehicle, and creates a pending job order."
+              data-cp-confirm-title="Submit this transaction?"
+              data-cp-confirm-yes="Submit transaction"
+              data-cp-confirm-no="Go back"
+              data-cp-confirm-tone="dark">
+            <?= csrfField() ?>
+
+            <div class="sp-form">
+                <!-- 01 Customer -->
+                <section class="sp-fsec">
+                    <div class="sp-fsec-label">
+                        <span class="sp-sec-num">01</span>
+                        <h2>Customer</h2>
+                        <p>Saved as a walk-in customer.</p>
                     </div>
-                    <a href="javascript:history.back()" class="btn btn-outline-secondary rounded-pill fw-bold">
-                        <i class="bi bi-x-lg"></i> Cancel
-                    </a>
+                    <div class="sp-fsec-body">
+                        <div class="sp-fgrid">
+                            <div class="sp-field">
+                                <label for="ctFirst">First name <span class="sp-req">*</span></label>
+                                <input type="text" name="first_name" id="ctFirst" class="cp-input" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctLast">Last name <span class="sp-req">*</span></label>
+                                <input type="text" name="last_name" id="ctLast" class="cp-input" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctContact">Contact number <span class="sp-req">*</span></label>
+                                <input type="text" name="contact_number" id="ctContact" class="cp-input" maxlength="11" placeholder="09XXXXXXXXX" inputmode="tel" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctEmail">Email address</label>
+                                <input type="email" name="email" id="ctEmail" class="cp-input" placeholder="Optional">
+                            </div>
+                            <div class="sp-field sp-span">
+                                <label for="ctAddress">Home address</label>
+                                <input type="text" name="address" id="ctAddress" class="cp-input">
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 02 Vehicle -->
+                <section class="sp-fsec">
+                    <div class="sp-fsec-label">
+                        <span class="sp-sec-num">02</span>
+                        <h2>Vehicle</h2>
+                    </div>
+                    <div class="sp-fsec-body">
+                        <div class="sp-fgrid is-3">
+                            <div class="sp-field">
+                                <label for="ctPlate">Plate number <span class="sp-req">*</span></label>
+                                <input type="text" name="plate_number" id="ctPlate" class="cp-input" placeholder="ABC 1234" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctMake">Make or brand <span class="sp-req">*</span></label>
+                                <input type="text" name="make" id="ctMake" class="cp-input" placeholder="e.g. Toyota" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctModel">Model <span class="sp-req">*</span></label>
+                                <input type="text" name="model" id="ctModel" class="cp-input" placeholder="e.g. Vios" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctYear">Year <span class="sp-req">*</span></label>
+                                <input type="number" name="year" id="ctYear" class="cp-input" min="1950" max="2026" required>
+                            </div>
+                            <div class="sp-field">
+                                <label for="ctColor">Color <span class="sp-req">*</span></label>
+                                <input type="text" name="color" id="ctColor" class="cp-input" required>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 03 Repair description -->
+                <section class="sp-fsec">
+                    <div class="sp-fsec-label">
+                        <span class="sp-sec-num">03</span>
+                        <h2>Repair description</h2>
+                    </div>
+                    <div class="sp-fsec-body">
+                        <div class="sp-field">
+                            <label for="ctDescription">What's wrong <span class="sp-req">*</span></label>
+                            <textarea name="description" id="ctDescription" class="cp-input" rows="4" placeholder="Customer's concern and what the mechanic found" required></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 04 Services -->
+                <section class="sp-fsec">
+                    <div class="sp-fsec-label">
+                        <span class="sp-sec-num">04</span>
+                        <h2>Services</h2>
+                        <p>Pick one or more.</p>
+                    </div>
+                    <div class="sp-fsec-body">
+                        <?php if (!empty($services)): ?>
+                            <div class="sp-picks">
+                                <?php foreach ($services as $svc): ?>
+                                    <?php $price = floatval($svc['base_price']); ?>
+                                    <label class="sp-pick" for="svc_<?= intval($svc['service_id']) ?>">
+                                        <input class="service-checkbox" type="checkbox" name="services[]"
+                                               value="<?= intval($svc['service_id']) ?>" id="svc_<?= intval($svc['service_id']) ?>"
+                                               data-price="<?= cpEscape($svc['base_price']) ?>">
+                                        <span class="sp-pick-name"><?= cpEscape($svc['service_name']) ?></span>
+                                        <span class="sp-pick-price sp-mono">
+                                            <?= $price > 0 ? cpMoney($price) : cpMoney(MIN_SERVICE_FEE) . ' minimum' ?>
+                                        </span>
+                                        <span class="sp-pick-box" aria-hidden="true"></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <p class="sp-lines-empty">No active services yet. Add them under Stock › Services.</p>
+                        <?php endif; ?>
+                    </div>
+                </section>
+
+                <!-- 05 Parts -->
+                <section class="sp-fsec">
+                    <div class="sp-fsec-label">
+                        <span class="sp-sec-num">05</span>
+                        <h2>Parts</h2>
+                        <p>Optional. Deducted from stock.</p>
+                    </div>
+                    <div class="sp-fsec-body">
+                        <div class="sp-lines" id="partsContainer"></div>
+                        <button type="button" class="sp-add" onclick="addPartRow()">+ Add part</button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Summary -->
+            <aside class="sp-summary" aria-label="Summary">
+                <p class="sp-summary-title">Summary</p>
+                <div class="sp-summary-row"><span>Services</span><b id="servicesTotal">₱0.00</b></div>
+                <div class="sp-summary-row"><span>Parts</span><b id="partsTotal">₱0.00</b></div>
+
+                <div class="sp-summary-total">
+                    <span>Subtotal</span>
+                    <strong id="liveTotal">₱0.00</strong>
                 </div>
 
-                <?php if ($error): ?>
-                    <div class="alert alert-danger rounded-4"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo htmlspecialchars($error); ?></div>
-                <?php endif; ?>
+                <button type="submit" class="cp-btn cp-btn-dark sp-submit">Submit transaction</button>
 
-                <form action="" method="POST" id="unifiedForm">
-                    <?= csrfField() ?>
-                    
-                    <div class="section-card">
-                        <div class="step-badge">STEP 1</div>
-                        <h4 class="section-title"><i class="bi bi-person-bounding-box me-2"></i>Customer Information</h4>
-                        <div class="row g-4">
-                            <div class="col-md-6">
-                                <label class="form-label">First Name *</label>
-                                <input type="text" name="first_name" class="form-control" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Last Name *</label>
-                                <input type="text" name="last_name" class="form-control" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Contact Number *</label>
-                                <input type="text" name="contact_number" class="form-control" maxlength="11" placeholder="09xxxxxxxxx" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Email Address (Optional)</label>
-                                <input type="email" name="email" class="form-control">
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label">Home Address</label>
-                                <input type="text" name="address" class="form-control">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="section-card">
-                        <div class="step-badge">STEP 2</div>
-                        <h4 class="section-title"><i class="bi bi-car-front-fill me-2"></i>Vehicle Registration</h4>
-                        <div class="row g-4">
-                            <div class="col-md-4">
-                                <label class="form-label">Plate Number *</label>
-                                <input type="text" name="plate_number" class="form-control" placeholder="ABC 1234" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Make/Brand *</label>
-                                <input type="text" name="make" class="form-control" placeholder="e.g. Toyota" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Model *</label>
-                                <input type="text" name="model" class="form-control" placeholder="e.g. Vios" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Year *</label>
-                                <input type="number" name="year" class="form-control" min="1950" max="2026" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Color *</label>
-                                <input type="text" name="color" class="form-control" required>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="section-card">
-                        <div class="step-badge">STEP 3</div>
-                        <h4 class="section-title"><i class="bi bi-clipboard-pulse me-2"></i>Repair Description</h4>
-                        <textarea name="description" class="form-control" rows="3" placeholder="Describe the problem, symptoms, or reason for visit..." required></textarea>
-                    </div>
-
-                    <div class="section-card">
-                        <div class="step-badge">STEP 4</div>
-                        <h4 class="section-title"><i class="bi bi-wrench-adjustable me-2"></i>Select Services</h4>
-                        <div class="row">
-                            <?php foreach ($services as $svc): ?>
-                                <div class="col-md-6">
-                                    <div class="custom-service-card">
-                                        <input class="service-checkbox" type="checkbox" name="services[]" value="<?php echo $svc['service_id']; ?>" id="svc_<?php echo $svc['service_id']; ?>" data-price="<?php echo $svc['base_price']; ?>">
-                                        <label for="svc_<?php echo $svc['service_id']; ?>">
-                                            <div class="d-flex align-items-center">
-                                                <div class="check-circle"></div>
-                                                <span class="service-name"><?php echo htmlspecialchars($svc['service_name']); ?></span>
-                                            </div>
-                                            <span class="service-price">₱<?php echo number_format($svc['base_price'], 2); ?></span>
-                                        </label>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-
-                    <div class="section-card">
-                        <div class="step-badge">STEP 5</div>
-                        <h4 class="section-title"><i class="bi bi-box-seam me-2"></i>Add Parts (Optional)</h4>
-                        <div id="partsContainer">
-                            </div>
-                        <button type="button" class="btn btn-outline-dark rounded-pill fw-bold mt-2" onclick="addPartRow()">
-                            <i class="bi bi-plus-lg me-1"></i> Add Part
-                        </button>
-                    </div>
-
-                    <div class="action-footer">
-                        <div class="total-display">
-                            Estimated Total: <span id="liveTotal">₱0.00</span>
-                        </div>
-                        <button type="submit" class="btn-submit" onclick="return confirm('Save this walk-in transaction? This will automatically register the customer, vehicle, and job order.');">
-                            <i class="bi bi-check2-circle me-2"></i> Submit Transaction
-                        </button>
-                    </div>
-
-                </form>
-            </div>
-        </div>
+                <p class="sp-summary-note">
+                    The job order starts as Pending. Services that need a down payment ask for
+                    <?= intval(DOWN_PAYMENT_RATE * 100) ?>% before work starts.
+                </p>
+            </aside>
+        </form>
     </main>
 </div>
 
-<script type="template" id="partRowTemplate">
-    <div class="part-row">
-        <div>
-            <label class="form-label">Select Part from Inventory</label>
-            <select name="part_ids[]" class="form-select part-select" onchange="calculateTotal()">
-                <option value="" data-price="0">-- Search & Select Part --</option>
+<template id="partRowTemplate">
+    <div class="sp-line part-row">
+        <div class="sp-field">
+            <label>Part</label>
+            <select name="part_ids[]" class="cp-input part-select" onchange="calculateTotal()">
+                <option value="" data-price="0">Select part</option>
                 <?php foreach ($parts as $p): ?>
-                    <option value="<?php echo $p['part_id']; ?>" data-price="<?php echo $p['unit_price']; ?>" data-stock="<?php echo $p['quantity_on_hand']; ?>">
-                        <?php echo htmlspecialchars($p['part_name']); ?> (Stock: <?php echo $p['quantity_on_hand']; ?>) - ₱<?php echo number_format($p['unit_price'], 2); ?>
+                    <option value="<?= intval($p['part_id']) ?>" data-price="<?= cpEscape($p['unit_price']) ?>" data-stock="<?= intval($p['quantity_on_hand']) ?>">
+                        <?= cpEscape($p['part_name']) ?> · <?= cpMoney($p['unit_price']) ?> · <?= intval($p['quantity_on_hand']) ?> left
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
-        <div>
-            <label class="form-label">Qty</label>
-            <input type="number" name="part_qtys[]" class="form-control part-qty text-center" min="1" value="1" oninput="validateStock(this); calculateTotal()">
+        <div class="sp-field">
+            <label>Qty</label>
+            <input type="number" name="part_qtys[]" class="cp-input part-qty" min="1" value="1" oninput="validateStock(this); calculateTotal()">
         </div>
-        <div>
-            <label class="form-label">Subtotal</label>
-            <input type="text" class="form-control part-subtotal text-end fw-bold" readonly value="₱0.00" style="background:#f1f5f9;">
+        <div class="sp-field">
+            <label>Subtotal</label>
+            <input type="text" class="cp-input part-subtotal sp-mono" readonly value="—" tabindex="-1">
         </div>
-        <div class="text-end">
-            <button type="button" class="btn btn-outline-danger rounded-pill px-3" style="margin-top: 31px;" onclick="this.closest('.part-row').remove(); calculateTotal()"><i class="bi bi-trash"></i></button>
-        </div>
+        <button type="button" class="sp-line-x" aria-label="Remove part" onclick="this.closest('.part-row').remove(); calculateTotal()">&times;</button>
     </div>
-</script>
+</template>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    let partRowId = 0;
+
+    function peso(value) {
+        return '₱' + Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
     function addPartRow() {
         const container = document.getElementById('partsContainer');
-        const template = document.getElementById('partRowTemplate').innerHTML;
-        container.insertAdjacentHTML('beforeend', template);
+        const row = document.getElementById('partRowTemplate').content.firstElementChild.cloneNode(true);
+        const id = ++partRowId;
+
+        // Give each label its own input so screen readers and clicks work per row
+        row.querySelectorAll('.sp-field').forEach((field, i) => {
+            const control = field.querySelector('select, input');
+            control.id = 'ctPart' + id + '_' + i;
+            field.querySelector('label').htmlFor = control.id;
+        });
+
+        container.appendChild(row);
     }
 
     function validateStock(input) {
         const select = input.closest('.part-row').querySelector('.part-select');
         const selectedOption = select.options[select.selectedIndex];
         const maxStock = parseInt(selectedOption.getAttribute('data-stock')) || 0;
-        
-        if (parseInt(input.value) > maxStock) {
-            alert('Cannot exceed available stock limit of ' + maxStock);
+
+        if (select.value !== '' && parseInt(input.value) > maxStock) {
+            cpFieldError(input, 'Only ' + maxStock + ' in stock.');
             input.value = maxStock;
         }
     }
 
     function calculateTotal() {
-        let total = 0;
+        let services = 0;
+        let parts = 0;
 
-        // Add Checked Services
         document.querySelectorAll('.service-checkbox:checked').forEach(cb => {
-            total += parseFloat(cb.getAttribute('data-price')) || 0;
+            services += parseFloat(cb.getAttribute('data-price')) || 0;
         });
 
-        // Add Parts
         document.querySelectorAll('.part-row').forEach(row => {
             const select = row.querySelector('.part-select');
             const qtyInput = row.querySelector('.part-qty');
             const subtotalInput = row.querySelector('.part-subtotal');
-            
-            if (select.value !== "") {
+
+            if (select.value !== '') {
                 const price = parseFloat(select.options[select.selectedIndex].getAttribute('data-price')) || 0;
                 const qty = parseInt(qtyInput.value) || 0;
-                const sub = price * qty;
-                subtotalInput.value = '₱' + sub.toFixed(2);
-                total += sub;
+                subtotalInput.value = peso(price * qty);
+                parts += price * qty;
             } else {
-                subtotalInput.value = '₱0.00';
+                subtotalInput.value = '—';
             }
         });
 
-        // Update live sticky footer
-        document.getElementById('liveTotal').innerText = '₱' + total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        document.getElementById('servicesTotal').innerText = peso(services);
+        document.getElementById('partsTotal').innerText = peso(parts);
+        document.getElementById('liveTotal').innerText = peso(services + parts);
     }
 
-    // Attach listener to service checkboxes dynamically
     document.querySelectorAll('.service-checkbox').forEach(cb => {
         cb.addEventListener('change', calculateTotal);
     });
-
-    // Add one empty part row by default on load
-    addPartRow();
 </script>
 
 </body>

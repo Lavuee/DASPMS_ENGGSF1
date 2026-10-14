@@ -2,17 +2,17 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/auth_page.php';
 
-renderAuthPageStart('Resend Verification', 'Verify Your Email', 'Enter the email you registered with and we will send a new verification link.');
+renderAuthPageStart('Resend Verification', 'Verify your email', 'Enter the email you registered with and we will send a new verification code and link.');
 ?>
-        <form action="../controllers/AuthController.php" method="POST">
+        <form action="../controllers/AuthController.php" method="POST" class="auth-form" data-auth-form novalidate>
             <?= csrfField() ?>
             <input type="hidden" name="action" value="resend_verification">
 
-            <div class="mb-4 text-start">
-                <label class="fw-bold mb-1 field-label" for="email">EMAIL ADDRESS</label>
-                <input type="email" id="email" name="email" class="form-control" placeholder="Enter your registered email" maxlength="255" required>
+            <div class="auth-field">
+                <label class="auth-label" for="email">Email</label>
+                <input type="email" id="email" name="email" class="auth-input" maxlength="255" autocomplete="email" required data-check="email">
             </div>
 
-            <button type="submit" class="btn btn-reset w-100 mb-3">Send Verification Link</button>
+            <button type="submit" class="auth-submit" data-loading-text="Sending…">Send verification code</button>
         </form>
 <?php renderAuthPageEnd(); ?>

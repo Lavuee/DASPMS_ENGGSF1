@@ -5,6 +5,7 @@ requirePermission('dashboard.customer');
 
 require_once '../config/Database.php';
 require_once '../models/ServiceRequest.php';
+require_once __DIR__ . '/../includes/customer_ui.php'; // cpMoney() is used while working out the totals
 
 $db = (new Database())->getConnection();
 $serviceRequestModel = new ServiceRequest($db);
@@ -19,7 +20,10 @@ $stmtC->execute([$_SESSION['user_id']]);
 $customer_id = $stmtC->fetchColumn();
 
 if (!$customer_id) {
-    die("Customer profile not found.");
+    require_once __DIR__ . '/../includes/error_page.php';
+    renderErrorPage(404, 'Customer portal', 'Profile not found',
+        'Your account is not linked to a customer profile yet. Please contact the shop so they can fix it.',
+        [['label' => 'Contact the shop', 'href' => 'public_pages/contact.php', 'primary' => true], ['label' => '← Back to home', 'href' => '']]);
 }
 
 $stmtVehicles = $db->prepare("
@@ -46,12 +50,26 @@ $stmtJO = $db->prepare("
         v.make,
         v.model,
         jo.status,
+        jo.description,
+        (SELECT GROUP_CONCAT(s.service_name ORDER BY jos.job_service_id SEPARATOR ', ')
+         FROM job_order_service jos JOIN service s ON s.service_id = jos.service_id
+         WHERE jos.job_order_id = jo.job_order_id) AS service_names,
+        jo.estimated_cost,
+        jo.final_cost,
+        COALESCE(parts.parts_total, 0) AS parts_total,
+        i.invoice_id,
         i.payment_status,
+        i.amount_paid,
         i.balance_due,
         jo.date_created
     FROM job_order jo
     JOIN vehicle v ON jo.vehicle_id = v.vehicle_id
-    LEFT JOIN invoice i ON jo.job_order_id = i.job_order_id
+    LEFT JOIN invoice i ON jo.job_order_id = i.job_order_id AND i.is_voided = 0
+    LEFT JOIN (
+        SELECT job_order_id, SUM(subtotal) AS parts_total
+        FROM job_order_part
+        GROUP BY job_order_id
+    ) parts ON parts.job_order_id = jo.job_order_id
     WHERE jo.customer_id = ?
     ORDER BY jo.date_created DESC
 ");
@@ -120,11 +138,12 @@ foreach ($jobOrders as $repair) {
         $activeRepairCount++;
     }
 
-    $paymentStatus = $repair['payment_status'] ?? 'Not Paid';
+    // Only a finished repair has a bill to settle; open jobs show an estimate, cancelled ones owe nothing
+    $repairMoney = customerRepairMoney($repair);
 
-    if ($paymentStatus !== 'Paid') {
+    if ($repairMoney['owes'] > 0) {
         $pendingPaymentCount++;
-        $pendingBalanceTotal += floatval($repair['balance_due'] ?? 0);
+        $pendingBalanceTotal += $repairMoney['owes'];
     }
 }
 
@@ -164,80 +183,129 @@ function isCustomerGcashOrder($paymentMethod) {
 function getCustomerRepairBadge($status) {
     switch ($status) {
         case 'Pending':
-            return 'customer-status status-pending';
+            return 'st pend';
         case 'In Progress':
-            return 'customer-status status-progress';
+            return 'st prog';
         case 'Ready for Pickup':
-            return 'customer-status status-ready';
+            return 'st ready solid';
         case 'Completed':
-            return 'customer-status status-completed';
+            return 'st done';
         case 'Cancelled':
-            return 'customer-status status-cancelled';
+            return 'st bad';
         default:
-            return 'customer-status status-muted';
+            return 'st done';
     }
 }
 
 function getCustomerOrderBadge($status) {
     switch ($status) {
         case 'Pending':
-            return 'customer-status status-pending';
+            return 'st pend';
         case 'Approved':
-            return 'customer-status status-progress';
+            return 'st prog';
         case 'Ready for Pickup':
-            return 'customer-status status-ready';
+            return 'st ready solid';
         case 'Completed':
-            return 'customer-status status-completed';
+            return 'st done';
         case 'Cancelled':
-            return 'customer-status status-cancelled';
+            return 'st bad';
         default:
-            return 'customer-status status-muted';
+            return 'st done';
     }
 }
 
 function getCustomerGcashBadge($status) {
     switch ($status) {
         case 'Verified':
-            return 'customer-status status-completed';
+            return 'st ok';
         case 'Rejected':
-            return 'customer-status status-cancelled';
+            return 'st bad';
         case 'Pending Verification':
         case 'Awaiting Payment':
-            return 'customer-status status-pending';
+            return 'st pend';
         case 'Not Required':
-            return 'customer-status status-muted';
+            return 'st done';
         default:
-            return 'customer-status status-muted';
+            return 'st done';
     }
+}
+
+/*
+    What the customer sees about a repair's money, by stage:
+      open job, no payment yet     -> "Not billed yet"  + estimated total
+      open job with a down payment -> "Down payment paid" + amount paid and remaining
+      completed job with a bill    -> the bill's status  + balance due
+      completed, bill not made yet -> "Bill being prepared" + total
+      cancelled                    -> no payment badge
+    'owes' is what is actually due now (finished repairs only).
+*/
+function customerRepairMoney(array $job) {
+    $status = $job['status'] ?? '';
+    $finalCost = floatval($job['final_cost'] ?? 0);
+    $total = $finalCost > 0 ? $finalCost : floatval($job['estimated_cost'] ?? 0) + floatval($job['parts_total'] ?? 0);
+    $hasBill = !empty($job['invoice_id']);
+    $paid = floatval($job['amount_paid'] ?? 0);
+
+    if ($status === 'Cancelled') {
+        return ['badge' => '', 'badgeClass' => '', 'label' => 'Cancelled', 'amountLabel' => 'Amount', 'amount' => null, 'owes' => 0];
+    }
+
+    if ($status !== 'Completed') {
+        if ($hasBill && $paid > 0) {
+            return ['badge' => 'Down payment paid', 'badgeClass' => 'st prog', 'label' => 'Paid ' . cpMoney($paid),
+                    'amountLabel' => 'Remaining', 'amount' => max($total - $paid, 0), 'owes' => 0];
+        }
+
+        return ['badge' => 'Not billed yet', 'badgeClass' => 'st done', 'label' => 'Not billed yet',
+                'amountLabel' => 'Estimated cost', 'amount' => $total, 'owes' => 0];
+    }
+
+    if (!$hasBill) {
+        return ['badge' => 'Bill being prepared', 'badgeClass' => 'st pend', 'label' => 'Bill being prepared',
+                'amountLabel' => 'Total', 'amount' => $total, 'owes' => 0];
+    }
+
+    $paymentStatus = $job['payment_status'] ?? 'Not Paid';
+    $balance = floatval($job['balance_due'] ?? 0);
+
+    return ['badge' => $paymentStatus, 'badgeClass' => getCustomerPaymentBadge($paymentStatus), 'label' => $paymentStatus,
+            'amountLabel' => 'Balance due', 'amount' => $balance, 'owes' => $paymentStatus === 'Paid' ? 0 : $balance];
+}
+
+// Short repair title from the job description: the first phrase, up to a colon or full stop
+function customerRepairTitle($description) {
+    $line = trim(strtok(html_entity_decode((string) $description, ENT_QUOTES, 'UTF-8'), "\r\n"));
+    $line = trim(preg_split('/[:.]/', $line)[0]);
+    return mb_strlen($line) > 40 ? rtrim(mb_substr($line, 0, 38)) . '…' : $line;
 }
 
 function getCustomerPaymentBadge($paymentStatus) {
     switch ($paymentStatus) {
         case 'Paid':
-            return 'customer-status status-completed';
+            return 'st done';
         case 'Partial':
-            return 'customer-status status-ready';
+            return 'st pend';
         case 'Not Paid':
-            return 'customer-status status-pending';
+            return 'st bad';
         case 'No Invoice':
-            return 'customer-status status-muted';
+            return 'st done';
         default:
-            return 'customer-status status-muted';
+            return 'st done';
     }
 }
 
 function getServiceRequestBadge($status) {
     switch ($status) {
         case 'Pending':
-            return 'customer-status status-pending';
+            return 'st pend';
         case 'Converted':
-            return 'customer-status status-completed';
+            return 'st prog';
         case 'Rejected':
-            return 'customer-status status-cancelled';
+            return 'st bad';
         case 'Cancelled':
-            return 'customer-status status-muted';
+            return 'st bad';
         default:
-            return 'customer-status status-muted';
+            return 'st done';
     }
 }
 
@@ -264,7 +332,7 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
     if ($paymentStatus === 'Paid') {
         return [
             'label' => 'Paid',
-            'badge' => 'customer-status status-completed'
+            'badge' => 'st done'
         ];
     }
 
@@ -272,13 +340,13 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
         if ($balanceDue > 0) {
             return [
                 'label' => 'Balance at Shop',
-                'badge' => 'customer-status status-ready'
+                'badge' => 'st pend'
             ];
         }
 
         return [
             'label' => 'Partially Paid',
-            'badge' => 'customer-status status-ready'
+            'badge' => 'st pend'
         ];
     }
 
@@ -287,1782 +355,730 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
             if ($paymentMethod === 'GCash Full Payment') {
                 return [
                     'label' => 'GCash Verified',
-                    'badge' => 'customer-status status-completed'
+                    'badge' => 'st ok'
                 ];
             }
 
             return [
                 'label' => 'DP Verified',
-                'badge' => 'customer-status status-completed'
+                'badge' => 'st ok'
             ];
         }
 
         if ($gcashStatus === 'Awaiting Payment') {
             return [
                 'label' => 'Awaiting GCash Payment',
-                'badge' => 'customer-status status-pending'
+                'badge' => 'st pend'
             ];
         }
 
         if ($gcashStatus === 'Rejected') {
             return [
                 'label' => 'GCash Rejected',
-                'badge' => 'customer-status status-cancelled'
+                'badge' => 'st bad'
             ];
         }
 
         return [
             'label' => 'Pending GCash Check',
-            'badge' => 'customer-status status-pending'
+            'badge' => 'st pend'
         ];
     }
 
     return [
         'label' => 'Pay at Shop',
-        'badge' => 'customer-status status-muted'
+        'badge' => 'st done'
     ];
 }
+
+// Part names in an order, one per line (the query joins them with <br>).
+function customerOrderItemsHtml($items) {
+    if (empty($items)) {
+        return 'No items';
+    }
+
+    return implode('<br>', array_map(function ($line) {
+        return htmlspecialchars($line, ENT_QUOTES, 'UTF-8');
+    }, explode('<br>', $items)));
+}
+
+/*
+    Feature card: the repair to show at the top of the page (display only, built
+    from the rows already loaded above). Ready for Pickup first, then the newest
+    active job order. Its service name, request date and mechanic come from the
+    matching service request, and the warranty from the active services list.
+*/
+$featureJob = null;
+
+foreach ($jobOrders as $job) {
+    if (($job['status'] ?? '') === 'Ready for Pickup') {
+        $featureJob = $job;
+        break;
+    }
+}
+
+if ($featureJob === null) {
+    foreach ($jobOrders as $job) {
+        if (!in_array($job['status'] ?? '', ['Completed', 'Cancelled'], true)) {
+            $featureJob = $job;
+            break;
+        }
+    }
+}
+
+$featureRequest = null;
+$featureWarrantyDays = 0;
+
+if ($featureJob !== null) {
+    foreach ($myServiceRequests as $request) {
+        if (!empty($request['job_order_number']) && $request['job_order_number'] === $featureJob['job_order_number']) {
+            $featureRequest = $request;
+            break;
+        }
+    }
+
+    if ($featureRequest !== null) {
+        foreach ($activeServices as $service) {
+            if (intval($service['service_id']) === intval($featureRequest['service_id'] ?? 0)) {
+                $featureWarrantyDays = intval($service['warranty_days'] ?? 0);
+                break;
+            }
+        }
+    }
+}
+
+$carIsReady = $featureJob !== null && ($featureJob['status'] ?? '') === 'Ready for Pickup';
+$customerFirstName = $_SESSION['first_name'] ?? 'Customer';
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Customer Portal - Norily's Repair Shop</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-<link rel="stylesheet" href="../assets/css/style.css">
-
-<style>
-    .main-content {
-        overflow-x: hidden;
-        background: #f4f5f7;
-    }
-
-    .customer-dashboard {
-        width: 100%;
-        max-width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 1.15rem;
-    }
-
-    .customer-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        margin-bottom: 0.1rem;
-    }
-
-    .customer-title h2 {
-        font-size: 2rem;
-        font-weight: 900;
-        color: #111827;
-        margin-bottom: 0.25rem;
-        line-height: 1.1;
-    }
-
-    .customer-title p {
-        color: #5f6b7a;
-        font-size: 1rem;
-        font-weight: 500;
-        margin-bottom: 0;
-    }
-
-    .customer-date-pill {
-        height: 44px;
-        background: transparent;
-        border: 1px solid rgba(17, 24, 39, 0.10);
-        color: #5f6b7a;
-        border-radius: 999px;
-        padding: 0.58rem 0.95rem;
-        font-size: 0.9rem;
-        font-weight: 800;
-        white-space: nowrap;
-        display: inline-flex;
-        align-items: center;
-        box-shadow: none;
-    }
-
-    .customer-alert {
-        border-radius: 16px;
-        font-size: 0.92rem;
-        margin-bottom: 0;
-    }
-
-    .customer-quick-panel {
-        padding: 1rem 0;
-        border-top: 1px solid rgba(15, 23, 42, 0.08);
-        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-    }
-
-    .quick-panel-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 1rem;
-        margin-bottom: 0.85rem;
-    }
-
-    .quick-panel-title {
-        color: #111827;
-        font-size: 0.92rem;
-        font-weight: 900;
-        margin: 0;
-    }
-
-    .quick-panel-subtitle {
-        color: #6b7280;
-        font-size: 0.84rem;
-        font-weight: 500;
-        margin: 0;
-    }
-
-    .quick-actions-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.65rem;
-        align-items: center;
-    }
-
-    .quick-action-pill {
-        min-height: 40px;
-        border-radius: 999px;
-        border: 1px solid rgba(17, 24, 39, 0.10);
-        background: #fff;
-        color: #111827;
-        font-size: 0.88rem;
-        font-weight: 900;
-        padding: 0.55rem 0.9rem;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        transition: 0.2s ease;
-        white-space: nowrap;
-        appearance: none;
-    }
-
-    .quick-action-pill i {
-        color: #111827;
-        font-size: 0.95rem;
-    }
-
-    .quick-action-pill.primary {
-        background: #f5c518;
-        border-color: #f5c518;
-    }
-
-    .quick-action-pill:hover {
-        background: #fffaf0;
-        border-color: #f5c518;
-        color: #111827;
-        transform: translateY(-1px);
-    }
-
-    .quick-action-pill.primary:hover {
-        background: #111827;
-        border-color: #111827;
-        color: #fff;
-    }
-
-    .quick-action-pill.primary:hover i {
-        color: #fff;
-    }
-
-    .overview-strip {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-        padding: 0.2rem 0 1.15rem 0;
-    }
-
-    .overview-item {
-        padding: 0.75rem 1.1rem;
-        border-right: 1px solid rgba(15, 23, 42, 0.08);
-    }
-
-    .overview-item:first-child {
-        padding-left: 0;
-    }
-
-    .overview-item:last-child {
-        border-right: none;
-        padding-right: 0;
-    }
-
-    .overview-label {
-        color: #6b7280;
-        font-size: 0.75rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        margin-bottom: 0.35rem;
-    }
-
-    .overview-value {
-        color: #111827;
-        font-size: 1.55rem;
-        font-weight: 900;
-        line-height: 1;
-        margin-bottom: 0.3rem;
-    }
-
-    .overview-helper {
-        color: #6b7280;
-        font-size: 0.82rem;
-        font-weight: 500;
-        margin: 0;
-    }
-
-    .customer-duo-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 1.25rem;
-        align-items: stretch;
-    }
-
-    .customer-grid-main {
-        display: grid;
-        grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
-        gap: 1rem;
-        align-items: stretch;
-    }
-
-    .customer-right-stack {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        height: 100%;
-    }
-
-    .customer-section-card {
-        background: transparent;
-        border: none;
-        border-radius: 0;
-        box-shadow: none;
-        overflow: visible;
-        padding-top: 0.25rem;
-    }
-
-    .customer-section-card + .customer-section-card {
-        border-top: 1px solid rgba(15, 23, 42, 0.08);
-        padding-top: 1.15rem;
-    }
-
-    .customer-duo-grid .customer-section-card + .customer-section-card {
-        border-top: none;
-        padding-top: 1.15rem;
-    }
-
-    .customer-grid-main .customer-section-card {
-        border-top: 1px solid rgba(15, 23, 42, 0.08);
-        padding-top: 1.15rem;
-    }
-
-    .customer-section-card.customer-panel-card {
-        background: #f4f5f7;
-        border: 1px solid rgba(17, 24, 39, 0.18);
-        border-radius: 18px;
-        box-shadow: 0 10px 24px rgba(17, 24, 39, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.75);
-        padding: 1.15rem 1.2rem;
-        min-height: 310px;
-        overflow: hidden;
-    }
-
-    .customer-section-card.repair-panel-card {
-        min-height: 300px;
-    }
-
-    .customer-section-card.pickup-panel-card {
-        min-height: 300px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .customer-section-card.customer-panel-card + .customer-section-card.customer-panel-card {
-        border-top: 1px solid rgba(17, 24, 39, 0.10);
-        padding-top: 1.15rem;
-    }
-
-    .customer-section-card.customer-panel-card .customer-section-header {
-        padding-bottom: 0.9rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.13);
-    }
-
-    .customer-section-card.customer-panel-card .compact-list {
-        margin-top: 0.7rem;
-    }
-
-    .customer-section-card.customer-panel-card .compact-row {
-        border-radius: 14px;
-        padding: 0.95rem 0.55rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.08);
-    }
-
-    .customer-section-card.customer-panel-card .compact-row:hover {
-        background: rgba(245, 197, 24, 0.075);
-        margin-left: 0;
-        margin-right: 0;
-        padding-left: 0.55rem;
-        padding-right: 0.55rem;
-    }
-
-    .customer-section-header {
-        padding: 0 0 0.95rem 0;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 1rem;
-        flex-wrap: wrap;
-        background: transparent;
-    }
-
-    .section-title-wrap h5 {
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 900;
-        color: #111827;
-    }
-
-    .section-title-wrap p {
-        margin: 0.25rem 0 0 0;
-        font-size: 0.88rem;
-        font-weight: 500;
-        color: #5f6b7a;
-    }
-
-    .compact-list {
-        display: flex;
-        flex-direction: column;
-        gap: 0;
-        margin-top: 0.55rem;
-    }
-
-    .compact-row {
-        display: grid;
-        grid-template-columns: 42px minmax(0, 1fr) auto;
-        gap: 0.85rem;
-        align-items: center;
-        padding: 0.95rem 0;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-    }
-
-    .compact-row:last-child {
-        border-bottom: none;
-    }
-
-    .compact-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 14px;
-        background: rgba(245, 197, 24, 0.18);
-        color: #111827;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.05rem;
-    }
-
-    .compact-main {
-        min-width: 0;
-    }
-
-    .compact-title {
-        color: #111827;
-        font-size: 0.96rem;
-        font-weight: 900;
-        line-height: 1.25;
-        margin-bottom: 0.22rem;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .compact-sub {
-        color: #5f6b7a;
-        font-size: 0.78rem;
-        font-weight: 700;
-        line-height: 1.35;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .compact-note {
-        color: #6b7280;
-        font-size: 0.76rem;
-        line-height: 1.4;
-        margin-top: 0.2rem;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .compact-side {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 0.5rem;
-    }
-
-    .compact-action-text {
-        color: #6b7280;
-        font-size: 0.78rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .section-add-btn {
-        background: transparent;
-        border: none;
-        color: #111827;
-        font-size: 0.84rem;
-        font-weight: 900;
-        padding: 0;
-        border-radius: 0;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        transition: 0.2s ease;
-        white-space: nowrap;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        text-decoration-thickness: 1.5px;
-    }
-
-    .section-add-btn:hover {
-        color: #111827;
-        opacity: 0.78;
-    }
-
-    .link-btn-icon {
-        width: 24px;
-        height: 24px;
-        border-radius: 999px;
-        background: rgba(245, 197, 24, 0.22);
-        color: #111827;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.82rem;
-        flex-shrink: 0;
-    }
-
-    .link-btn-text {
-        line-height: 1;
-    }
-
-    .section-text-link {
-        color: #6b7280;
-        font-size: 0.86rem;
-        font-weight: 900;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        text-decoration-thickness: 1.4px;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        transition: 0.2s ease;
-    }
-
-    .section-text-link:hover {
-        color: #111827;
-    }
-
-    .vehicle-status-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 86px;
-        padding: 0.4rem 0.7rem;
-        border-radius: 999px;
-        font-size: 0.74rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .vehicle-status-active {
-        background: #ecfdf5;
-        color: #047857;
-    }
-
-    .vehicle-status-inactive {
-        background: #fff7ed;
-        color: #c2410c;
-    }
-
-    .vehicle-status-archived {
-        background: #f3f4f6;
-        color: #4b5563;
-    }
-
-    .vehicle-edit-btn {
-        border: none;
-        background: transparent;
-        color: #111827;
-        border-radius: 0;
-        padding: 0;
-        font-size: 0.8rem;
-        font-weight: 900;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        transition: 0.2s ease;
-        white-space: nowrap;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        text-decoration-thickness: 1.5px;
-    }
-
-    .vehicle-edit-btn:hover {
-        color: #111827;
-        opacity: 0.78;
-    }
-
-    .request-cancel-btn {
-        border: none;
-        background: transparent;
-        color: #b91c1c;
-        border-radius: 0;
-        padding: 0;
-        font-size: 0.8rem;
-        font-weight: 900;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        transition: 0.2s ease;
-        white-space: nowrap;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        text-decoration-thickness: 1.5px;
-    }
-
-    .request-cancel-btn .link-btn-icon {
-        background: #fff1f2;
-        color: #b91c1c;
-    }
-
-    .request-cancel-btn:hover {
-        color: #991b1b;
-        opacity: 0.82;
-    }
-
-    .repair-list {
-        display: flex;
-        flex-direction: column;
-        margin-top: 0.7rem;
-    }
-
-    .repair-row {
-        display: grid;
-        grid-template-columns: 44px minmax(0, 1fr) auto;
-        gap: 0.95rem;
-        align-items: center;
-        padding: 1rem 0.55rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.08);
-        border-radius: 14px;
-        background: transparent;
-    }
-
-    .repair-row:last-child {
-        border-bottom: none;
-    }
-
-    .repair-row:hover {
-        background: rgba(245, 197, 24, 0.075);
-    }
-
-    .repair-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 14px;
-        background: rgba(245, 197, 24, 0.16);
-        color: #111827;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1rem;
-    }
-
-    .repair-main strong {
-        display: block;
-        font-size: 1rem;
-        color: #111827;
-        font-weight: 900;
-        line-height: 1.2;
-    }
-
-    .repair-main span {
-        display: block;
-        color: #5f6b7a;
-        font-size: 0.84rem;
-        margin-top: 0.25rem;
-    }
-
-    .repair-status-area {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 0.4rem;
-    }
-
-    .customer-status {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.38rem 0.7rem;
-        border-radius: 999px;
-        font-size: 0.76rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .status-pending {
-        background: #fff3cd;
-        color: #9a5b00;
-    }
-
-    .status-progress {
-        background: #e7f0ff;
-        color: #1d4ed8;
-    }
-
-    .status-ready {
-        background: #fff7d6;
-        color: #9a5b00;
-    }
-
-    .status-completed {
-        background: #d7fbe5;
-        color: #047857;
-    }
-
-    .status-cancelled,
-    .status-muted {
-        background: #eef0f3;
-        color: #4b5563;
-    }
-
-    .payment-text-paid {
-        color: #047857;
-        font-weight: 900;
-        font-size: 0.82rem;
-    }
-
-    .payment-text-unpaid {
-        color: #dc2626;
-        font-weight: 900;
-        font-size: 0.82rem;
-    }
-
-    .customer-table-wrap {
-        width: 100%;
-        overflow-x: auto;
-    }
-
-    .customer-table {
-        width: 100%;
-        margin-bottom: 0;
-        vertical-align: middle;
-    }
-
-    .customer-order-table {
-        width: 100%;
-        min-width: 0;
-        table-layout: fixed;
-    }
-
-    .compact-order-table th:nth-child(1),
-    .compact-order-table td:nth-child(1) {
-        width: 10%;
-    }
-
-    .compact-order-table th:nth-child(2),
-    .compact-order-table td:nth-child(2) {
-        width: 15%;
-    }
-
-    .compact-order-table th:nth-child(3),
-    .compact-order-table td:nth-child(3) {
-        width: 15%;
-    }
-
-    .compact-order-table th:nth-child(4),
-    .compact-order-table td:nth-child(4) {
-        width: 32%;
-    }
-
-    .compact-order-table th:nth-child(5),
-    .compact-order-table td:nth-child(5) {
-        width: 12%;
-    }
-
-    .compact-order-table th:nth-child(6),
-    .compact-order-table td:nth-child(6) {
-        width: 16%;
-    }
-
-    .compact-order-table td {
-        white-space: normal !important;
-        vertical-align: middle;
-    }
-
-    .customer-table thead th {
-        background: transparent;
-        color: #5f6b7a;
-        font-size: 0.76rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-        padding: 0.85rem 0.85rem;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.08);
-        white-space: nowrap;
-    }
-
-    .customer-table tbody td {
-        padding: 0.95rem 0.85rem;
-        font-size: 0.9rem;
-        color: #111827;
-        border-bottom: 1px solid rgba(17, 24, 39, 0.06);
-        white-space: nowrap;
-        background: transparent;
-    }
-
-    .customer-table tbody tr:last-child td {
-        border-bottom: none;
-    }
-
-    .customer-table tbody tr:hover {
-        background: rgba(255, 251, 235, 0.55);
-    }
-
-    .order-id-main {
-        color: #111827;
-        font-size: 0.92rem;
-        font-weight: 900;
-        line-height: 1.25;
-    }
-
-    .order-date-sub {
-        color: #5f6b7a;
-        font-size: 0.78rem;
-        font-weight: 700;
-        margin-top: 0.25rem;
-    }
-
-    .order-item-name {
-        color: #111827;
-        font-size: 0.9rem;
-        font-weight: 900;
-        line-height: 1.35;
-    }
-
-    .order-detail-main {
-        color: #111827;
-        font-size: 0.9rem;
-        font-weight: 900;
-        line-height: 1.35;
-    }
-
-    .order-detail-muted {
-        color: #6b7280;
-        font-size: 0.78rem;
-        font-weight: 600;
-        line-height: 1.45;
-        margin-top: 0.25rem;
-        max-width: 240px;
-        white-space: normal;
-    }
-
-    .order-payment-card {
-        display: flex;
-        flex-direction: column;
-        gap: 0.42rem;
-        max-width: 100%;
-    }
-
-    .order-payment-method {
-        color: #111827;
-        font-size: 0.86rem;
-        font-weight: 900;
-        line-height: 1.3;
-    }
-
-    .payment-verification-line {
-        color: #5f6b7a;
-        font-size: 0.74rem;
-        font-weight: 700;
-        line-height: 1.35;
-    }
-
-    .payment-verification-line strong {
-        color: #047857;
-        font-weight: 900;
-    }
-
-    .order-payment-summary {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.32rem;
-    }
-
-    .payment-mini-box {
-        border: 1px solid rgba(17, 24, 39, 0.08);
-        border-radius: 10px;
-        padding: 0.38rem 0.45rem;
-        background: rgba(255, 255, 255, 0.30);
-        min-width: 0;
-    }
-
-    .payment-mini-label {
-        color: #6b7280;
-        font-size: 0.60rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.22px;
-        margin-bottom: 0.12rem;
-    }
-
-    .payment-mini-value {
-        color: #111827;
-        font-size: 0.74rem;
-        font-weight: 900;
-        line-height: 1.15;
-    }
-
-    .payment-mini-value.green {
-        color: #047857;
-    }
-
-    .payment-detail-line {
-        color: #5f6b7a;
-        font-size: 0.76rem;
-        font-weight: 700;
-        line-height: 1.35;
-    }
-
-    .payment-detail-line strong {
-        color: #111827;
-        font-weight: 900;
-    }
-
-    .payment-muted-note {
-        color: #6b7280;
-        font-size: 0.74rem;
-        line-height: 1.4;
-    }
-
-    .pickup-content {
-        flex: 1;
-    }
-
-    .pickup-box {
-        padding: 2rem 0 1.45rem 0;
-        text-align: center;
-        min-height: 175px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .pickup-icon {
-        width: 50px;
-        height: 50px;
-        border-radius: 18px;
-        background: rgba(245, 197, 24, 0.13);
-        color: #f0b400;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.55rem;
-        margin-bottom: 0.85rem;
-    }
-
-    .pickup-title {
-        font-size: 1rem;
-        font-weight: 900;
-        color: #111827;
-        margin-bottom: 0.35rem;
-    }
-
-    .pickup-text {
-        color: #5f6b7a;
-        font-size: 0.93rem;
-        margin-bottom: 0;
-        line-height: 1.5;
-    }
-
-    .pickup-list {
-        padding: 1rem 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-
-    .pickup-item {
-        border-bottom: 1px solid rgba(17, 24, 39, 0.07);
-        padding: 0.85rem 0;
-        background: transparent;
-    }
-
-    .pickup-item strong {
-        color: #111827;
-        font-weight: 900;
-    }
-
-    .reminder-card {
-        margin-top: 0.8rem;
-        padding: 1rem 0 0.15rem 0;
-        background: transparent;
-        border-top: 1px solid rgba(245, 197, 24, 0.65);
-        border-bottom: none;
-        border-radius: 0;
-    }
-
-    .reminder-card h6 {
-        font-weight: 900;
-        color: #111827;
-        margin-bottom: 0.4rem;
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-    }
-
-    .reminder-card p {
-        color: #5f6b7a;
-        font-size: 0.88rem;
-        margin-bottom: 0;
-        line-height: 1.48;
-    }
-
-    .empty-state {
-        padding: 2.5rem 1rem;
-        text-align: center;
-        color: #5f6b7a;
-    }
-
-    .empty-state i {
-        display: block;
-        font-size: 2.35rem;
-        color: #d1d5db;
-        margin-bottom: 0.75rem;
-    }
-
-    .customer-section-card.customer-panel-card .empty-state {
-        padding: 2.15rem 1rem;
-    }
-
-    .customer-modal .modal-content {
-        border: none;
-        border-radius: 22px;
-        overflow: hidden;
-        box-shadow: 0 25px 60px rgba(17, 17, 17, 0.18);
-    }
-
-    .customer-modal .modal-header {
-        background: #fff;
-        border-bottom: 1px solid #e5e7eb;
-        padding: 1.15rem 1.35rem;
-    }
-
-    .customer-modal .modal-title {
-        font-weight: 900;
-        color: #111827;
-    }
-
-    .customer-modal .modal-body {
-        padding: 1.35rem;
-    }
-
-    .customer-modal .modal-footer {
-        border-top: 1px solid #e5e7eb;
-        padding: 1rem 1.35rem;
-    }
-
-    .form-label-custom {
-        font-size: 0.78rem;
-        font-weight: 900;
-        color: #4b5563;
-        text-transform: uppercase;
-        letter-spacing: 0.35px;
-        margin-bottom: 0.35rem;
-    }
-
-    .form-control-custom {
-        min-height: 44px;
-        border: 1px solid #e5e7eb;
-        border-radius: 14px;
-        padding: 0.65rem 0.85rem;
-        color: #111827;
-        font-size: 0.92rem;
-        box-shadow: none !important;
-    }
-
-    .form-control-custom:focus {
-        border-color: #f5c518;
-        box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.18) !important;
-    }
-
-    .modal-save-btn {
-        background: #f5c518;
-        border: 1px solid #f5c518;
-        color: #111827;
-        font-weight: 900;
-        border-radius: 999px;
-        padding: 0.65rem 1.1rem;
-    }
-
-    .modal-save-btn:hover {
-        background: #111827;
-        border-color: #111827;
-        color: #fff;
-    }
-
-    .modal-cancel-btn {
-        border-radius: 999px;
-        font-weight: 800;
-        padding: 0.65rem 1.1rem;
-    }
-
-    @media (max-width: 1200px) {
-        .customer-grid-main {
-            grid-template-columns: 1fr;
-        }
-
-        .customer-right-stack {
-            height: auto;
-        }
-
-        .customer-order-table {
-            min-width: 900px;
-        }
-    }
-
-    @media (max-width: 991.98px) {
-        .customer-header {
-            flex-direction: column;
-        }
-
-        .overview-strip {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            row-gap: 0.35rem;
-        }
-
-        .overview-item:nth-child(2) {
-            border-right: none;
-            padding-right: 0;
-        }
-
-        .overview-item:nth-child(3) {
-            padding-left: 0;
-        }
-
-        .customer-duo-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .customer-section-card.customer-panel-card {
-            min-height: auto;
-        }
-    }
-
-    @media (max-width: 767.98px) {
-        .customer-order-table {
-            min-width: 860px;
-        }
-
-        .order-payment-summary {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media (max-width: 575.98px) {
-        .customer-title h2 {
-            font-size: 1.55rem;
-        }
-
-        .customer-date-pill,
-        .section-add-btn {
-            width: auto;
-            justify-content: flex-start;
-        }
-
-        .quick-panel-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-
-        .quick-actions-row {
-            display: grid;
-            grid-template-columns: 1fr;
-            width: 100%;
-        }
-
-        .quick-action-pill {
-            width: 100%;
-            justify-content: center;
-        }
-
-        .overview-strip {
-            grid-template-columns: 1fr;
-        }
-
-        .overview-item,
-        .overview-item:first-child,
-        .overview-item:last-child,
-        .overview-item:nth-child(3) {
-            border-right: none;
-            padding: 0.8rem 0;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-        }
-
-        .overview-item:last-child {
-            border-bottom: none;
-        }
-
-        .compact-row {
-            grid-template-columns: 40px minmax(0, 1fr);
-        }
-
-        .compact-side {
-            grid-column: 2;
-            align-items: flex-start;
-            flex-direction: row;
-            flex-wrap: wrap;
-        }
-
-        .repair-row {
-            grid-template-columns: 40px minmax(0, 1fr);
-        }
-
-        .repair-status-area {
-            grid-column: 2;
-            align-items: flex-start;
-        }
-    }
-</style>
+<title>My Dashboard - Norily's Customer Portal</title>
+<link rel="icon" type="image/png" href="../assets/images/logo.png">
+<?php require_once __DIR__ . '/../includes/customer_ui.php'; cpHeadAssets(); ?>
 </head>
 
-<body>
+<body class="cp-body">
 <?php include '../includes/sidebar.php'; ?>
 
-<div class="main-content">
-    <div class="container-fluid py-4 customer-dashboard">
+<main class="cp-main" id="cpMain">
 
-        <div class="customer-header">
-            <div class="customer-title">
-                <h2><?php echo $greeting; ?>, <?php echo htmlspecialchars($_SESSION['first_name'] ?? 'Customer'); ?>!</h2>
-                <p>Welcome back. Here's your repair and order summary.</p>
+    <header class="cp-garage-head">
+        <div>
+            <div class="cp-garage-meta">
+                <p class="cp-label">My dashboard</p>
+                <p class="cp-label cp-mono"><?php echo date('M d, Y'); ?></p>
             </div>
-
-            <div class="customer-date-pill">
-                <i class="bi bi-calendar-event me-2"></i>
-                <?php echo date('M d, Y'); ?>
-            </div>
-        </div>
-
-        <?php if(isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success customer-alert">
-                <i class="bi bi-check-circle-fill me-2"></i>
-                <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
-            </div>
-        <?php endif; ?>
-
-        <?php if(isset($_SESSION['error_message'])): ?>
-            <div class="alert alert-danger customer-alert">
-                <i class="bi bi-exclamation-circle-fill me-2"></i>
-                <?php echo htmlspecialchars($_SESSION['error_message']); unset($_SESSION['error_message']); ?>
-            </div>
-        <?php endif; ?>
-
-        <div class="customer-quick-panel">
-            <div class="quick-panel-header">
-                <div>
-                    <p class="quick-panel-title">Quick Actions</p>
-                    <p class="quick-panel-subtitle">Choose what you want to do next.</p>
-                </div>
-            </div>
-
-            <div class="quick-actions-row">
-                <a href="customer_services.php" class="quick-action-pill primary">
-                    <i class="bi bi-calendar-plus"></i>
-                    Request Service
-                </a>
-
-                <a href="customer_parts.php" class="quick-action-pill">
-                    <i class="bi bi-box-seam"></i>
-                    Browse Parts
-                </a>
-
-                <a href="customer_services.php" class="quick-action-pill">
-                    <i class="bi bi-wrench-adjustable-circle"></i>
-                    Services Offered
-                </a>
-
-                <a href="customer_cart.php" class="quick-action-pill">
-                    <i class="bi bi-cart3"></i>
-                    My Cart
-                </a>
-
-                <a href="#repairStatusSection" class="quick-action-pill">
-                    <i class="bi bi-car-front-fill"></i>
-                    My Repairs
-                </a>
-
-                <a href="#orderStatusSection" class="quick-action-pill">
-                    <i class="bi bi-bag-check"></i>
-                    My Orders
-                </a>
-            </div>
-        </div>
-
-        <div class="overview-strip">
-            <div class="overview-item">
-                <div class="overview-label">Active Repairs</div>
-                <div class="overview-value"><?php echo $activeRepairCount; ?></div>
-                <p class="overview-helper">Repair jobs still in progress</p>
-            </div>
-
-            <div class="overview-item">
-                <div class="overview-label">Service Requests</div>
-                <div class="overview-value"><?php echo $pendingServiceRequestCount; ?></div>
-                <p class="overview-helper">Pending online requests</p>
-            </div>
-
-            <div class="overview-item">
-                <div class="overview-label">Balance Due</div>
-                <div class="overview-value">₱<?php echo number_format($pendingBalanceTotal, 2); ?></div>
-                <p class="overview-helper">Total unpaid repair balance</p>
-            </div>
-
-            <div class="overview-item">
-                <div class="overview-label">Ready for Pickup</div>
-                <div class="overview-value"><?php echo $readyPickupCount; ?></div>
-                <p class="overview-helper">Parts orders ready at the shop</p>
-            </div>
-        </div>
-
-        <div class="customer-duo-grid">
-            <div class="customer-section-card customer-panel-card" id="myVehiclesSection">
-                <div class="customer-section-header">
-                    <div class="section-title-wrap">
-                        <h5>My Registered Vehicles</h5>
-                        <p>Saved vehicle details for faster service requests.</p>
-                    </div>
-
-                    <button type="button" class="section-add-btn" data-bs-toggle="modal" data-bs-target="#addVehicleModal">
-                        <span class="link-btn-icon">
-                            <i class="bi bi-plus-circle"></i>
-                        </span>
-                        <span class="link-btn-text">Add Vehicle</span>
-                    </button>
-                </div>
-
-                <?php if (empty($myVehicles)): ?>
-                    <div class="empty-state">
-                        <i class="bi bi-car-front"></i>
-                        <h6 class="fw-bold mb-1">No vehicles registered yet</h6>
-                        <p class="mb-0">Add your vehicle details so the shop can connect future repairs to your profile.</p>
-                    </div>
+            <h1 class="cp-title">
+                <?php if ($carIsReady): ?>
+                    Hi, <?php echo cpEscape($customerFirstName); ?>. Your car is ready.
                 <?php else: ?>
-                    <div class="compact-list">
-                        <?php foreach ($myVehicles as $vehicle): ?>
-                            <?php
-                                $vehicleStatus = $vehicle['status'] ?? 'Active';
-                                $statusClass = 'vehicle-status-active';
-
-                                if ($vehicleStatus === 'Inactive') {
-                                    $statusClass = 'vehicle-status-inactive';
-                                } elseif ($vehicleStatus === 'Archived') {
-                                    $statusClass = 'vehicle-status-archived';
-                                }
-
-                                $vehicleName = trim(($vehicle['make'] ?? '') . ' ' . ($vehicle['model'] ?? ''));
-                                $vehicleNotes = !empty($vehicle['notes']) ? $vehicle['notes'] : 'Registered vehicle';
-                            ?>
-
-                            <div class="compact-row">
-                                <div class="compact-icon">
-                                    <i class="bi bi-car-front-fill"></i>
-                                </div>
-
-                                <div class="compact-main">
-                                    <div class="compact-title">
-                                        <?php echo htmlspecialchars($vehicleName !== '' ? $vehicleName : 'Vehicle'); ?>
-                                    </div>
-                                    <div class="compact-sub">
-                                        Plate: <?php echo htmlspecialchars($vehicle['plate_number'] ?? 'N/A'); ?>
-                                        · <?php echo htmlspecialchars($vehicle['year'] ?? 'N/A'); ?>
-                                        · <?php echo htmlspecialchars($vehicle['color'] ?? 'N/A'); ?>
-                                        · VID-<?php echo intval($vehicle['vehicle_id']); ?>
-                                    </div>
-                                    <div class="compact-note">
-                                        <?php echo htmlspecialchars($vehicleNotes); ?>
-                                    </div>
-                                </div>
-
-                                <div class="compact-side">
-                                    <span class="vehicle-status-badge <?php echo $statusClass; ?>">
-                                        <?php echo htmlspecialchars($vehicleStatus); ?>
-                                    </span>
-
-                                    <button
-                                        type="button"
-                                        class="vehicle-edit-btn"
-                                        data-bs-toggle="modal"
-                                        data-bs-target="#editVehicleModal"
-                                        data-vehicle-id="<?php echo intval($vehicle['vehicle_id']); ?>"
-                                        data-plate-number="<?php echo htmlspecialchars($vehicle['plate_number'] ?? '', ENT_QUOTES); ?>"
-                                        data-make="<?php echo htmlspecialchars($vehicle['make'] ?? '', ENT_QUOTES); ?>"
-                                        data-model="<?php echo htmlspecialchars($vehicle['model'] ?? '', ENT_QUOTES); ?>"
-                                        data-year="<?php echo htmlspecialchars($vehicle['year'] ?? '', ENT_QUOTES); ?>"
-                                        data-color="<?php echo htmlspecialchars($vehicle['color'] ?? '', ENT_QUOTES); ?>"
-                                        data-notes="<?php echo htmlspecialchars($vehicle['notes'] ?? '', ENT_QUOTES); ?>"
-                                    >
-                                        <span class="link-btn-icon">
-                                            <i class="bi bi-pencil-square"></i>
-                                        </span>
-                                        <span class="link-btn-text">Edit</span>
-                                    </button>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
+                    <?php echo $greeting; ?>, <?php echo cpEscape($customerFirstName); ?>.
                 <?php endif; ?>
+            </h1>
+            <p class="cp-lead">Welcome back. Here's your repair and order summary.</p>
+        </div>
+        <div class="cp-pagehead-actions">
+            <a href="customer_services.php" class="cp-btn cp-btn-dark">Request a service</a>
+            <a href="customer_parts.php" class="cp-btn cp-btn-line">Browse parts</a>
+        </div>
+    </header>
+
+    <?php cpFlash(); ?>
+
+    <!-- Feature card: the repair that needs attention now -->
+    <section class="cp-feature" aria-label="Current repair">
+        <?php if ($featureJob !== null): ?>
+            <?php
+                $featureStatus = $featureJob['status'] ?? 'Pending';
+                $featureVehicle = trim(($featureJob['make'] ?? '') . ' ' . ($featureJob['model'] ?? ''));
+                $featureMoney = customerRepairMoney($featureJob);
+                $featureService = $featureRequest['service_name'] ?? ($featureJob['service_names'] ?? '');
+                if ($featureService === '') {
+                    $featureService = customerRepairTitle($featureJob['description'] ?? '') ?: 'Vehicle repair';
+                }
+
+                // Unpaid bills from other (finished) repairs, so they are not hidden behind this card
+                $otherOwed = 0;
+                foreach ($jobOrders as $otherJob) {
+                    if (($otherJob['job_order_number'] ?? '') !== ($featureJob['job_order_number'] ?? '')) {
+                        $otherOwed += customerRepairMoney($otherJob)['owes'];
+                    }
+                }
+
+                $stepIndex = [
+                    'Pending' => 1,
+                    'In Progress' => 2,
+                    'Ready for Pickup' => 3,
+                    'Completed' => 4,
+                ][$featureStatus] ?? 1;
+
+                $timeline = [
+                    [
+                        'title' => 'Request received',
+                        'note' => $featureRequest ? ($featureRequest['request_number'] ?? '') : 'Walk-in or shop-created job',
+                        'date' => !empty($featureRequest['created_at']) ? date('M d', strtotime($featureRequest['created_at'])) : '',
+                    ],
+                    [
+                        'title' => 'Job order created',
+                        'note' => $featureJob['job_order_number'] ?? '',
+                        'date' => !empty($featureJob['date_created']) ? date('M d', strtotime($featureJob['date_created'])) : '',
+                    ],
+                    [
+                        'title' => 'Repair in progress',
+                        'note' => !empty($featureRequest['assigned_mechanic_name']) ? 'Mechanic: ' . $featureRequest['assigned_mechanic_name'] : 'Handled by the shop mechanics',
+                        'date' => '',
+                    ],
+                    [
+                        'title' => 'Ready for pickup',
+                        'note' => 'Settle any balance at the shop',
+                        'date' => '',
+                    ],
+                    [
+                        'title' => 'Completed',
+                        'note' => 'Vehicle released',
+                        'date' => '',
+                    ],
+                ];
+            ?>
+            <div class="cp-feature-main">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <p class="cp-label mb-0"><?php echo $carIsReady ? 'Ready for pickup' : 'Current repair'; ?></p>
+                    <span class="<?php echo getCustomerRepairBadge($featureStatus); ?>"><?php echo cpEscape($featureStatus); ?></span>
+                </div>
+
+                <h2 class="cp-feature-title"><?php echo cpEscape($featureService); ?></h2>
+
+                <div class="cp-feature-meta">
+                    <span><span class="cp-mono"><?php echo cpEscape($featureJob['plate_number'] ?? 'N/A'); ?></span> · <?php echo cpEscape($featureVehicle !== '' ? $featureVehicle : 'Vehicle'); ?></span>
+                    <span>JO <span class="cp-mono"><?php echo cpEscape($featureJob['job_order_number'] ?? 'N/A'); ?></span></span>
+                    <?php if ($featureWarrantyDays > 0): ?>
+                        <span><span class="cp-mono"><?php echo $featureWarrantyDays; ?></span>-day warranty</span>
+                    <?php endif; ?>
+                </div>
+
+                <div class="cp-feature-money">
+                    <div>
+                        <p class="cp-label">Payment</p>
+                        <strong><?php echo cpEscape($featureMoney['label']); ?></strong>
+                    </div>
+                    <div>
+                        <p class="cp-label"><?php echo cpEscape($featureMoney['amountLabel']); ?></p>
+                        <strong><?php echo $featureMoney['amount'] !== null ? cpMoney($featureMoney['amount']) : '—'; ?></strong>
+                    </div>
+                </div>
+                <?php if ($featureMoney['amountLabel'] === 'Estimated cost'): ?>
+                    <p class="cp-feature-note">The final bill is made when the repair is done and may change if parts are added.</p>
+                <?php endif; ?>
+                <?php if ($otherOwed > 0): ?>
+                    <p class="cp-feature-note is-warn">You also have <strong class="cp-mono"><?php echo cpMoney($otherOwed); ?></strong> unpaid from an earlier repair. <a href="#repairStatusSection">View →</a></p>
+                <?php endif; ?>
+
+                <div class="cp-feature-actions">
+                    <a href="#repairStatusSection" class="cp-btn cp-btn-light">View my repairs</a>
+                    <a href="customer_service_requests.php" class="cp-btn cp-btn-line">My service requests</a>
+                </div>
             </div>
 
-            <div class="customer-section-card customer-panel-card" id="serviceRequestsSection">
-                <div class="customer-section-header">
-                    <div class="section-title-wrap">
-                        <h5>My Service Requests</h5>
-                        <p>Online appointments and approval status.</p>
-                    </div>
-                        <a href="customer_service_requests.php" class="section-add-btn">
-                            <span class="link-btn-icon">
-                                <i class="bi bi-list-check"></i>
+            <div class="cp-feature-side">
+                <p class="cp-label">Progress</p>
+                <ol class="cp-timeline">
+                    <?php foreach ($timeline as $i => $step): ?>
+                        <?php
+                            if ($featureStatus === 'Completed' || $i < $stepIndex) {
+                                $stepState = 'is-done';
+                            } elseif ($i === $stepIndex) {
+                                $stepState = 'is-now';
+                            } else {
+                                $stepState = 'is-todo';
+                            }
+                        ?>
+                        <li class="<?php echo $stepState; ?>">
+                            <span class="cp-tl-dot" aria-hidden="true"></span>
+                            <span class="cp-tl-text">
+                                <strong><?php echo cpEscape($step['title']); ?></strong>
+                                <?php if ($step['note'] !== ''): ?>
+                                    <span><?php echo cpEscape($step['note']); ?></span>
+                                <?php endif; ?>
                             </span>
-                            <span class="link-btn-text">View Requests</span>
-                        </a>
+                            <span class="cp-tl-date"><?php echo cpEscape($step['date']); ?></span>
+                        </li>
+                    <?php endforeach; ?>
+                </ol>
+            </div>
+        <?php else: ?>
+            <div class="cp-feature-main">
+                <p class="cp-label">Current repair</p>
+                <h2 class="cp-feature-title">No vehicle in the shop right now.</h2>
+                <p class="cp-feature-text">Send a service request and the shop will review it, give you an estimate, and track the repair here.</p>
+                <div class="cp-feature-actions mt-auto">
+                    <a href="customer_services.php" class="cp-btn cp-btn-light">Request a service</a>
+                    <a href="customer_parts.php" class="cp-btn cp-btn-line">Browse parts</a>
                 </div>
+            </div>
+            <div class="cp-feature-side">
+                <p class="cp-label">How a repair works</p>
+                <ol class="cp-timeline">
+                    <li class="is-todo"><span class="cp-tl-dot" aria-hidden="true"></span><span class="cp-tl-text"><strong>Request received</strong><span>You pick a service, vehicle and date</span></span><span class="cp-tl-date"></span></li>
+                    <li class="is-todo"><span class="cp-tl-dot" aria-hidden="true"></span><span class="cp-tl-text"><strong>Job order created</strong><span>The shop reviews and approves it</span></span><span class="cp-tl-date"></span></li>
+                    <li class="is-todo"><span class="cp-tl-dot" aria-hidden="true"></span><span class="cp-tl-text"><strong>Repair in progress</strong><span>A mechanic works on your vehicle</span></span><span class="cp-tl-date"></span></li>
+                    <li class="is-todo"><span class="cp-tl-dot" aria-hidden="true"></span><span class="cp-tl-text"><strong>Ready for pickup</strong><span>Settle any balance at the shop</span></span><span class="cp-tl-date"></span></li>
+                </ol>
+            </div>
+        <?php endif; ?>
+    </section>
 
-                <?php if (empty($myServiceRequests)): ?>
-                    <div class="empty-state">
-                        <i class="bi bi-calendar-check"></i>
-                        <h6 class="fw-bold mb-1">No service requests yet</h6>
-                        <p class="mb-0">Submit a service request for one of your registered vehicles.</p>
-                    </div>
-                <?php else: ?>
-                    <div class="compact-list">
-                        <?php foreach ($myServiceRequests as $request): ?>
-                            <?php
-                                $requestDate = !empty($request['created_at'])
-                                    ? date('M d, Y', strtotime($request['created_at']))
-                                    : 'N/A';
+    <section class="cp-stats" aria-label="Summary">
+        <div class="cp-stat">
+            <p class="cp-label">Active repairs</p>
+            <span class="cp-stat-value"><?php echo $activeRepairCount; ?></span>
+            <span class="cp-stat-note">Repair jobs still in progress</span>
+        </div>
+        <div class="cp-stat">
+            <p class="cp-label">Service requests</p>
+            <span class="cp-stat-value"><?php echo $pendingServiceRequestCount; ?></span>
+            <span class="cp-stat-note">Pending online requests</span>
+        </div>
+        <div class="cp-stat">
+            <p class="cp-label">Balance due</p>
+            <span class="cp-stat-value"><?php echo cpMoney($pendingBalanceTotal); ?></span>
+            <span class="cp-stat-note">Total unpaid repair balance</span>
+        </div>
+        <div class="cp-stat">
+            <p class="cp-label">Ready for pickup</p>
+            <span class="cp-stat-value"><?php echo $readyPickupCount; ?></span>
+            <span class="cp-stat-note">Parts orders ready at the shop</span>
+        </div>
+    </section>
 
-                                $preferredDate = !empty($request['preferred_appointment_date'])
-                                    ? date('M d, Y', strtotime($request['preferred_appointment_date']))
-                                    : 'N/A';
+    <!-- 01 Quick actions -->
+    <section class="cp-sec" aria-labelledby="secActions">
+        <div class="cp-sec-head">
+            <h2 id="secActions"><span class="cp-sec-num">01</span>What do you need?</h2>
+        </div>
+        <div class="cp-actions" data-reveal-group>
+            <a href="customer_services.php" class="cp-action">
+                <span class="cp-action-num">01</span><span class="cp-action-arrow" aria-hidden="true">↗</span>
+                <span><strong>Request a service</strong><span class="cp-action-sub">Book a repair or check-up</span></span>
+            </a>
+            <a href="customer_parts.php" class="cp-action">
+                <span class="cp-action-num">02</span><span class="cp-action-arrow" aria-hidden="true">↗</span>
+                <span><strong>Browse parts</strong><span class="cp-action-sub">Reserve parts for pickup</span></span>
+            </a>
+            <a href="customer_services.php" class="cp-action">
+                <span class="cp-action-num">03</span><span class="cp-action-arrow" aria-hidden="true">↗</span>
+                <span><strong>Services offered</strong><span class="cp-action-sub">Prices and warranties</span></span>
+            </a>
+            <a href="customer_cart.php" class="cp-action">
+                <span class="cp-action-num">04</span><span class="cp-action-arrow" aria-hidden="true">↗</span>
+                <span><strong>My cart</strong><span class="cp-action-sub"><?php echo intval($cartCount ?? 0); ?> item<?php echo intval($cartCount ?? 0) === 1 ? '' : 's'; ?> waiting</span></span>
+            </a>
+            <a href="#repairStatusSection" class="cp-action">
+                <span class="cp-action-num">05</span><span class="cp-action-arrow" aria-hidden="true">↓</span>
+                <span><strong>My repairs</strong><span class="cp-action-sub">Job orders and balances</span></span>
+            </a>
+            <a href="#orderStatusSection" class="cp-action">
+                <span class="cp-action-num">06</span><span class="cp-action-arrow" aria-hidden="true">↓</span>
+                <span><strong>My orders</strong><span class="cp-action-sub">Parts orders and payments</span></span>
+            </a>
+        </div>
+    </section>
 
-                                $preferredTime = !empty($request['preferred_appointment_time'])
-                                    ? date('h:i A', strtotime($request['preferred_appointment_time']))
-                                    : '';
-
-                                $requestVehicle = trim(($request['make'] ?? '') . ' ' . ($request['model'] ?? ''));
-                            ?>
-
-                            <div class="compact-row">
-                                <div class="compact-icon">
-                                    <i class="bi bi-wrench-adjustable-circle"></i>
-                                </div>
-
-                                <div class="compact-main">
-                                    <div class="compact-title">
-                                        <?php echo htmlspecialchars($request['service_name'] ?? 'N/A'); ?>
-                                    </div>
-                                    <div class="compact-sub">
-                                        <?php echo htmlspecialchars($request['request_number'] ?? 'N/A'); ?>
-                                        · <?php echo htmlspecialchars($requestDate); ?>
-                                        · Preferred: <?php echo htmlspecialchars($preferredDate); ?>
-                                        <?php if (!empty($preferredTime)): ?>
-                                            <?php echo htmlspecialchars(' ' . $preferredTime); ?>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="compact-note">
-                                        <?php echo htmlspecialchars($requestVehicle !== '' ? $requestVehicle : 'Vehicle'); ?>
-                                        · Plate: <?php echo htmlspecialchars($request['plate_number'] ?? 'N/A'); ?>
-                                        · <?php echo htmlspecialchars($request['concern_description'] ?? 'No concern details'); ?>
-                                    </div>
-
-                                    <?php if (($request['status'] ?? '') === 'Converted' && !empty($request['job_order_number'])): ?>
-                                        <div class="compact-note">
-                                            <?php echo htmlspecialchars($request['job_order_number']); ?> created
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-
-                                <div class="compact-side">
-                                    <span class="<?php echo getServiceRequestBadge($request['status'] ?? ''); ?>">
-                                        <?php echo htmlspecialchars(getServiceRequestDisplayLabel($request['status'] ?? '')); ?>
-                                    </span>
-
-                                    <?php if (($request['status'] ?? '') === 'Pending'): ?>
-                                        <form action="../controllers/ServiceRequestController.php" method="POST" class="m-0" onsubmit="return confirm('Cancel this pending service request?');">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="cancel_customer_request">
-                                            <input type="hidden" name="service_request_id" value="<?php echo intval($request['service_request_id']); ?>">
-                                            <button type="submit" class="request-cancel-btn">
-                                                <span class="link-btn-icon">
-                                                    <i class="bi bi-x-circle"></i>
-                                                </span>
-                                                <span class="link-btn-text">Cancel</span>
-                                            </button>
-                                        </form>
-                                    <?php else: ?>
-                                        <span class="compact-action-text">No action</span>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
+    <!-- 02 Vehicles -->
+    <section class="cp-sec" id="myVehiclesSection" aria-labelledby="secVehicles">
+        <div class="cp-sec-head">
+            <h2 id="secVehicles"><span class="cp-sec-num">02</span>My vehicles</h2>
+            <div class="cp-sec-link">
+                <button type="button" class="cp-link" data-bs-toggle="modal" data-bs-target="#addVehicleModal">+ Add vehicle</button>
             </div>
         </div>
 
-        <div class="customer-grid-main">
-            <div class="customer-section-card customer-panel-card repair-panel-card" id="repairStatusSection">
-                <div class="customer-section-header">
-                    <div class="section-title-wrap">
-                        <h5>My Vehicle Repairs</h5>
-                        <p>Repair records linked to your customer profile.</p>
-                    </div>
-                </div>
-
-                <?php if (empty($jobOrders)): ?>
-                    <div class="empty-state">
-                        <i class="bi bi-tools"></i>
-                        <h6 class="fw-bold mb-1">No repair records yet</h6>
-                        <p class="mb-0">Repair records will appear here once the shop creates a job order for your vehicle.</p>
-                    </div>
-                <?php else: ?>
-                    <div class="repair-list">
-                        <?php foreach ($jobOrders as $job): ?>
-                            <?php
-                                $paymentStatus = $job['payment_status'] ?? 'Not Paid';
-                                $isPaid = $paymentStatus === 'Paid';
-                            ?>
-                            <div class="repair-row">
-                                <div class="repair-icon">
-                                    <i class="bi bi-car-front-fill"></i>
-                                </div>
-
-                                <div class="repair-main">
-                                    <strong>
-                                        <?php echo htmlspecialchars($job['plate_number'] ?? 'N/A'); ?>
-                                        <span class="text-muted">· <?php echo htmlspecialchars(($job['make'] ?? '') . ' ' . ($job['model'] ?? '')); ?></span>
-                                    </strong>
-                                    <span>
-                                        JO: <?php echo htmlspecialchars($job['job_order_number'] ?? 'N/A'); ?>
-                                        · Date:
-                                        <?php
-                                            echo !empty($job['date_created'])
-                                                ? date('M d, Y', strtotime($job['date_created']))
-                                                : 'N/A';
-                                        ?>
-                                    </span>
-                                </div>
-
-                                <div class="repair-status-area">
-                                    <span class="<?php echo getCustomerRepairBadge($job['status'] ?? ''); ?>">
-                                        <?php echo htmlspecialchars($job['status'] ?? 'N/A'); ?>
-                                    </span>
-
-                                    <span class="<?php echo $isPaid ? 'payment-text-paid' : 'payment-text-unpaid'; ?>">
-                                        <?php echo htmlspecialchars($paymentStatus); ?>
-                                    </span>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
+        <?php if (empty($myVehicles)): ?>
+            <div class="cp-empty">
+                <strong>No vehicles registered yet</strong>
+                Add your vehicle details so the shop can connect future repairs to your profile.
+                <div><button type="button" class="cp-btn cp-btn-dark" data-bs-toggle="modal" data-bs-target="#addVehicleModal">Add vehicle</button></div>
             </div>
-
-            <div class="customer-right-stack">
-                <div class="customer-section-card customer-panel-card pickup-panel-card">
-                    <div class="customer-section-header">
-                        <div class="section-title-wrap">
-                            <h5>Pickup Reminders</h5>
-                            <p>Orders currently ready for shop pickup.</p>
+        <?php else: ?>
+            <div class="cp-vehicles">
+                <?php foreach ($myVehicles as $vehicle): ?>
+                    <?php
+                        $vehicleStatus = $vehicle['status'] ?? 'Active';
+                        $vehicleName = trim(($vehicle['make'] ?? '') . ' ' . ($vehicle['model'] ?? ''));
+                        $vehicleNotes = !empty($vehicle['notes']) ? $vehicle['notes'] : 'Registered vehicle';
+                    ?>
+                    <article class="cp-vehicle">
+                        <div class="cp-vehicle-top">
+                            <span class="cp-plate"><?php echo cpEscape($vehicle['plate_number'] ?? 'N/A'); ?></span>
+                            <?php echo cpBadge($vehicleStatus); ?>
                         </div>
+                        <h3 class="cp-vehicle-name"><?php echo cpEscape($vehicleName !== '' ? $vehicleName : 'Vehicle'); ?></h3>
+                        <div class="cp-vehicle-meta">
+                            <span>Year <span class="cp-mono"><?php echo cpEscape($vehicle['year'] ?? 'N/A'); ?></span></span>
+                            <span><?php echo cpEscape($vehicle['color'] ?? 'N/A'); ?></span>
+                            <span class="cp-mono cp-faint">VID-<?php echo intval($vehicle['vehicle_id']); ?></span>
+                        </div>
+                        <p class="cp-vehicle-notes"><?php echo cpEscape($vehicleNotes); ?></p>
+                        <div class="cp-vehicle-foot">
+                            <span class="cp-faint small">Used for service requests</span>
+                            <button
+                                type="button"
+                                class="cp-link"
+                                data-bs-toggle="modal"
+                                data-bs-target="#editVehicleModal"
+                                data-vehicle-id="<?php echo intval($vehicle['vehicle_id']); ?>"
+                                data-plate-number="<?php echo htmlspecialchars($vehicle['plate_number'] ?? '', ENT_QUOTES); ?>"
+                                data-make="<?php echo htmlspecialchars($vehicle['make'] ?? '', ENT_QUOTES); ?>"
+                                data-model="<?php echo htmlspecialchars($vehicle['model'] ?? '', ENT_QUOTES); ?>"
+                                data-year="<?php echo htmlspecialchars($vehicle['year'] ?? '', ENT_QUOTES); ?>"
+                                data-color="<?php echo htmlspecialchars($vehicle['color'] ?? '', ENT_QUOTES); ?>"
+                                data-notes="<?php echo htmlspecialchars($vehicle['notes'] ?? '', ENT_QUOTES); ?>"
+                            >Edit</button>
+                        </div>
+                    </article>
+                <?php endforeach; ?>
+                <button type="button" class="cp-vehicle cp-vehicle-add" data-bs-toggle="modal" data-bs-target="#addVehicleModal">
+                    <span aria-hidden="true">+</span>
+                    Add vehicle
+                </button>
+            </div>
+        <?php endif; ?>
+    </section>
 
-                        <a href="#orderStatusSection" class="section-text-link">
-                            View Orders <i class="bi bi-arrow-right"></i>
-                        </a>
-                    </div>
-
-                    <div class="pickup-content">
-                        <?php if (empty($readyPickupOrders)): ?>
-                            <div class="pickup-box">
-                                <div class="pickup-icon">
-                                    <i class="bi bi-bag-check"></i>
-                                </div>
-                                <h6 class="pickup-title">No pickup reminders</h6>
-                                <p class="pickup-text">No parts orders are ready for pickup right now.</p>
-                            </div>
-                        <?php else: ?>
-                            <div class="pickup-list">
-                                <?php foreach ($readyPickupOrders as $pickup): ?>
-                                    <div class="pickup-item">
-                                        <strong>Order #<?php echo intval($pickup['order_id']); ?></strong>
-                                        <div class="text-muted small mt-1">
-                                            <?php echo $pickup['items'] ?? 'No items'; ?>
-                                        </div>
-                                        <div class="fw-bold mt-1">
-                                            ₱<?php echo number_format(floatval($pickup['total_amount'] ?? 0), 2); ?>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-
-                    <div class="reminder-card">
-                        <h6>
-                            <i class="bi bi-info-circle"></i>
-                            Customer Reminder
-                        </h6>
-                        <p>
-                            For parts reservations, you can pay a GCash down payment or full payment online through PayMongo.
-                            Online payments are confirmed automatically. If you only paid a down payment,
-                            please settle the remaining balance at the shop before claiming your item.
-                        </p>
-                    </div>
-                </div>
+    <!-- 03 Service requests -->
+    <section class="cp-sec" id="serviceRequestsSection" aria-labelledby="secRequests">
+        <div class="cp-sec-head">
+            <h2 id="secRequests"><span class="cp-sec-num">03</span>Service requests</h2>
+            <div class="cp-sec-link">
+                <a href="customer_service_requests.php" class="cp-link">View all ↗</a>
             </div>
         </div>
 
-        <div class="customer-section-card" id="orderStatusSection">
-            <div class="customer-section-header">
-                <div class="section-title-wrap">
-                    <h5>My Ordered Parts</h5>
-                    <p>Parts orders submitted through the customer portal.</p>
-                </div>
-
-                <a href="customer_parts.php" class="section-text-link">
-                    Browse Parts <i class="bi bi-arrow-right"></i>
-                </a>
+        <?php if (empty($myServiceRequests)): ?>
+            <div class="cp-empty">
+                <strong>No service requests yet</strong>
+                Submit a service request for one of your registered vehicles.
+                <div><a href="customer_services.php" class="cp-btn cp-btn-dark">Request a service</a></div>
             </div>
+        <?php else: ?>
+            <div class="cp-rows" data-cp-paginate="5" data-cp-noun="request">
+                <?php foreach ($myServiceRequests as $request): ?>
+                    <?php
+                        $requestDate = !empty($request['created_at'])
+                            ? date('M d, Y', strtotime($request['created_at']))
+                            : 'N/A';
 
-            <div class="customer-table-wrap">
-                <table class="table customer-table customer-order-table compact-order-table">
+                        $preferredDate = !empty($request['preferred_appointment_date'])
+                            ? date('M d, Y', strtotime($request['preferred_appointment_date']))
+                            : 'N/A';
+
+                        $preferredTime = !empty($request['preferred_appointment_time'])
+                            ? date('h:i A', strtotime($request['preferred_appointment_time']))
+                            : '';
+
+                        $requestVehicle = trim(($request['make'] ?? '') . ' ' . ($request['model'] ?? ''));
+                    ?>
+                    <div class="cp-row">
+                        <div class="cp-row-main">
+                            <span class="cp-row-title"><?php echo cpEscape($request['service_name'] ?? 'N/A'); ?></span>
+                            <div class="cp-row-sub">
+                                <span class="cp-mono"><?php echo cpEscape($request['request_number'] ?? 'N/A'); ?></span>
+                                <span>Sent <span class="cp-mono"><?php echo cpEscape($requestDate); ?></span></span>
+                                <span><?php echo cpEscape($requestVehicle !== '' ? $requestVehicle : 'Vehicle'); ?> · <span class="cp-mono"><?php echo cpEscape($request['plate_number'] ?? 'N/A'); ?></span></span>
+                            </div>
+                        </div>
+                        <div class="cp-row-side">
+                            <span>Preferred <span class="cp-mono"><?php echo cpEscape($preferredDate . ($preferredTime !== '' ? ' ' . $preferredTime : '')); ?></span></span>
+                            <?php if (($request['status'] ?? '') === 'Converted' && !empty($request['job_order_number'])): ?>
+                                <span><span class="cp-mono"><?php echo cpEscape($request['job_order_number']); ?></span> created</span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="cp-row-end">
+                            <span class="<?php echo getServiceRequestBadge($request['status'] ?? ''); ?>">
+                                <?php echo cpEscape(getServiceRequestDisplayLabel($request['status'] ?? '')); ?>
+                            </span>
+
+                            <?php if (($request['status'] ?? '') === 'Pending'): ?>
+                                <form action="../controllers/ServiceRequestController.php" method="POST" class="m-0"
+                                      data-cp-confirm="Cancel this pending service request?"
+                                      data-cp-confirm-title="Cancel request?"
+                                      data-cp-confirm-yes="Yes, cancel it"
+                                      data-cp-confirm-no="Keep request">
+                                    <?= csrfField() ?>
+                                    <input type="hidden" name="action" value="cancel_customer_request">
+                                    <input type="hidden" name="service_request_id" value="<?php echo intval($request['service_request_id']); ?>">
+                                    <button type="submit" class="cp-link cp-link-danger">Cancel</button>
+                                </form>
+                            <?php else: ?>
+                                <span class="cp-faint small">No action</span>
+                            <?php endif; ?>
+                        </div>
+                        <p class="cp-row-note"><?php echo cpEscape($request['concern_description'] ?? 'No concern details'); ?></p>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
+
+    <!-- 04 Repairs -->
+    <section class="cp-sec" id="repairStatusSection" aria-labelledby="secRepairs">
+        <div class="cp-sec-head">
+            <h2 id="secRepairs"><span class="cp-sec-num">04</span>My vehicle repairs</h2>
+        </div>
+
+        <?php if (empty($jobOrders)): ?>
+            <div class="cp-empty">
+                <strong>No repair records yet</strong>
+                Repair records will appear here once the shop creates a job order for your vehicle.
+            </div>
+        <?php else: ?>
+            <div class="cp-rows" data-cp-paginate="5" data-cp-noun="repair">
+                <?php foreach ($jobOrders as $job): ?>
+                    <?php $jobMoney = customerRepairMoney($job); ?>
+                    <div class="cp-row">
+                        <div class="cp-row-main">
+                            <span class="cp-row-title">
+                                <span class="cp-mono"><?php echo cpEscape($job['plate_number'] ?? 'N/A'); ?></span>
+                                <span class="cp-faint">· <?php echo cpEscape(($job['make'] ?? '') . ' ' . ($job['model'] ?? '')); ?></span>
+                            </span>
+                            <div class="cp-row-sub">
+                                <span>JO <span class="cp-mono"><?php echo cpEscape($job['job_order_number'] ?? 'N/A'); ?></span></span>
+                                <span>Date <span class="cp-mono"><?php echo !empty($job['date_created']) ? date('M d, Y', strtotime($job['date_created'])) : 'N/A'; ?></span></span>
+                            </div>
+                        </div>
+                        <div class="cp-row-side">
+                            <?php if ($jobMoney['amount'] !== null): ?>
+                                <span><?php echo cpEscape($jobMoney['amountLabel'] === 'Balance due' ? 'Balance' : $jobMoney['amountLabel']); ?> <span class="cp-mono"><?php echo cpMoney($jobMoney['amount']); ?></span></span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="cp-row-end">
+                            <span class="<?php echo getCustomerRepairBadge($job['status'] ?? ''); ?>"><?php echo cpEscape($job['status'] ?? 'N/A'); ?></span>
+                            <?php if ($jobMoney['badge'] !== ''): ?>
+                                <span class="<?php echo $jobMoney['badgeClass']; ?>"><?php echo cpEscape($jobMoney['badge']); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
+
+    <!-- 05 Pickup reminders -->
+    <section class="cp-sec" aria-labelledby="secPickup">
+        <div class="cp-sec-head">
+            <h2 id="secPickup"><span class="cp-sec-num">05</span>Pickup reminders</h2>
+            <div class="cp-sec-link">
+                <a href="#orderStatusSection" class="cp-link">View orders ↓</a>
+            </div>
+        </div>
+
+        <?php if (empty($readyPickupOrders)): ?>
+            <div class="cp-empty">
+                <strong>No pickup reminders</strong>
+                No parts orders are ready for pickup right now.
+            </div>
+        <?php else: ?>
+            <div class="cp-rows">
+                <?php foreach ($readyPickupOrders as $pickup): ?>
+                    <div class="cp-row">
+                        <div class="cp-row-main">
+                            <span class="cp-row-title">Order <span class="cp-mono">#<?php echo intval($pickup['order_id']); ?></span></span>
+                            <div class="cp-order-items cp-muted"><?php echo customerOrderItemsHtml($pickup['items'] ?? ''); ?></div>
+                        </div>
+                        <div class="cp-row-side">
+                            <span class="cp-mono"><?php echo cpMoney($pickup['total_amount'] ?? 0); ?></span>
+                        </div>
+                        <div class="cp-row-end">
+                            <span class="st ready solid">Ready for Pickup</span>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <div class="cp-reminder">
+            <strong>Customer reminder.</strong>
+            For parts reservations, you can pay a GCash down payment or full payment online through PayMongo.
+            Online payments are confirmed automatically. If you only paid a down payment,
+            please settle the remaining balance at the shop before claiming your item.
+        </div>
+    </section>
+
+    <!-- 06 Ordered parts -->
+    <section class="cp-sec" id="orderStatusSection" aria-labelledby="secOrders">
+        <div class="cp-sec-head">
+            <h2 id="secOrders"><span class="cp-sec-num">06</span>My ordered parts</h2>
+            <div class="cp-sec-link">
+                <a href="customer_parts.php" class="cp-link">Browse parts ↗</a>
+            </div>
+        </div>
+
+        <?php if (empty($orders)): ?>
+            <div class="cp-empty">
+                <strong>No online orders yet</strong>
+                Browse available parts and submit a pickup order when needed.
+                <div><a href="customer_parts.php" class="cp-btn cp-btn-dark">Browse parts</a></div>
+            </div>
+        <?php else: ?>
+            <div class="cp-table-wrap">
+                <table class="cp-table">
                     <thead>
                         <tr>
                             <th>Order</th>
-                            <th>Item Details</th>
-                            <th>Pickup Schedule</th>
-                            <th>Payment Details</th>
-                            <th>Total Cost</th>
-                            <th>Order Status</th>
+                            <th>Items</th>
+                            <th>Pickup</th>
+                            <th>Payment</th>
+                            <th class="cp-num">Total</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
+                    <tbody data-cp-paginate="5" data-cp-noun="order">
+                        <?php foreach ($orders as $order): ?>
+                            <?php
+                                $paymentMethod = trim($order['payment_method'] ?? 'Cash on Pickup');
+                                $gcashReference = trim($order['gcash_reference'] ?? '');
+                                $gcashAmount = floatval($order['gcash_payment_amount'] ?? 0);
 
-                    <tbody>
-                        <?php if (empty($orders)): ?>
+                                $gcashStatus = trim($order['gcash_verification_status'] ?? '');
+
+                                if ($gcashStatus === '' && isCustomerGcashOrder($paymentMethod)) {
+                                    $gcashStatus = 'Pending Verification';
+                                }
+
+                                if ($gcashStatus === '' && !isCustomerGcashOrder($paymentMethod)) {
+                                    $gcashStatus = 'Not Required';
+                                }
+
+                                $paymentStatus = trim($order['payment_status'] ?? 'No Invoice');
+                                $balanceDue = floatval($order['balance_due'] ?? 0);
+                                $totalAmount = floatval($order['total_amount'] ?? 0);
+                                $recordedPaid = max($totalAmount - $balanceDue, 0);
+
+                                if ($paymentStatus === 'No Invoice') {
+                                    $recordedPaid = 0;
+                                }
+
+                                $shopPaidAmount = 0;
+
+                                if (isCustomerGcashOrder($paymentMethod) && $gcashAmount > 0) {
+                                    $shopPaidAmount = max($recordedPaid - $gcashAmount, 0);
+                                }
+
+                                $pickupDate = $order['preferred_pickup_date'] ?? '';
+                                $pickupTime = $order['preferred_pickup_time'] ?? '';
+                                $pickupNotes = $order['pickup_notes'] ?? '';
+
+                                $pickupDateDisplay = !empty($pickupDate)
+                                    ? date('M d, Y', strtotime($pickupDate))
+                                    : 'No pickup schedule';
+
+                                $pickupTimeDisplay = !empty($pickupTime)
+                                    ? date('h:i A', strtotime($pickupTime))
+                                    : '';
+
+                                $orderDateDisplay = !empty($order['order_date'])
+                                    ? date('M d, Y', strtotime($order['order_date']))
+                                    : 'N/A';
+                            ?>
                             <tr>
-                                <td colspan="6">
-                                    <div class="empty-state">
-                                        <i class="bi bi-receipt"></i>
-                                        <h6 class="fw-bold mb-1">No online orders yet</h6>
-                                        <p class="mb-0">Browse available parts and submit a pickup order when needed.</p>
+                                <td data-label="Order">
+                                    <div>
+                                        <span class="cp-cell-title cp-mono">#<?php echo intval($order['order_id']); ?></span>
+                                        <span class="cp-cell-sub cp-mono"><?php echo cpEscape($orderDateDisplay); ?></span>
                                     </div>
                                 </td>
-                            </tr>
-                        <?php else: ?>
-                            <?php foreach ($orders as $order): ?>
-                                <?php
-                                    $paymentMethod = trim($order['payment_method'] ?? 'Cash on Pickup');
-                                    $gcashReference = trim($order['gcash_reference'] ?? '');
-                                    $gcashAmount = floatval($order['gcash_payment_amount'] ?? 0);
 
-                                    $gcashStatus = trim($order['gcash_verification_status'] ?? '');
+                                <td data-label="Items">
+                                    <div class="cp-order-items"><?php echo customerOrderItemsHtml($order['items'] ?? ''); ?></div>
+                                </td>
 
-                                    if ($gcashStatus === '' && isCustomerGcashOrder($paymentMethod)) {
-                                        $gcashStatus = 'Pending Verification';
-                                    }
-
-                                    if ($gcashStatus === '' && !isCustomerGcashOrder($paymentMethod)) {
-                                        $gcashStatus = 'Not Required';
-                                    }
-
-                                    $paymentStatus = trim($order['payment_status'] ?? 'No Invoice');
-                                    $balanceDue = floatval($order['balance_due'] ?? 0);
-                                    $totalAmount = floatval($order['total_amount'] ?? 0);
-                                    $recordedPaid = max($totalAmount - $balanceDue, 0);
-
-                                    if ($paymentStatus === 'No Invoice') {
-                                        $recordedPaid = 0;
-                                    }
-
-                                    $shopPaidAmount = 0;
-
-                                    if (isCustomerGcashOrder($paymentMethod) && $gcashAmount > 0) {
-                                        $shopPaidAmount = max($recordedPaid - $gcashAmount, 0);
-                                    }
-
-                                    $pickupDate = $order['preferred_pickup_date'] ?? '';
-                                    $pickupTime = $order['preferred_pickup_time'] ?? '';
-                                    $pickupNotes = $order['pickup_notes'] ?? '';
-
-                                    $pickupDateDisplay = !empty($pickupDate)
-                                        ? date('M d, Y', strtotime($pickupDate))
-                                        : 'No pickup schedule';
-
-                                    $pickupTimeDisplay = !empty($pickupTime)
-                                        ? date('h:i A', strtotime($pickupTime))
-                                        : '';
-
-                                    $orderDateDisplay = !empty($order['order_date'])
-                                        ? date('M d, Y', strtotime($order['order_date']))
-                                        : 'N/A';
-                                ?>
-
-                                <tr>
-                                    <td>
-                                        <div class="order-id-main">
-                                            #<?php echo intval($order['order_id']); ?>
-                                        </div>
-                                        <div class="order-date-sub">
-                                            <?php echo htmlspecialchars($orderDateDisplay); ?>
-                                        </div>
-                                    </td>
-
-                                    <td>
-                                        <div class="order-item-name">
-                                            <?php echo $order['items'] ?? 'No items'; ?>
-                                        </div>
-                                    </td>
-
-                                    <td>
-                                        <div class="order-detail-main">
-                                            <?php echo htmlspecialchars($pickupDateDisplay); ?>
-                                        </div>
-
+                                <td data-label="Pickup">
+                                    <div>
+                                        <span class="cp-cell-title cp-mono"><?php echo cpEscape($pickupDateDisplay); ?></span>
                                         <?php if (!empty($pickupTimeDisplay)): ?>
-                                            <div class="order-detail-muted">
-                                                <?php echo htmlspecialchars($pickupTimeDisplay); ?>
-                                            </div>
+                                            <span class="cp-cell-sub cp-mono"><?php echo cpEscape($pickupTimeDisplay); ?></span>
                                         <?php endif; ?>
-
                                         <?php if (!empty($pickupNotes)): ?>
-                                            <div class="order-detail-muted">
-                                                <?php echo htmlspecialchars($pickupNotes); ?>
-                                            </div>
+                                            <span class="cp-cell-sub"><?php echo cpEscape($pickupNotes); ?></span>
                                         <?php endif; ?>
-                                    </td>
+                                    </div>
+                                </td>
 
-                                    <td>
-                                        <div class="order-payment-card">
-                                            <div class="order-payment-method">
-                                                <?php echo htmlspecialchars($paymentMethod); ?>
+                                <td data-label="Payment" class="cp-td-stack">
+                                    <div>
+                                        <span class="cp-cell-title"><?php echo cpEscape($paymentMethod); ?></span>
+
+                                        <?php if (isCustomerGcashOrder($paymentMethod)): ?>
+                                            <div class="mt-2">
+                                                <span class="<?php echo getCustomerGcashBadge($gcashStatus); ?>">GCash: <?php echo cpEscape($gcashStatus); ?></span>
                                             </div>
 
-                                            <?php if (isCustomerGcashOrder($paymentMethod)): ?>
-                                                <div class="payment-verification-line">
-                                                    GCash verification:
-                                                    <strong><?php echo htmlspecialchars($gcashStatus); ?></strong>
-                                                </div>
-
-                                                <?php if ($gcashStatus === 'Awaiting Payment' && ($order['status'] ?? '') === 'Pending'): ?>
-                                                    <form method="POST" action="../controllers/PaymentController.php" class="mt-2">
+                                            <?php if ($gcashStatus === 'Awaiting Payment' && ($order['status'] ?? '') === 'Pending'): ?>
+                                                <div class="cp-pay-card">
+                                                    <p>Your reservation is waiting for its GCash payment.</p>
+                                                    <form method="POST" action="../controllers/PaymentController.php" class="m-0">
                                                         <?= csrfField() ?>
                                                         <input type="hidden" name="action" value="pay">
                                                         <input type="hidden" name="order_id" value="<?php echo intval($order['order_id']); ?>">
-                                                        <button type="submit" class="btn btn-sm btn-primary">
-                                                            <i class="bi bi-wallet2"></i>
-                                                            Pay ₱<?php echo number_format($gcashAmount, 2); ?> with GCash
+                                                        <button type="submit" class="cp-btn cp-btn-dark cp-btn-sm cp-btn-block">
+                                                            Pay <?php echo cpMoney($gcashAmount); ?> with GCash
                                                         </button>
                                                     </form>
-                                                <?php endif; ?>
+                                                </div>
                                             <?php endif; ?>
+                                        <?php endif; ?>
 
-                                            <div class="order-payment-summary">
-                                                <div class="payment-mini-box">
-                                                    <div class="payment-mini-label">Total Paid</div>
-                                                    <div class="payment-mini-value green">
-                                                        ₱<?php echo number_format($recordedPaid, 2); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="payment-mini-box">
-                                                    <div class="payment-mini-label">Balance</div>
-                                                    <div class="payment-mini-value">
-                                                        ₱<?php echo number_format($balanceDue, 2); ?>
-                                                    </div>
-                                                </div>
-
-                                                <div class="payment-mini-box">
-                                                    <div class="payment-mini-label">Invoice</div>
-                                                    <div class="payment-mini-value">
-                                                        <?php echo htmlspecialchars($paymentStatus); ?>
-                                                    </div>
-                                                </div>
+                                        <div class="cp-order-money">
+                                            <div>
+                                                <span>Total paid</span>
+                                                <strong><?php echo cpMoney($recordedPaid); ?></strong>
                                             </div>
+                                            <div>
+                                                <span>Balance</span>
+                                                <strong><?php echo cpMoney($balanceDue); ?></strong>
+                                            </div>
+                                            <div>
+                                                <span>Invoice</span>
+                                                <strong><?php echo cpEscape($paymentStatus); ?></strong>
+                                            </div>
+                                        </div>
 
+                                        <ul class="cp-order-lines">
                                             <?php if (isCustomerGcashOrder($paymentMethod)): ?>
                                                 <?php if (!empty($gcashReference)): ?>
-                                                    <div class="payment-detail-line">
-                                                        <strong>GCash Ref:</strong>
-                                                        <?php echo htmlspecialchars($gcashReference); ?>
-                                                    </div>
+                                                    <li>GCash ref: <span class="cp-mono"><?php echo cpEscape($gcashReference); ?></span></li>
                                                 <?php endif; ?>
 
                                                 <?php if ($gcashAmount > 0 && $gcashStatus === 'Verified'): ?>
-                                                    <div class="payment-detail-line">
-                                                        <strong>GCash Paid:</strong>
-                                                        ₱<?php echo number_format($gcashAmount, 2); ?>
-                                                    </div>
+                                                    <li>GCash paid: <span class="cp-mono"><?php echo cpMoney($gcashAmount); ?></span></li>
                                                 <?php endif; ?>
 
                                                 <?php if ($shopPaidAmount > 0): ?>
-                                                    <div class="payment-detail-line">
-                                                        <strong>Paid at Shop:</strong>
-                                                        ₱<?php echo number_format($shopPaidAmount, 2); ?>
-                                                    </div>
+                                                    <li>Paid at shop: <span class="cp-mono"><?php echo cpMoney($shopPaidAmount); ?></span></li>
                                                 <?php endif; ?>
 
                                                 <?php if (!empty($order['gcash_verified_at'])): ?>
-                                                    <div class="payment-muted-note">
-                                                        Checked: <?php echo date('M d, Y h:i A', strtotime($order['gcash_verified_at'])); ?>
-                                                    </div>
+                                                    <li>Checked: <span class="cp-mono"><?php echo date('M d, Y h:i A', strtotime($order['gcash_verified_at'])); ?></span></li>
                                                 <?php endif; ?>
                                             <?php endif; ?>
 
                                             <?php if (!empty($order['payment_notes'])): ?>
-                                                <div class="payment-muted-note">
-                                                    <?php echo htmlspecialchars($order['payment_notes']); ?>
-                                                </div>
+                                                <li><?php echo cpEscape($order['payment_notes']); ?></li>
                                             <?php endif; ?>
-                                        </div>
-                                    </td>
+                                        </ul>
+                                    </div>
+                                </td>
 
-                                    <td>
-                                        <strong class="text-success">
-                                            ₱<?php echo number_format($totalAmount, 2); ?>
-                                        </strong>
-                                    </td>
+                                <td data-label="Total" class="cp-num">
+                                    <strong class="cp-mono fw-normal"><?php echo cpMoney($totalAmount); ?></strong>
+                                </td>
 
-                                    <td>
-                                        <span class="<?php echo getCustomerOrderBadge($order['status'] ?? ''); ?>">
-                                            <?php echo htmlspecialchars($order['status'] ?? 'N/A'); ?>
-                                        </span>
-
-                                        <div class="text-muted small mt-2">
+                                <td data-label="Status">
+                                    <div>
+                                        <span class="<?php echo getCustomerOrderBadge($order['status'] ?? ''); ?>"><?php echo cpEscape($order['status'] ?? 'N/A'); ?></span>
+                                        <p class="cp-order-help">
                                             <?php
                                                 switch ($order['status'] ?? '') {
                                                     case 'Pending':
@@ -2096,57 +1112,45 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                                                         echo 'Status unavailable.';
                                                 }
                                             ?>
-                                        </div>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
+                                        </p>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             </div>
-        </div>
-
-    </div>
-</div>
+        <?php endif; ?>
+    </section>
+</main>
 
 <!-- REQUEST SERVICE MODAL -->
-<div class="modal fade customer-modal" id="requestServiceModal" tabindex="-1" aria-labelledby="requestServiceModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
+<div class="modal fade cp-modal" id="requestServiceModal" tabindex="-1" aria-labelledby="requestServiceModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
         <form action="../controllers/ServiceRequestController.php" method="POST" class="modal-content">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="submit_customer_request">
 
-            <div class="modal-header">
+            <div class="cp-modal-head">
                 <div>
-                    <h5 class="modal-title" id="requestServiceModalLabel">Request Service Appointment</h5>
-                    <p class="mb-0 text-muted small">
-                        Submit a service request for shop review and estimated cost approval.
-                    </p>
+                    <p class="cp-label">Service request</p>
+                    <h2 class="cp-modal-title" id="requestServiceModalLabel">Request service appointment</h2>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="cp-modal-x" data-bs-dismiss="modal" aria-label="Close">&times;</button>
             </div>
 
-            <div class="modal-body">
+            <div class="cp-modal-body cp-modal-scroll">
                 <?php if (empty($myVehicles)): ?>
-                    <div class="alert alert-warning mb-0" style="border-radius: 14px;">
-                        <i class="bi bi-exclamation-triangle me-1"></i>
-                        Please add a registered vehicle first before requesting a service appointment.
-                    </div>
+                    <div class="cp-flash cp-flash-warn mb-0">Please add a registered vehicle first before requesting a service appointment.</div>
                 <?php elseif (empty($activeServices)): ?>
-                    <div class="alert alert-warning mb-0" style="border-radius: 14px;">
-                        <i class="bi bi-exclamation-triangle me-1"></i>
-                        No active services are available right now. Please contact the shop.
-                    </div>
+                    <div class="cp-flash cp-flash-warn mb-0">No active services are available right now. Please contact the shop.</div>
                 <?php else: ?>
-                    <div class="alert alert-light border mb-3" style="border-radius: 14px;">
-                        <i class="bi bi-info-circle me-1"></i>
-                        Your request will be reviewed by the shop. The final estimated cost will be provided after approval.
-                    </div>
+                    <div class="cp-flash cp-flash-info">Your request will be reviewed by the shop. The final estimated cost will be provided after approval.</div>
 
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label-custom">Vehicle <span class="text-danger">*</span></label>
-                            <select name="vehicle_id" class="form-select form-control-custom" required>
+                    <div class="cp-form-grid">
+                        <div class="cp-field">
+                            <label for="req_vehicle_id">Vehicle *</label>
+                            <select name="vehicle_id" id="req_vehicle_id" class="cp-input" required>
                                 <option value="">Select vehicle</option>
                                 <?php foreach ($myVehicles as $vehicle): ?>
                                     <option value="<?php echo intval($vehicle['vehicle_id']); ?>">
@@ -2156,9 +1160,9 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                             </select>
                         </div>
 
-                        <div class="col-md-6">
-                            <label class="form-label-custom">Service <span class="text-danger">*</span></label>
-                            <select name="service_id" class="form-select form-control-custom" required>
+                        <div class="cp-field">
+                            <label for="req_service_id">Service *</label>
+                            <select name="service_id" id="req_service_id" class="cp-input" required>
                                 <option value="">Select service</option>
                                 <?php foreach ($activeServices as $service): ?>
                                     <option value="<?php echo intval($service['service_id']); ?>">
@@ -2171,48 +1175,28 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
                             </select>
                         </div>
 
-                        <div class="col-md-6">
-                            <label class="form-label-custom">Preferred Date <span class="text-danger">*</span></label>
-                            <input
-                                type="date"
-                                name="preferred_appointment_date"
-                                class="form-control form-control-custom"
-                                min="<?php echo date('Y-m-d'); ?>"
-                                required
-                            >
+                        <div class="cp-field">
+                            <label for="req_date">Preferred date *</label>
+                            <input type="date" name="preferred_appointment_date" id="req_date" class="cp-input" min="<?php echo date('Y-m-d'); ?>" required>
                         </div>
 
-                        <div class="col-md-6">
-                            <label class="form-label-custom">Preferred Time</label>
-                            <input
-                                type="time"
-                                name="preferred_appointment_time"
-                                class="form-control form-control-custom"
-                            >
+                        <div class="cp-field">
+                            <label for="req_time">Preferred time</label>
+                            <input type="time" name="preferred_appointment_time" id="req_time" class="cp-input">
                         </div>
 
-                        <div class="col-12">
-                            <label class="form-label-custom">Concern / Symptoms / Additional Notes <span class="text-danger">*</span></label>
-                            <textarea
-                                name="concern_description"
-                                class="form-control form-control-custom"
-                                rows="4"
-                                placeholder="Describe the vehicle concern or symptoms. Example: leaking oil, hard starting, unusual noise, weak brakes."
-                                required
-                            ></textarea>
+                        <div class="cp-field cp-span">
+                            <label for="req_concern">Concern / symptoms / additional notes *</label>
+                            <textarea name="concern_description" id="req_concern" class="cp-input" rows="4" placeholder="Describe the vehicle concern or symptoms. Example: leaking oil, hard starting, unusual noise, weak brakes." required></textarea>
                         </div>
                     </div>
                 <?php endif; ?>
             </div>
 
-            <div class="modal-footer">
-                <button type="button" class="btn btn-outline-secondary modal-cancel-btn" data-bs-dismiss="modal">Cancel</button>
-
+            <div class="cp-modal-foot">
+                <button type="button" class="cp-btn cp-btn-line" data-bs-dismiss="modal">Cancel</button>
                 <?php if (!empty($myVehicles) && !empty($activeServices)): ?>
-                    <button type="submit" class="btn modal-save-btn">
-                        <i class="bi bi-send me-1"></i>
-                        Submit Request
-                    </button>
+                    <button type="submit" class="cp-btn cp-btn-dark">Submit request</button>
                 <?php endif; ?>
             </div>
         </form>
@@ -2220,131 +1204,123 @@ function getCustomerPaymentInstruction($paymentMethod, $paymentStatus, $balanceD
 </div>
 
 <!-- ADD VEHICLE MODAL -->
-<div class="modal fade customer-modal" id="addVehicleModal" tabindex="-1" aria-labelledby="addVehicleModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
+<div class="modal fade cp-modal" id="addVehicleModal" tabindex="-1" aria-labelledby="addVehicleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
         <form action="../controllers/VehicleController.php" method="POST" class="modal-content">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="add_customer_vehicle">
 
-            <div class="modal-header">
+            <div class="cp-modal-head">
                 <div>
-                    <h5 class="modal-title" id="addVehicleModalLabel">Add Vehicle</h5>
-                    <p class="mb-0 text-muted small">Register your vehicle once so it can be reused for future service records.</p>
+                    <p class="cp-label">My vehicles</p>
+                    <h2 class="cp-modal-title" id="addVehicleModalLabel">Add vehicle</h2>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="cp-modal-x" data-bs-dismiss="modal" aria-label="Close">&times;</button>
             </div>
 
-            <div class="modal-body">
-                <div class="alert alert-light border mb-3" style="border-radius: 14px;">
-                    <i class="bi bi-info-circle me-1"></i>
-                    Plate numbers must be unique. If your vehicle is already registered by the shop, contact the staff for assistance.
-                </div>
+            <div class="cp-modal-body cp-modal-scroll">
+                <p class="cp-hint mb-3">Register your vehicle once so it can be reused for future service records. Plate numbers must be unique. If your vehicle is already registered by the shop, contact the staff for assistance.</p>
 
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label class="form-label-custom">Plate Number <span class="text-danger">*</span></label>
-                        <input type="text" name="plate_number" class="form-control form-control-custom text-uppercase" placeholder="Example: ABC 1234" required>
+                <div class="cp-form-grid">
+                    <div class="cp-field">
+                        <label for="add_plate_number">Plate number *</label>
+                        <input type="text" name="plate_number" id="add_plate_number" class="cp-input cp-mono text-uppercase" placeholder="Example: ABC 1234" required>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label-custom">Make / Brand <span class="text-danger">*</span></label>
-                        <input type="text" name="make" class="form-control form-control-custom" placeholder="Example: Toyota" required>
+                    <div class="cp-field">
+                        <label for="add_make">Make / brand *</label>
+                        <input type="text" name="make" id="add_make" class="cp-input" placeholder="Example: Toyota" required>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label-custom">Model <span class="text-danger">*</span></label>
-                        <input type="text" name="model" class="form-control form-control-custom" placeholder="Example: Vios" required>
+                    <div class="cp-field">
+                        <label for="add_model">Model *</label>
+                        <input type="text" name="model" id="add_model" class="cp-input" placeholder="Example: Vios" required>
                     </div>
 
-                    <div class="col-md-3">
-                        <label class="form-label-custom">Year <span class="text-danger">*</span></label>
-                        <input type="text" name="year" class="form-control form-control-custom" maxlength="4" pattern="[0-9]{4}" placeholder="2020" required>
+                    <div class="cp-form-grid">
+                        <div class="cp-field">
+                            <label for="add_year">Year *</label>
+                            <input type="text" name="year" id="add_year" class="cp-input cp-mono" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="2020" required>
+                        </div>
+
+                        <div class="cp-field">
+                            <label for="add_color">Color *</label>
+                            <input type="text" name="color" id="add_color" class="cp-input" placeholder="Black" required>
+                        </div>
                     </div>
 
-                    <div class="col-md-3">
-                        <label class="form-label-custom">Color <span class="text-danger">*</span></label>
-                        <input type="text" name="color" class="form-control form-control-custom" placeholder="Black" required>
-                    </div>
-
-                    <div class="col-12">
-                        <label class="form-label-custom">Notes</label>
-                        <textarea name="notes" class="form-control form-control-custom" rows="3" placeholder="Optional notes, engine concerns, or vehicle remarks"></textarea>
+                    <div class="cp-field cp-span">
+                        <label for="add_notes">Notes</label>
+                        <textarea name="notes" id="add_notes" class="cp-input" rows="3" placeholder="Optional notes, engine concerns, or vehicle remarks"></textarea>
                     </div>
                 </div>
             </div>
 
-            <div class="modal-footer">
-                <button type="button" class="btn btn-outline-secondary modal-cancel-btn" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn modal-save-btn">
-                    <i class="bi bi-save me-1"></i>
-                    Save Vehicle
-                </button>
+            <div class="cp-modal-foot">
+                <button type="button" class="cp-btn cp-btn-line" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="cp-btn cp-btn-dark">Save vehicle</button>
             </div>
         </form>
     </div>
 </div>
 
 <!-- EDIT VEHICLE MODAL -->
-<div class="modal fade customer-modal" id="editVehicleModal" tabindex="-1" aria-labelledby="editVehicleModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
+<div class="modal fade cp-modal" id="editVehicleModal" tabindex="-1" aria-labelledby="editVehicleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
         <form action="../controllers/VehicleController.php" method="POST" class="modal-content">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="update_customer_vehicle">
             <input type="hidden" name="vehicle_id" id="edit_vehicle_id">
 
-            <div class="modal-header">
+            <div class="cp-modal-head">
                 <div>
-                    <h5 class="modal-title" id="editVehicleModalLabel">Edit Vehicle</h5>
-                    <p class="mb-0 text-muted small">Update your saved vehicle information.</p>
+                    <p class="cp-label">My vehicles</p>
+                    <h2 class="cp-modal-title" id="editVehicleModalLabel">Edit vehicle</h2>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="cp-modal-x" data-bs-dismiss="modal" aria-label="Close">&times;</button>
             </div>
 
-            <div class="modal-body">
-                <div class="alert alert-light border mb-3" style="border-radius: 14px;">
-                    <i class="bi bi-shield-check me-1"></i>
-                    You can only edit vehicles linked to your own customer account.
-                </div>
+            <div class="cp-modal-body cp-modal-scroll">
+                <p class="cp-hint mb-3">Update your saved vehicle information. You can only edit vehicles linked to your own customer account.</p>
 
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label class="form-label-custom">Plate Number <span class="text-danger">*</span></label>
-                        <input type="text" name="plate_number" id="edit_plate_number" class="form-control form-control-custom text-uppercase" required>
+                <div class="cp-form-grid">
+                    <div class="cp-field">
+                        <label for="edit_plate_number">Plate number *</label>
+                        <input type="text" name="plate_number" id="edit_plate_number" class="cp-input cp-mono text-uppercase" required>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label-custom">Make / Brand <span class="text-danger">*</span></label>
-                        <input type="text" name="make" id="edit_make" class="form-control form-control-custom" required>
+                    <div class="cp-field">
+                        <label for="edit_make">Make / brand *</label>
+                        <input type="text" name="make" id="edit_make" class="cp-input" required>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label-custom">Model <span class="text-danger">*</span></label>
-                        <input type="text" name="model" id="edit_model" class="form-control form-control-custom" required>
+                    <div class="cp-field">
+                        <label for="edit_model">Model *</label>
+                        <input type="text" name="model" id="edit_model" class="cp-input" required>
                     </div>
 
-                    <div class="col-md-3">
-                        <label class="form-label-custom">Year <span class="text-danger">*</span></label>
-                        <input type="text" name="year" id="edit_year" class="form-control form-control-custom" maxlength="4" pattern="[0-9]{4}" required>
+                    <div class="cp-form-grid">
+                        <div class="cp-field">
+                            <label for="edit_year">Year *</label>
+                            <input type="text" name="year" id="edit_year" class="cp-input cp-mono" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" required>
+                        </div>
+
+                        <div class="cp-field">
+                            <label for="edit_color">Color *</label>
+                            <input type="text" name="color" id="edit_color" class="cp-input" required>
+                        </div>
                     </div>
 
-                    <div class="col-md-3">
-                        <label class="form-label-custom">Color <span class="text-danger">*</span></label>
-                        <input type="text" name="color" id="edit_color" class="form-control form-control-custom" required>
-                    </div>
-
-                    <div class="col-12">
-                        <label class="form-label-custom">Notes</label>
-                        <textarea name="notes" id="edit_notes" class="form-control form-control-custom" rows="3" placeholder="Optional notes, engine concerns, or vehicle remarks"></textarea>
+                    <div class="cp-field cp-span">
+                        <label for="edit_notes">Notes</label>
+                        <textarea name="notes" id="edit_notes" class="cp-input" rows="3" placeholder="Optional notes, engine concerns, or vehicle remarks"></textarea>
                     </div>
                 </div>
             </div>
 
-            <div class="modal-footer">
-                <button type="button" class="btn btn-outline-secondary modal-cancel-btn" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn modal-save-btn">
-                    <i class="bi bi-save me-1"></i>
-                    Save Changes
-                </button>
+            <div class="cp-modal-foot">
+                <button type="button" class="cp-btn cp-btn-line" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="cp-btn cp-btn-dark">Save changes</button>
             </div>
         </form>
     </div>

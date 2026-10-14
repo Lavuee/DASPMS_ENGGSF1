@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 
 require_once '../config/Database.php';
 require_once '../models/Vehicle.php';
@@ -225,6 +226,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             }
 
             if ($vehicle->deactivate()) {
+                logActivity($db, 'Deactivated vehicle', 'Vehicle', $vehicle->vehicle_id, activityRef($db, 'Vehicle', $vehicle->vehicle_id));
                 $_SESSION['success_message'] = "Vehicle record deactivated successfully.";
             } else {
                 $_SESSION['error_message'] = "Failed to deactivate vehicle record.";
@@ -245,6 +247,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             }
 
             if ($vehicle->reactivate()) {
+                logActivity($db, 'Reactivated vehicle', 'Vehicle', $vehicle->vehicle_id, activityRef($db, 'Vehicle', $vehicle->vehicle_id));
                 $_SESSION['success_message'] = "Vehicle record reactivated successfully.";
             } else {
                 $_SESSION['error_message'] = "Failed to reactivate vehicle record.";
@@ -265,6 +268,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             }
 
             if ($vehicle->archive()) {
+                logActivity($db, 'Archived vehicle', 'Vehicle', $vehicle->vehicle_id, activityRef($db, 'Vehicle', $vehicle->vehicle_id));
                 $_SESSION['success_message'] = "Vehicle record archived successfully.";
             } else {
                 $_SESSION['error_message'] = "Failed to archive vehicle record.";

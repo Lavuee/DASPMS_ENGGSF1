@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 require_once '../config/Database.php';
 
 requirePermission('suppliers.manage', '../views/login.php');
@@ -57,6 +58,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
             $id = intval($_POST['supplier_id'] ?? 0);
             $stmt = $db->prepare("UPDATE supplier SET is_active = 0 WHERE supplier_id = ?");
             $stmt->execute([$id]);
+            logActivity($db, 'Archived supplier', 'Supplier', $id, activityRef($db, 'Supplier', $id));
             $_SESSION['success_message'] = "Supplier archived.";
         }
 

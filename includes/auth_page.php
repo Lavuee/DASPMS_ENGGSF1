@@ -1,51 +1,119 @@
 <?php
 /*
-    Shared layout for the small account pages (forgot/reset password,
-    resend/confirm email verification). Shows and clears flash messages.
+    Shared layout for the account pages: log in, sign up, forgot/reset password and
+    email verification. Gives every page the same frame (top bar, card, small footer)
+    and shows the flash messages the AuthController sets in the session.
+
+    Small pages (forgot/reset password, resend/confirm verification) use
+    renderAuthPageStart() / renderAuthPageEnd(), which wrap their form in a 520px card.
+    Log in and sign up build their own two-column card between authPageOpen() and authPageClose().
 */
 
-function renderAuthPageStart($title, $heading, $intro) {
-    $flash = '';
+function authEscape($value) {
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
 
-    foreach (['error_message' => 'danger', 'success_message' => 'success'] as $key => $type) {
-        if (!empty($_SESSION[$key])) {
-            $flash .= '<div class="alert alert-' . $type . ' text-start">' . htmlspecialchars($_SESSION[$key], ENT_QUOTES, 'UTF-8') . '</div>';
-        }
-
-        unset($_SESSION[$key]);
-    }
+// <head>, top bar and the opening of <main>.
+function authPageOpen($title, $bodyClass = '') {
+    $css = '../assets/css/style.css?v=' . filemtime(__DIR__ . '/../assets/css/style.css');
+    $authCss = '../assets/css/auth.css?v=' . filemtime(__DIR__ . '/../assets/css/auth.css');
+    $authJs = '../assets/js/auth.js?v=' . filemtime(__DIR__ . '/../assets/js/auth.js');
     ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?> - Norily's Repair Shop</title>
+    <title><?= authEscape($title) ?> | Norily's Vehicle Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/style.css">
-    <style>
-        body { background-color: var(--bg-light); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
-        .reset-card { background-color: var(--white); border-radius: 20px; box-shadow: 0 15px 35px rgba(0, 32, 63, 0.1); padding: 3rem 2.5rem; width: 100%; max-width: 450px; }
-        .form-control { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 0.8rem 1rem; border-radius: 10px; }
-        .form-control:focus { border-color: var(--primary-blue); box-shadow: 0 0 0 3px rgba(0, 32, 63, 0.1); }
-        .btn-reset { background-color: var(--primary-blue); color: #fff; border: none; padding: 0.8rem; border-radius: 10px; font-weight: 600; font-size: 1.1rem; }
-        .field-label { font-size: 0.85rem; color: var(--text-muted); }
-        .back-link { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 500; }
-    </style>
+    <link rel="stylesheet" href="<?= $css ?>">
+    <link rel="stylesheet" href="<?= $authCss ?>">
+    <script src="<?= $authJs ?>" defer></script>
 </head>
-<body>
-    <div class="reset-card text-center">
-        <h3 class="fw-bold mb-2" style="color: var(--text-main);"><?= htmlspecialchars($heading, ENT_QUOTES, 'UTF-8') ?></h3>
-        <p class="text-muted mb-4" style="font-size: 0.95rem;"><?= htmlspecialchars($intro, ENT_QUOTES, 'UTF-8') ?></p>
-        <?= $flash ?>
+<body class="auth-body <?= authEscape($bodyClass) ?>">
+    <header class="auth-topbar">
+        <a href="../" class="auth-brand">
+            <img src="../assets/images/logo.png" alt="Norily's Vehicle Repair Shop logo" class="auth-brand-logo">
+            <span class="auth-brand-text">
+                <strong>Norily's</strong>
+                <small>Vehicle Repair Shop</small>
+            </span>
+        </a>
+
+        <a href="../" class="auth-back"><span aria-hidden="true">&larr;</span> Back to home</a>
+    </header>
+
+    <main class="auth-main">
     <?php
 }
 
-function renderAuthPageEnd() {
+// Closes <main>, then the small centered footer.
+function authPageClose() {
     ?>
-        <a href="login.php" class="back-link">Back to Login</a>
-    </div>
+    </main>
+
+    <footer class="auth-footer">
+        <span>&copy; <?= date('Y') ?> Norily's</span>
+        <a href="../public_pages/terms.php">Terms</a>
+        <a href="../public_pages/privacy.php">Privacy</a>
+        <a href="../public_pages/contact.php">Help</a>
+    </footer>
 </body>
 </html>
     <?php
+}
+
+/*
+    Shows (and clears) the flash messages set by the AuthController.
+    The "Resend verification email" link appears only when the server asks for it.
+*/
+function authMessages() {
+    if (!empty($_SESSION['error_message'])) {
+        ?>
+        <div class="auth-alert auth-alert-error" role="alert">
+            <?= authEscape($_SESSION['error_message']) ?>
+            <?php if (!empty($_SESSION['show_resend_verification'])): ?>
+                <a href="verify_code.php" class="auth-alert-link">Enter code or get a new one</a>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    if (!empty($_SESSION['success_message'])) {
+        ?>
+        <div class="auth-alert auth-alert-success" role="status">
+            <?= authEscape($_SESSION['success_message']) ?>
+        </div>
+        <?php
+    }
+
+    unset($_SESSION['error_message'], $_SESSION['success_message'], $_SESSION['show_resend_verification']);
+}
+
+// Small pages: one 520px card with a label, a big heading and a short intro line.
+function renderAuthPageStart($title, $heading, $intro, $kicker = 'Account help') {
+    authPageOpen($title, 'auth-body-small');
+    ?>
+        <section class="auth-card auth-card-small">
+            <p class="auth-kicker"><?= authEscape($kicker) ?></p>
+            <h1 class="auth-title"><?= authEscape($heading) ?></h1>
+            <p class="auth-intro"><?= authEscape($intro) ?></p>
+
+            <?php authMessages(); ?>
+    <?php
+}
+
+function renderAuthPageEnd($backLink = true) {
+    if ($backLink) {
+        ?>
+            <div class="auth-switch">
+                <a href="login.php" class="auth-text-link"><span aria-hidden="true">&larr;</span> Back to log in</a>
+            </div>
+        <?php
+    }
+    ?>
+        </section>
+    <?php
+    authPageClose();
 }

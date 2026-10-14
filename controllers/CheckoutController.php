@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 require_once '../config/Database.php';
 require_once '../includes/online_payment.php';
+require_once __DIR__ . '/../includes/cart_store.php';
 
 requirePermission('shop.purchase', '../views/login.php');
 
@@ -239,6 +240,9 @@ try {
     }
 
     $db->commit();
+
+    // Reserved items leave the saved cart too.
+    cartSaveToDb($db);
 
     if (isOnlinePaymentMethod($paymentMethod)) {
         try {

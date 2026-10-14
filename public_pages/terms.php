@@ -1,5 +1,63 @@
 <?php
 $basePath = '../';
+$activePage = '';
+$lastUpdated = 'October 2026';
+
+// Each section: a title and either 'text' (a paragraph) or 'list' (bullet points).
+$sections = [
+    [
+        'title' => 'Use of the website',
+        'text' => 'The website helps customers browse repair services, view parts and supplies, create an account and request services. Give accurate information when you register, request a service or send a message.',
+    ],
+    [
+        'title' => 'Your account',
+        'text' => "Keep your login details private. Activity on your account is treated as yours. Tell the shop right away if you notice access you didn't make or wrong account details.",
+    ],
+    [
+        'title' => 'Service requests',
+        'text' => 'Guests can browse services but need an account to request one. A request is not an approval: the shop may confirm, reschedule or decline it depending on availability, capacity and the repair needed.',
+    ],
+    [
+        'title' => 'Estimates, payment and warranty',
+        'list' => [
+            'Repair work starts only after you approve the estimate from the head mechanic.',
+            'The minimum service fee is ₱450. Any lower price needs the owner\'s approval.',
+            'Services marked as requiring a down payment, such as rewinding, wiring overhauls and special-order parts, need 50% of the estimate before work starts. Down payments are non-refundable once the service has started.',
+            'Balances are paid before the vehicle or parts are released. If the shop allows you to pay later, balances for services must be settled within 7 days.',
+            'Your original official receipt is your warranty proof. Without a receipt there is no return, exchange or free back-job.',
+        ],
+    ],
+    [
+        'title' => 'Parts and supplies',
+        'text' => 'Parts on the website are shown for reference and reservation. Availability can change with inventory, and the shop may update item details when needed. Reservations are for pickup only and are confirmed once the shop approves them.',
+    ],
+    [
+        'title' => 'Your information',
+        'text' => 'Keep your customer, vehicle, contact and request details correct. Wrong or missing details can delay confirmation, repair tracking and communication.',
+    ],
+    [
+        'title' => 'Service limits',
+        'text' => 'Estimates, timelines and recommendations can change after the vehicle or component is inspected. Final repair decisions are confirmed by the shop.',
+    ],
+    [
+        'title' => 'Not allowed',
+        'list' => [
+            'Submitting false, misleading or unauthorized information.',
+            'Trying to open accounts, records or pages without permission.',
+            'Disrupting or damaging the website or its database.',
+            'Using the system for fraud or abuse.',
+        ],
+    ],
+    [
+        'title' => 'Changes',
+        'text' => 'The shop may update these terms when the system, services or processes change. Using the website after an update means you accept the new terms.',
+    ],
+];
+
+function e($value)
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
 ?>
 
 <!DOCTYPE html>
@@ -7,77 +65,146 @@ $basePath = '../';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Terms & Conditions | Norily's Vehicle Repair Shop</title>
+    <title>Terms &amp; Conditions | Norily's Vehicle Repair Shop</title>
+    <link rel="icon" type="image/png" href="../assets/images/logo.png">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="stylesheet" href="../assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
+    <script>document.documentElement.classList.add('js');window.__motionFallback=setTimeout(function(){document.documentElement.classList.add('reveal-all');},3000);</script>
+    <script src="../assets/js/motion.js?v=<?= filemtime(__DIR__ . '/../assets/js/motion.js') ?>" defer></script>
 
     <style>
-        .legal-page {
-            background: var(--white);
-            border-top: 1px solid var(--border-light);
+        .terms-page {
+            background: var(--paper);
+            padding-bottom: 6rem;
         }
 
-        .legal-wrapper {
-            max-width: 980px;
-            margin: 0 auto;
-            padding: 3.5rem 1rem 5rem;
+        .terms-wrap {
+            max-width: 1000px;
         }
 
-        .legal-title {
-            color: var(--black);
-            font-size: clamp(1.5rem, 2vw, 1rem);
-            font-weight: 900;
-            letter-spacing: 4px;
+        .terms-crumbs {
+            display: flex;
+            gap: 0.6rem;
+            list-style: none;
+            padding: 0;
+            margin: 1.5rem 0 3rem;
+            color: var(--ink-2);
+            font-size: var(--fs-crumb);
+            letter-spacing: 0.14em;
             text-transform: uppercase;
-            text-align: center;
-            margin-bottom: 4rem;
         }
 
-        .legal-intro,
-        .legal-section p,
-        .legal-section li {
-            color: var(--black);
-            font-size: 1rem;
-            line-height: 1.8;
+        .terms-crumbs a {
+            color: var(--ink-2);
+            text-decoration: none;
         }
 
-        .legal-intro {
-            margin-bottom: 2.5rem;
+        .terms-crumbs a:hover {
+            color: var(--ink);
         }
 
-        .legal-section {
-            margin-bottom: 2.2rem;
+        .terms-crumbs li + li::before {
+            content: "/";
+            margin-right: 0.6rem;
         }
 
-        .legal-section h2 {
-            color: var(--black);
-            font-size: 1rem;
-            font-weight: 900;
+        .wide-heading {
+            color: var(--ink);
+            font-weight: 400;
+            font-stretch: 125%;
             text-transform: uppercase;
-            letter-spacing: 2px;
+            line-height: 0.95;
+            margin: 0;
+        }
+
+        /* ---------- Hero ---------- */
+        .terms-hero {
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--ink);
+        }
+
+        .terms-hero h1 {
+            font-size: var(--fs-page-title);
+            overflow-wrap: anywhere;
+        }
+
+        /* Sits on its own line under the title, with clear space above it */
+        .terms-updated {
+            display: block;
+            color: var(--ink-2);
+            font-size: 0.75rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            text-align: right;
+            margin: 2rem 0 0;
+        }
+
+        /* ---------- Body ---------- */
+        .terms-body {
+            max-width: 640px;
+            margin: 2.5rem auto 0;
+        }
+
+        .terms-intro {
+            color: var(--ink);
+            font-size: 1.15rem;
+            line-height: 1.6;
+            margin-bottom: 0.5rem;
+        }
+
+        .terms-section {
+            padding: 2.25rem 0 2.5rem;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .terms-section h2 {
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            color: var(--ink);
+            font-size: clamp(1.15rem, 2vw, 1.35rem);
+            font-weight: 400;
+            font-stretch: 125%;
+            text-transform: uppercase;
             margin-bottom: 1rem;
         }
 
-        .legal-section ul {
-            margin: 0.5rem 0 0;
-            padding-left: 1.4rem;
+        .terms-number {
+            color: var(--ink-2);
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 0.75rem;
+            font-stretch: normal;
         }
 
-        .legal-updated {
-            color: var(--muted-gray);
-            font-size: 0.9rem;
-            margin-top: 3rem;
-            text-align: center;
+        .terms-section p,
+        .terms-section li {
+            color: var(--ink);
+            font-size: 0.95rem;
+            line-height: 1.65;
+        }
+
+        .terms-section p {
+            margin: 0;
+        }
+
+        .terms-section ul {
+            margin: 0;
+            padding-left: 1.1rem;
+        }
+
+        .terms-section li + li {
+            margin-top: 0.5rem;
         }
 
         @media (max-width: 575.98px) {
-            .legal-wrapper {
-                padding: 2.5rem 1rem 4rem;
+            .terms-updated {
+                text-align: left;
+                margin-top: 1.25rem;
             }
 
-            .legal-title {
-                margin-bottom: 2rem;
+            .terms-intro {
+                font-size: 1.05rem;
             }
         }
     </style>
@@ -86,96 +213,46 @@ $basePath = '../';
 
 <?php include '../partials/public-navbar.php'; ?>
 
-<main class="legal-page">
-    <section class="legal-wrapper">
-        <h1 class="legal-title">Terms & Conditions</h1>
+<main class="terms-page">
+    <div class="container terms-wrap">
+        <nav aria-label="Breadcrumb">
+            <ol class="terms-crumbs">
+                <li><a href="../" class="link-grow">Home</a></li>
+                <li aria-current="page">Terms &amp; conditions</li>
+            </ol>
+        </nav>
 
-        <p class="legal-intro">
-            Before using the Digital Auto Services and Parts Management System of Norily's Vehicle Repair Shop,
-            please read these Terms and Conditions carefully. By accessing this website, browsing services,
-            viewing vehicle parts, creating an account, or submitting a booking request, you agree to follow
-            the policies stated below.
-        </p>
+        <header class="terms-hero">
+            <h1 class="wide-heading">Terms &amp;<br>Conditions</h1>
+            <p class="terms-updated">Last updated &middot; <?= e($lastUpdated) ?></p>
+        </header>
 
-        <div class="legal-section">
-            <h2>Use of the Website</h2>
-            <p>
-                This website is provided to help customers browse available auto repair services, view selected
-                automotive parts and supplies, create an account, and request service bookings. Users must provide
-                accurate information when registering, booking a service, or sending inquiries through the system.
+        <div class="terms-body">
+            <p class="terms-intro">
+                By browsing services, viewing parts, creating an account or sending a request on the
+                Norily's Vehicle Repair Shop website, you agree to these terms.
             </p>
-        </div>
 
-        <div class="legal-section">
-            <h2>Account Responsibility</h2>
-            <p>
-                Registered users are responsible for maintaining the confidentiality of their account credentials.
-                Any activity made through a user account may be treated as the responsibility of the account owner.
-                Users should immediately report suspected unauthorized access or incorrect account information.
-            </p>
-        </div>
+            <?php foreach ($sections as $index => $section): ?>
+                <section class="terms-section" data-reveal id="term-<?= $index + 1 ?>">
+                    <h2>
+                        <span class="terms-number"><?= str_pad($index + 1, 2, '0', STR_PAD_LEFT) ?></span>
+                        <?= e($section['title']) ?>
+                    </h2>
 
-        <div class="legal-section">
-            <h2>Service Booking</h2>
-            <p>
-                Guests may browse available services and service categories, but they cannot book directly without
-                logging in or creating an account. A booking request submitted through the system does not guarantee
-                immediate service approval. Bookings may still be reviewed, confirmed, rescheduled, or declined
-                depending on shop availability, service capacity, and the nature of the repair request.
-            </p>
+                    <?php if (!empty($section['list'])): ?>
+                        <ul>
+                            <?php foreach ($section['list'] as $item): ?>
+                                <li><?= e($item) ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php else: ?>
+                        <p><?= e($section['text']) ?></p>
+                    <?php endif; ?>
+                </section>
+            <?php endforeach; ?>
         </div>
-
-        <div class="legal-section">
-            <h2>Parts and Supplies</h2>
-            <p>
-                Parts and supplies displayed on the website are provided for customer reference and ordering support.
-                Product availability may change depending on inventory status. The shop may update item details,
-                availability, or related information when necessary.
-            </p>
-        </div>
-
-        <div class="legal-section">
-            <h2>Customer Information</h2>
-            <p>
-                Users agree to provide correct and updated customer, vehicle, contact, and booking information.
-                Incorrect or incomplete information may affect service processing, booking confirmation, repair
-                tracking, communication, or parts-related transactions.
-            </p>
-        </div>
-
-        <div class="legal-section">
-            <h2>Service Limitations</h2>
-            <p>
-                Repair estimates, service timelines, and recommendations may vary depending on the actual condition
-                of the vehicle or component after inspection. The system supports service management and customer
-                communication, but final repair decisions and confirmations may still require shop review.
-            </p>
-        </div>
-
-        <div class="legal-section">
-            <h2>Prohibited Activities</h2>
-            <p>Users must not misuse the website. Prohibited activities include:</p>
-            <ul>
-                <li>Submitting false, misleading, or unauthorized information.</li>
-                <li>Attempting to access accounts, records, or pages without permission.</li>
-                <li>Disrupting, damaging, or interfering with the website or its database.</li>
-                <li>Using the system for fraudulent, abusive, or harmful activities.</li>
-            </ul>
-        </div>
-
-        <div class="legal-section">
-            <h2>Changes to Terms</h2>
-            <p>
-                Norily's Vehicle Repair Shop may update these Terms and Conditions when needed to reflect system
-                changes, service updates, or business process improvements. Continued use of the website means
-                that the user accepts the updated terms.
-            </p>
-        </div>
-
-        <p class="legal-updated">
-            Last updated: April 2026
-        </p>
-    </section>
+    </div>
 </main>
 
 <?php include '../partials/public-footer.php'; ?>

@@ -23,13 +23,12 @@ try {
         SELECT 
             part_id,
             part_name,
-            category,
-            description,
+            unit_price,
             image
         FROM part
         WHERE is_active = 1
         ORDER BY part_id DESC
-        LIMIT 4
+        LIMIT 8
     ");
     $partsStmt->execute();
     $featuredParts = $partsStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -38,13 +37,12 @@ try {
         SELECT 
             service_id,
             service_name,
-            category,
-            description,
+            base_price,
             image
         FROM service
         WHERE is_active = 1
         ORDER BY service_id DESC
-        LIMIT 4
+        LIMIT 8
     ");
     $servicesStmt->execute();
     $featuredServices = $servicesStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -53,28 +51,15 @@ try {
     $featuredServices = [];
 }
 
-function limitText($text, $limit = 95)
+function displayPrice($amount, $prefix = '')
 {
-    $text = plainText($text, 'No description available.');
+    $amount = (float) $amount;
 
-    if (function_exists('mb_strlen') && function_exists('mb_substr')) {
-        if (mb_strlen($text) <= $limit) {
-            return $text;
-        }
-
-        return mb_substr($text, 0, $limit) . '...';
+    if ($amount <= 0) {
+        return 'Ask for price';
     }
 
-    if (strlen($text) <= $limit) {
-        return $text;
-    }
-
-    return substr($text, 0, $limit) . '...';
-}
-
-function displayLimitText($text, $limit = 95)
-{
-    return htmlspecialchars(limitText($text, $limit), ENT_QUOTES, 'UTF-8');
+    return $prefix . '₱' . number_format($amount, 2);
 }
 
 function partImagePath($image)
@@ -102,231 +87,213 @@ function serviceImagePath($image)
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Norily's Vehicle Repair Shop | DASPMS</title>
+    <link rel="icon" type="image/png" href="assets/images/logo.png">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/style.css">
+    <link rel="stylesheet" href="assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
+    <script>document.documentElement.classList.add('js');window.__motionFallback=setTimeout(function(){document.documentElement.classList.add('reveal-all');},3000);</script>
+    <script src="assets/js/motion.js?v=<?= filemtime(__DIR__ . '/../assets/js/motion.js') ?>" defer></script>
 </head>
 <body>
 
-<?php include 'partials/public-navbar.php'; ?>
+<?php $activePage = ''; include 'partials/public-navbar.php'; ?>
 
 <main>
     <section class="landing-hero">
-        <div class="hero-editorial">
-            <div class="hero-bg-word">AUTO</div>
-            <div class="hero-yellow-block"></div>
+        <div class="hero-bg-word" aria-hidden="true">NORILY'S</div>
 
-            <div class="container hero-editorial-container">
-                <div class="hero-copy">
-                    <p class="hero-year">DASPMS</p>
+        <div class="container hero-grid">
+            <div class="hero-side hero-side-left">
+                <p class="hero-eyebrow">repairs · rewinding · parts</p>
 
-                    <p class="hero-label">
-                        Digital Auto Service and Parts Management System
-                    </p>
+                <h1 class="hero-title">
+                    Vehicle<br>
+                    Repair Shop
+                </h1>
 
-                    <h1 class="hero-main-title">
-                        Repair Smarter.<br>
-                        Drive Safer.
-                    </h1>
+                <a href="public_pages/parts.php" class="hero-link">
+                    Browse Parts <span class="arrow" aria-hidden="true">&#8599;</span>
+                </a>
+            </div>
 
-                    <p class="hero-main-text">
-                        Book service requests, browse available parts, and track repair updates
-                        through Norily’s Vehicle Repair Shop customer portal.
-                    </p>
+            <div class="hero-car-wrap">
+                <img
+                    src="assets/images/landing/hero-car.png"
+                    alt="Black classic car"
+                    class="hero-car-img"
+                    onerror="this.style.display='none'; this.closest('.hero-car-wrap').classList.add('no-car-image');"
+                >
 
-                    <div class="hero-actions">
-                        <a href="public_pages/services.php" class="btn hero-primary-btn">
-                            Explore Services
-                        </a>
-
-                        <a href="public_pages/parts.php" class="btn hero-secondary-btn">
-                            Browse Parts
-                        </a>
-                    </div>
+                <div class="hero-car-placeholder">
+                    Add car image here
                 </div>
+            </div>
 
-                <div class="hero-car-area">
-                    <div class="hero-car-wrap">
-                        <img
-                            src="assets/images/landing/yellow-car-hero.png"
-                            alt="Yellow car hero image"
-                            class="hero-car-img"
-                            onerror="this.style.display='none'; this.closest('.hero-car-wrap').classList.add('no-car-image');"
-                        >
+            <div class="hero-side hero-side-right">
+                <p class="hero-eyebrow">Vila Rosario, La Union</p>
 
-                        <div class="hero-car-placeholder">
-                            Add yellow car image here
-                        </div>
-                    </div>
-                </div>
+                <p class="hero-since">
+                    since<br>
+                    1998
+                </p>
+
+                <a href="views/login.php" class="hero-link">
+                    Request a Service <span class="arrow" aria-hidden="true">&#8599;</span>
+                </a>
             </div>
         </div>
     </section>
 
     <section id="offerings" class="offerings-section">
         <div class="container">
-            <div class="offerings-tabs">
-                <button class="offerings-tab active" type="button" data-offering-tab="parts">
+            <div class="offerings-tabs" role="tablist" aria-label="Browse" data-tablist data-reveal>
+                <button class="offerings-tab active" type="button" role="tab" id="parts-tab" aria-selected="true" aria-controls="parts-panel" data-offering-tab="parts">
                     Parts
                 </button>
 
-                <button class="offerings-tab" type="button" data-offering-tab="services">
+                <button class="offerings-tab" type="button" role="tab" id="services-tab" aria-selected="false" aria-controls="services-panel" tabindex="-1" data-offering-tab="services">
                     Services
                 </button>
+
+                <span class="offerings-tab-indicator" aria-hidden="true"></span>
             </div>
 
-            <div class="offerings-panel active" id="parts-panel">
-                <div class="row g-4 justify-content-center">
-                    <?php if (empty($featuredParts)): ?>
-                        <div class="col-12 text-center">
-                            <p class="section-text mb-0">
-                                No parts are currently available.
-                            </p>
-                        </div>
+            <?php
+            $offeringPanels = [
+                'parts' => [
+                    'active' => true,
+                    'photos' => false, // product cutouts
+                    'empty' => 'No parts are currently available.',
+                    'items' => array_map(fn ($part) => [
+                        'href' => 'public_pages/part-details.php?id=' . urlencode($part['part_id']),
+                        'image' => partImagePath($part['image'] ?? ''),
+                        'name' => $part['part_name'] ?? '',
+                        'price' => displayPrice($part['unit_price'] ?? 0),
+                    ], $featuredParts),
+                ],
+                'services' => [
+                    'active' => false,
+                    'photos' => true, // full workshop photos
+                    'empty' => 'No services are currently available.',
+                    'items' => array_map(fn ($service) => [
+                        'href' => 'public_pages/service-details.php?id=' . urlencode($service['service_id']),
+                        'image' => serviceImagePath($service['image'] ?? ''),
+                        'name' => $service['service_name'] ?? '',
+                        'price' => displayPrice($service['base_price'] ?? 0, 'from '),
+                    ], $featuredServices),
+                ],
+            ];
+            ?>
+
+            <?php foreach ($offeringPanels as $panelKey => $panel): ?>
+                <div class="offerings-panel<?= $panel['active'] ? ' active' : '' ?><?= $panel['photos'] ? ' offerings-panel-photos' : '' ?>" id="<?= $panelKey ?>-panel" role="tabpanel" aria-labelledby="<?= $panelKey ?>-tab">
+                    <?php if (empty($panel['items'])): ?>
+                        <p class="section-text text-center mb-0"><?= $panel['empty'] ?></p>
                     <?php else: ?>
-                        <?php foreach ($featuredParts as $part): ?>
-                            <div class="col-sm-6 col-lg-3">
-                                <a
-                                    href="public_pages/part-details.php?id=<?= urlencode($part['part_id']) ?>"
-                                    class="text-decoration-none text-reset offering-item-link"
-                                >
-                                    <div class="offering-card">
+                        <div class="offerings-carousel">
+                            <button class="offerings-arrow offerings-arrow-prev" type="button" aria-label="Previous" data-scroll="-1">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4 7 12l8 8"/></svg>
+                            </button>
+
+                            <div class="offerings-track" data-reveal-group>
+                                <?php foreach ($panel['items'] as $index => $item): ?>
+                                    <a href="<?= $item['href'] ?>" class="offering-item">
                                         <div class="offering-visual">
-                                            <img
-                                                src="<?= partImagePath($part['image'] ?? '') ?>"
-                                                alt="<?= displayText($part['part_name'] ?? 'Part image') ?>"
-                                            >
+                                            <img src="<?= $item['image'] ?>" alt="<?= displayText($item['name']) ?>" loading="lazy">
                                         </div>
 
-                                        <h5>
-                                            <?= displayText($part['part_name'] ?? '') ?>
-                                        </h5>
-
-                                        <p>
-                                            <?= displayLimitText($part['description'] ?? '', 95) ?>
-                                        </p>
-
-                                        <strong>
-                                            <?= displayText($part['category'] ?? '') ?>
-                                        </strong>
-                                    </div>
-                                </a>
+                                        <span class="offering-index"><?= str_pad($index + 1, 2, '0', STR_PAD_LEFT) ?></span>
+                                        <h3 class="offering-name"><?= displayText($item['name']) ?></h3>
+                                        <span class="offering-price"><?= htmlspecialchars($item['price'], ENT_QUOTES, 'UTF-8') ?></span>
+                                    </a>
+                                <?php endforeach; ?>
                             </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
-            </div>
 
-            <div class="offerings-panel" id="services-panel">
-                <div class="row g-4 justify-content-center">
-                    <?php if (empty($featuredServices)): ?>
-                        <div class="col-12 text-center">
-                            <p class="section-text mb-0">
-                                No services are currently available.
-                            </p>
+                            <button class="offerings-arrow offerings-arrow-next" type="button" aria-label="Next" data-scroll="1">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4 8 8-8 8"/></svg>
+                            </button>
                         </div>
-                    <?php else: ?>
-                        <?php foreach ($featuredServices as $service): ?>
-                            <div class="col-sm-6 col-lg-3">
-                                <a
-                                    href="public_pages/service-details.php?id=<?= urlencode($service['service_id']) ?>"
-                                    class="text-decoration-none text-reset offering-item-link"
-                                >
-                                    <div class="offering-card">
-                                        <div class="offering-visual">
-                                            <img
-                                                src="<?= serviceImagePath($service['image'] ?? '') ?>"
-                                                alt="<?= displayText($service['service_name'] ?? 'Service image') ?>"
-                                            >
-                                        </div>
-
-                                        <h5>
-                                            <?= displayText($service['service_name'] ?? '') ?>
-                                        </h5>
-
-                                        <p>
-                                            <?= displayLimitText($service['description'] ?? '', 95) ?>
-                                        </p>
-
-                                        <strong>
-                                            <?= displayText($service['category'] ?? '') ?>
-                                        </strong>
-                                    </div>
-                                </a>
-                            </div>
-                        <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
-            </div>
+            <?php endforeach; ?>
 
-            <div class="text-center mt-5">
-                <a href="public_pages/parts.php" class="btn btn-offerings-outline" id="offeringsCta">
+            <div class="text-center offerings-cta-wrap">
+                <a href="public_pages/parts.php" class="btn-offerings-outline" id="offeringsCta">
                     View All Parts
                 </a>
             </div>
         </div>
     </section>
 
-    <section id="about" class="about-preview-section section-padding">
-        <div class="container">
-            <div class="row justify-content-center">
-                <div class="col-lg-10">
-                    <div class="about-preview-content">
-                        <p class="section-kicker about-preview-kicker">About the Shop</p>
+    <section id="about" class="about-preview-section">
+        <div class="container about-preview-grid">
+            <figure class="about-preview-media" data-reveal>
+                <img src="assets/images/landing/about-bench.jpg" alt="Mechanic repairing a starter armature at the workbench" loading="lazy">
 
-                        <div class="row g-4 align-items-start">
-                            <div class="col-lg-7">
-                                <h2 class="about-preview-title">
-                                    Trusted Local Auto Repair Since 1998
-                                </h2>
+                <figcaption class="about-preview-caption">
+                    <span class="about-preview-caption-label">Rewinding bench</span>
+                    <span class="about-preview-since">since<br>1998</span>
+                </figcaption>
+            </figure>
 
-                                <p class="about-preview-text">
-                                    Norily’s Vehicle Repair Shop, founded by Mr. Oliver P. Dagohoy
-                                    and Mrs. Norily B. Dagohoy, has been serving customers in
-                                    Vila Rosario, La Union through reliable automotive repair,
-                                    rewinding services, and auto parts support.
-                                </p>
-                            </div>
+            <div class="about-preview-body" data-reveal>
+                <p class="about-preview-kicker">About the shop</p>
 
-                            <div class="col-lg-5">
-                                <div class="about-preview-side">
-                                    <p class="about-preview-side-text">
-                                        The shop continues to assist regular and walk-in customers
-                                        with practical repair experience, dependable workmanship,
-                                        and fair service.
-                                    </p>
+                <h2 class="about-preview-title">A family shop<br>in La Union</h2>
 
-                                    <a href="public_pages/about.php" class="btn btn-dark-custom about-preview-btn">
-                                        Learn More About Us
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                <p class="about-preview-text">
+                    Founded by Mr. Oliver P. Dagohoy and Mrs. Norily B. Dagohoy, Norily's has served
+                    Rosario for more than 25 years with general repairs, electrical rewinding and auto parts.
+                    Long-time customers and local engineers come back for the fair fees and solid technical work.
+                </p>
+
+                <dl class="about-facts">
+                    <div class="about-fact">
+                        <dt>Specialty</dt>
+                        <dd>Alternator &amp; water pump rewinding</dd>
                     </div>
-                </div>
+
+                    <div class="about-fact">
+                        <dt>Warranty</dt>
+                        <dd>60&ndash;90 days on rewinding</dd>
+                    </div>
+
+                    <div class="about-fact">
+                        <dt>Open</dt>
+                        <dd>Mon&ndash;Sat &middot; 8 AM&ndash;5 PM</dd>
+                    </div>
+
+                    <div class="about-fact">
+                        <dt>Walk-ins</dt>
+                        <dd>Welcome, no account needed</dd>
+                    </div>
+                </dl>
+
+                <a href="public_pages/about.php" class="btn-square btn-square-outline">
+                    More about the shop <span class="arrow" aria-hidden="true">&#8599;</span>
+                </a>
             </div>
         </div>
     </section>
 
-    <section id="customer-access" class="customer-access-section section-padding section-light">
+    <section id="customer-access" class="customer-access-section">
         <div class="container">
-            <div class="row justify-content-center">
-                <div class="col-lg-8">
-                    <div class="customer-login-cta">
-                        <p class="section-kicker">Customer Access</p>
+            <div class="portal-card" data-reveal>
+                <div class="portal-heading">
+                    <p class="portal-kicker">Customer portal</p>
+                    <h2 class="portal-title">Is my car <span class="portal-highlight">ready</span>?</h2>
+                </div>
 
-                        <h2 class="section-title mb-3">
-                            Already have a request or repair record?
-                        </h2>
+                <div class="portal-rule" aria-hidden="true"></div>
 
-                        <p class="section-text customer-access-text">
-                            Log in to check your pickup request or repair status.
-                        </p>
+                <p class="portal-text">
+                    Log in to check your repair status, service requests and part orders,
+                    without calling the shop.
+                </p>
 
-                        <a href="views/login.php" class="btn btn-dark-custom">
-                            Login to Account
-                        </a>
-                    </div>
+                <div class="portal-actions">
+                    <a href="views/login.php" class="btn-square btn-square-solid">Log in</a>
+                    <a href="views/register.php" class="btn-square btn-square-outline">Create account</a>
                 </div>
             </div>
         </div>
@@ -336,65 +303,56 @@ function serviceImagePath($image)
 <?php include 'partials/public-footer.php'; ?>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="assets/js/offerings-carousel.js"></script>
 
 <script>
-    const offeringTabs = document.querySelectorAll('[data-offering-tab]');
-    const offeringNavLinks = document.querySelectorAll('[data-nav-offering]');
-    const partsPanel = document.getElementById('parts-panel');
-    const servicesPanel = document.getElementById('services-panel');
-    const offeringsCta = document.getElementById('offeringsCta');
+    // Parts / Services tabs. Selection and the switch animation are handled by motion.js;
+    // this keeps the "View all" button and the carousel arrows in sync.
+    (function () {
+        const tablist = document.querySelector('[data-tablist]');
+        const offeringsCta = document.getElementById('offeringsCta');
+        const ctaFor = {
+            parts: ['View All Parts', 'public_pages/parts.php'],
+            services: ['View All Services', 'public_pages/services.php'],
+        };
 
-    function switchOfferingTab(selectedTab) {
-        if (!partsPanel || !servicesPanel || !offeringsCta) {
+        if (!tablist || !offeringsCta) {
             return;
         }
 
-        offeringTabs.forEach((tab) => {
-            tab.classList.remove('active');
+        tablist.addEventListener('tabchange', function (event) {
+            const cta = ctaFor[event.detail.tab];
+            offeringsCta.textContent = cta[0];
+            offeringsCta.href = cta[1];
+        });
 
-            if (tab.getAttribute('data-offering-tab') === selectedTab) {
-                tab.classList.add('active');
+        tablist.addEventListener('tabshown', updateOfferingArrows);
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const tab = new URLSearchParams(window.location.search).get('tab');
+
+            if (tablist.selectTab) {
+                if (tab === 'services') {
+                    tablist.selectTab(tab);
+                }
+                return;
             }
+
+            // motion.js did not load: plain tab switching without animation.
+            tablist.querySelectorAll('[role="tab"]').forEach(function (button) {
+                button.addEventListener('click', function () {
+                    tablist.querySelectorAll('[role="tab"]').forEach(function (other) {
+                        const selected = other === button;
+                        other.classList.toggle('active', selected);
+                        other.setAttribute('aria-selected', selected ? 'true' : 'false');
+                        document.getElementById(other.getAttribute('aria-controls')).classList.toggle('active', selected);
+                    });
+                    tablist.dispatchEvent(new CustomEvent('tabchange', { detail: { tab: button.dataset.offeringTab } }));
+                    updateOfferingArrows();
+                });
+            });
         });
-
-        if (selectedTab === 'parts') {
-            partsPanel.classList.add('active');
-            servicesPanel.classList.remove('active');
-            offeringsCta.textContent = 'View All Parts';
-            offeringsCta.href = 'public_pages/parts.php';
-        }
-
-        if (selectedTab === 'services') {
-            servicesPanel.classList.add('active');
-            partsPanel.classList.remove('active');
-            offeringsCta.textContent = 'View All Services';
-            offeringsCta.href = 'public_pages/services.php';
-        }
-    }
-
-    offeringTabs.forEach((tab) => {
-        tab.addEventListener('click', () => {
-            const selectedTab = tab.getAttribute('data-offering-tab');
-            switchOfferingTab(selectedTab);
-        });
-    });
-
-    offeringNavLinks.forEach((link) => {
-        link.addEventListener('click', () => {
-            const selectedTab = link.getAttribute('data-nav-offering');
-
-            if (selectedTab) {
-                switchOfferingTab(selectedTab);
-            }
-        });
-    });
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const selectedTabFromUrl = urlParams.get('tab');
-
-    if (selectedTabFromUrl === 'parts' || selectedTabFromUrl === 'services') {
-        switchOfferingTab(selectedTabFromUrl);
-    }
+    })();
 </script>
 
 </body>

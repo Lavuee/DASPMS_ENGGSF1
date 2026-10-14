@@ -22,6 +22,11 @@ const ROLE_PERMISSIONS = [
         'job_orders.view', 'job_orders.manage', 'job_orders.progress',
         'online_orders.manage',
         'service_requests.review',
+        'pos.void',          // SRS: only the Owner may void a POS sale
+        'activity_log.view',
+        'inventory.archive', // SRS 3.2/3.3: Archive Item is an Administrator function
+        'pricing.manage',    // SRS UC09 + pricing policy: only the Owner changes selling prices;
+                             // SRS 3.4(8): staff cannot view procurement (cost) pricing
     ],
     'Cashier' => [
         'dashboard.cashier',
