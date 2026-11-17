@@ -1,0 +1,36 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      # Secrets live on the server, not inside the image.
+      - ./.env:/var/www/html/.env:ro
+      # Keep app logs on the host so they survive rebuilds.
+      - ./logs:/var/www/html/logs
+    depends_on:
+      - db
+
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      # Read from .env so the DB password always matches the app's DB_PASS.
+      MARIADB_ROOT_PASSWORD: ${DB_PASS}
+      MARIADB_DATABASE: daspms
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./daspms.sql:/docker-entrypoint-initdb.d/daspms.sql
+
+  phpmyadmin:
+    image: phpmyadmin
+    restart: unless-stopped
+    ports:
+      # Only reachable from the machine itself (use an SSH tunnel on the server).
+      - "127.0.0.1:3001:80"
+    environment:
+      PMA_HOST: db
+
+volumes:
+  db_data:

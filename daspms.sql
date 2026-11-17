@@ -902,7 +902,7 @@ CREATE TABLE `user` (
 
 LOCK TABLES `user` WRITE;
 /*!40000 ALTER TABLE `user` DISABLE KEYS */;
-INSERT INTO `user` VALUES (1,'Admin',NULL,'Owner','owner','$2y$10$t60Q5eTSQrJh0468lRZWXup38MgYxRQSILv5K27ZOk3BH/jN5oDw2','2026-10-03 00:11:56','Owner',1,1,NULL,NULL,'2026-04-25 12:45:00','2026-04-25 12:45:00','leelav.viin@gmail.com','2026-10-03 00:12:56');
+INSERT INTO `user` (`user_id`,`first_name`,`middle_name`,`last_name`,`username`,`password_hash`,`password_changed_at`,`role`,`is_active`,`is_verified`,`verification_token`,`verification_code`,`verification_expires_at`,`email_verified_at`,`created_at`,`email`,`last_login_at`) VALUES (1,'Admin',NULL,'Owner','owner','$2y$10$t60Q5eTSQrJh0468lRZWXup38MgYxRQSILv5K27ZOk3BH/jN5oDw2','2026-10-03 00:11:56','Owner',1,1,NULL,NULL,NULL,'2026-04-25 12:45:00','2026-04-25 12:45:00','leelav.viin@gmail.com','2026-10-03 00:12:56');
 /*!40000 ALTER TABLE `user` ENABLE KEYS */;
 UNLOCK TABLES;
 

@@ -1,0 +1,9 @@
+# Keep secrets and junk out of the Docker image.
+# .env is mounted at runtime instead (see docker-compose.yml).
+.env
+.git
+.vscode
+.idea
+logs/*.log
+Dockerfile
+docker-compose.yml
